@@ -18,7 +18,7 @@ df_mean = df.groupby(['subject', 'Singletonpres']).mean().reset_index()
 df.RT[df.RT > 2 * np.std(df.RT)] = np.nan  # drop values which deviate 2 standard deviations from the mean
 
 # make barplot
-barplot = sns.barplot(data=df, y=df.RT, hue="Singletonpres")
+barplot = sns.violinplot(data=df, y=df.RT, hue="Singletonpres")
 
 # Get the positions of the bars for aligning lines correctly
 bar_positions = []
