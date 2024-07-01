@@ -2,7 +2,7 @@ import pandas as pd
 import os
 
 
-results_path = '/home/max/data/behavior/wp1/'
+results_path = '/home/max/data/behavior/SPACEPRIME/'
 df = pd.read_excel(os.path.join(results_path, 'results_June_21_2024_15_43_27.xlsx'), index_col=0)
 
 # Get unique subject IDs
