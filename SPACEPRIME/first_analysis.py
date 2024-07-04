@@ -9,15 +9,13 @@ from plotting import barplot_with_single_subjects
 
 
 # load up dataframe
-df = pd.read_excel("/home/max/data/behavior/SPACEPRIME/simulated_subjects_appended.xlsx")
+df = pd.read_excel("/home/max/data/behavior/SPACEPRIME/results_July_01_2024_14_30_30.xlsx")
 # some cleaning
 res = df[(df['event_type'] == 'response') & (df['rt'] != 0)]
 # remove outlier rt values
-#res.rt[res.rt > 2 * np.std(res.rt)] = np.nan  # drop values over 2 standard deviations of the mean
-no_bs = res[res.bootstrapped==0]
 # plot singleton absent vs present trials
 fig = plt.figure(figsize=(15, 8))
-barplot_with_single_subjects(df=no_bs, x="SingletonPresent", y="iscorrect", groupby="SingletonPresent")
+barplot_with_single_subjects(df=res, x="SingletonPresent", y="iscorrect", groupby="SingletonPresent")
 plt.savefig("/home/max/figures/SPACEPRIME/singleton_pres_vs_abs_iscorrect.png", dpi=400)
 # plot singleton absent vs present trials
 fig = plt.figure(figsize=(15, 8))
