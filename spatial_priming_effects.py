@@ -6,7 +6,7 @@ from stats import cohen_d
 plt.ion()
 
 
-fp = "/home/max/data/behavior/all_subjects_additional_metrics_and_priming.csv"
+fp = "/home/max/data/behavior/CAPSUP/all_subjects_additional_metrics_and_priming.csv"
 df = pd.read_csv(fp)
 
 # control for distractor presence
@@ -43,7 +43,7 @@ plt.close()
 df.loc[df.RT > 2 * np.std(df.RT), df.RT] = np.nan  # drop values over 2 standard deviations of the mean
 
 # make barplot
-barplot = sns.barplot(data=df, y=df.RT, x=df.spatial_priming)
+barplot = sns.barplot(data=df, y="RT", x="spatial_priming")
 
 # Get the positions of the bars for aligning lines correctly
 bar_positions = [patch.get_x() + patch.get_width() / 2 for patch in barplot.patches]

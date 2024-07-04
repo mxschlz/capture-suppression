@@ -5,7 +5,7 @@ import numpy as np
 plt.ion()
 
 
-fp = "/home/max/data/behavior/all_subjects_additional_metrics_and_priming.csv"
+fp = "/home/max/data/behavior/CAPSUP/all_subjects_additional_metrics_and_priming.csv"
 df = pd.read_csv(fp)
 
 # control for distractor presence
