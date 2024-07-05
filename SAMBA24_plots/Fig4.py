@@ -28,7 +28,7 @@ for subject in subjects:
     subject_data = df_mean[df_mean['subject_id'] == subject]
     # Aligning subject data with bar positions
     x_positions = [bar_positions[i] for i, _ in enumerate(subject_data['SingletonPresent'])]
-    plt.plot(x_positions, subject_data['iscorrect'], marker='o', linestyle='-', color='black', alpha=0.5)
+    plt.plot(x_positions, subject_data['iscorrect'], marker='', linestyle='-', color='black', alpha=0.5)
 ax.set_xticklabels(["absent", "present"])
 ax.set_xlabel("Singleton Distractor")
 ax.set_ylabel("Proportion Correct")

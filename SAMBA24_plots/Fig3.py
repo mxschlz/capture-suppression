@@ -26,13 +26,13 @@ pivot_df = mean_correct_df.pivot(index='subject',
                                  columns='spatial_priming',
                                  values='mean_correct').fillna(0).reset_index()
 # look for correlation between spatial and temporal priming
-fig, ax = plt.subplots(figsize=(6, 4))
+fig, ax = plt.subplots(figsize=(4, 4))
 sns.lineplot(data=line_data, x="x", y="y", color="black", linestyle="solid")
 sns.scatterplot(x=pivot_df.negative_priming,
-                y=pivot_df.positive_priming, s=300, markers="O", color=palette[71])
+                y=pivot_df.positive_priming, s=300, markers="O", color=palette[74])
 ax.set_xlabel("Percentage Correct (Negative Priming; NP)")
 ax.set_ylabel("Percentage Correct (Positive Priming; PP)")
-plt.savefig("/home/max/figures/SAMBA24/figure3.svg")
+plt.savefig("/home/max/temp/SAMBA24/figure3.svg")
 
 # control for distractor presence
 no_priming_trials = df[(df['spatial_priming'] == 'no_priming') & (df['Singletonpres'] == 1)]
@@ -55,7 +55,7 @@ for subject in subjects:
     subject_data = df_mean[df_mean['subject'] == subject]
     # Aligning subject data with bar positions
     x_positions = [bar_positions[i] for i, _ in enumerate(subject_data['spatial_priming'])]
-    plt.plot(x_positions, subject_data['correct'], marker='o', linestyle='-', color='black', alpha=0.5)
+    plt.plot(x_positions, subject_data['correct'], marker='', linestyle='-', color='black', alpha=0.5)
 ax.set_xlabel("NP                               X                               PP")
 ax.set_ylabel("Percentage Correct")
 plt.savefig("/home/max/figures/SAMBA24/figure3_subfigure.svg")

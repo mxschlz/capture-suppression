@@ -17,22 +17,22 @@ df = df[(df['event_type'] == 'response') & (df['rt'] != 0)]
 # get data for dashed line
 line_data = pd.DataFrame({'x': [0, 1], 'y': [0, 1]})
 # get only singleton present trials
-sp = df[df["SingletonPresent"] == 1]
+# sp = df[df["SingletonPresent"] == 1]
 # Filter for 'positive_priming' and 'negative_priming'
-spaceprime = sp[sp['SpatialPriming'].isin([-1, 1])]
+spaceprime = df[df['SpatialPriming'].isin([-1, 1])]
 # Calculate mean correct by subject and priming type
-mean_correct_df = spaceprime.groupby(['subject_id', 'SpatialPriming'])['iscorrect'].mean().reset_index(name='mean_correct')
+mean_correct_df = df.groupby(['subject_id', 'SpatialPriming'])['iscorrect'].mean().reset_index(name='mean_correct')
 # Pivot to get priming types as columns
 pivot_df = mean_correct_df.pivot(index='subject_id',
                                  columns='SpatialPriming',
                                  values='mean_correct').fillna(0).reset_index()
 # look for correlation between spatial and temporal priming
-fig, ax = plt.subplots(figsize=(6, 4))
+fig, ax = plt.subplots(figsize=(4, 4))
 sns.lineplot(data=line_data, x="x", y="y", color="black", linestyle="solid")
-sns.scatterplot(data=pivot_df, x=-1, y=1, s=300, markers="O", color=palette[71])
+sns.scatterplot(data=pivot_df, x=-1, y=1, s=300, markers="O", color=palette[71], alpha=0.5)
 ax.set_xlabel("Percentage Correct (Negative Priming; NP)")
 ax.set_ylabel("Percentage Correct (Positive Priming; PP)")
-plt.savefig("/home/max/figures/SAMBA24/Fig5.svg")
+plt.savefig("/home/max/temp/SAMBA24/Fig5.svg")
 
 
 # make subject-wise lineplots for average values in df
@@ -48,10 +48,10 @@ for subject in subjects:
     subject_data = df_mean[df_mean['subject_id'] == subject]
     # Aligning subject data with bar positions
     x_positions = [bar_positions[i] for i, _ in enumerate(subject_data['SpatialPriming'])]
-    plt.plot(x_positions, subject_data['iscorrect'], marker='o', linestyle='-', color='black', alpha=0.5)
+    plt.plot(x_positions, subject_data['iscorrect'], marker='', linestyle='-', color='black', alpha=0.5)
 ax.set_xlabel("NP                               X                               PP")
 ax.set_ylabel("Percentage Correct")
-plt.savefig("/home/max/figures/SAMBA24/figure5_subfigure.svg")
+plt.savefig("/home/max/temp/SAMBA24/figure5_subfigure.svg")
 
 
 from stats import permutation_test
