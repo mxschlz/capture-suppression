@@ -32,7 +32,7 @@ for subject in subjects:
 ax.set_xticklabels(["absent", "present"])
 ax.set_xlabel("Singleton Distractor")
 ax.set_ylabel("Proportion Correct")
-plt.savefig("/home/max/figures/SAMBA24/Fig4.svg")
+plt.savefig("/home/max/temp/SAMBA24/Fig4.svg")
 
 
 from stats import permutation_test
@@ -40,4 +40,4 @@ from stats import permutation_test
 x = df.iscorrect[df.SingletonPresent==1]
 y = df.iscorrect[df.SingletonPresent==0]
 permutation_test(x, y)
-plt.savefig("/home/max/figures/SAMBA24/permutation_fig4.svg")
+plt.savefig("/home/max/temp/SAMBA24/permutation_fig4.svg")

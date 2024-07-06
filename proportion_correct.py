@@ -5,7 +5,7 @@ import numpy as np
 plt.ion()
 
 
-fp = f"/home/max/data/behavior/all_subjects_additional_metrics.csv"
+fp = f"/home/max/data/behavior/CAPSUP/all_subjects_additional_metrics.csv"
 df = pd.read_csv(fp)
 
 # Plot individual subject data as lines
@@ -18,7 +18,7 @@ df_mean = df.groupby(['subject', 'Singletonpres']).mean().reset_index()
 df.RT[df.RT > 2 * np.std(df.RT)] = np.nan  # drop values which deviate 2 standard deviations from the mean
 
 # make barplot
-barplot = sns.violinplot(data=df, y=df.RT, hue="Singletonpres")
+barplot = sns.barplot(data=df, y=df.RT, hue="Singletonpres")
 
 # Get the positions of the bars for aligning lines correctly
 bar_positions = []
@@ -35,13 +35,23 @@ for subject in subjects:
 plt.savefig("/home/max/figures/rt_singleton_abs_vs_pres.png", dpi=400)
 plt.close()
 
-barplot = sns.barplot(data=df, y=df.correct, hue="Singletonpres")
+barplot = sns.barplot(data=df, y="correct", x="Singletonpres")
 
+bar_positions = [patch.get_x() + patch.get_width() / 2 for patch in barplot.patches]
+# Plot individual subject data as lines
+subjects = df['subject'].unique()
 for subject in subjects:
     subject_data = df_mean[df_mean['subject'] == subject]
     # Aligning subject data with bar positions
-    x_positions = [bar_positions[1] if cond == 1 else bar_positions[0] for cond in subject_data['Singletonpres']]
-    plt.plot(x_positions, subject_data['correct'], marker='o', linestyle='-', color='grey', alpha=0.5)
-
-plt.savefig("/home/max/figures/correct_singleton_abs_vs_pres.png", dpi=400)
+    x_positions = [bar_positions[i] for i, _ in enumerate(subject_data['Singletonpres'])]
+    plt.plot(x_positions, subject_data['correct'], marker='', linestyle='-', color='black', alpha=0.5)
+plt.savefig("/home/max/temp/SAMBA24/pilot_correct.svg")
 plt.close()
+
+
+from stats import permutation_test
+
+x = df.correct[df.Singletonpres==1]
+y = df.correct[df.Singletonpres==0]
+permutation_test(x, y)
+plt.savefig("/home/max/temp/SAMBA24/permutation_pliot.svg")
