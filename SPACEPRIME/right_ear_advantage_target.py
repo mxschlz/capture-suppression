@@ -13,19 +13,18 @@ sns.set_palette(list(get_subpalette([14, 84, 44]).values()))
 df = pd.read_excel("/home/max/data/behavior/SPACEPRIME/results_July_06_2024_14_16_40.xlsx")
 # some cleaning
 df = df[(df['event_type'] == 'response') & (df['rt'] != 0)]
-sp = df[df["SingletonPresent"] == 1]
-barplot = sns.barplot(data=sp, x="SingletonLoc", y="iscorrect")
-df_mean = sp.groupby(['subject_id', 'SingletonLoc']).mean(numeric_only=True).reset_index()
+barplot = sns.barplot(data=df, x="TargetLoc", y="iscorrect")
+df_mean = df.groupby(['subject_id', 'TargetLoc']).mean(numeric_only=True).reset_index()
 bar_positions = [patch.get_x() + patch.get_width() / 2 for patch in barplot.patches]
 # Plot individual subject data as lines
 subjects = df['subject_id'].unique()
 for subject in subjects:
     subject_data = df_mean[df_mean['subject_id'] == subject]
     # Aligning subject data with bar positions
-    x_positions = [bar_positions[i] for i, _ in enumerate(subject_data['SingletonLoc'])]
+    x_positions = [bar_positions[i] for i, _ in enumerate(subject_data['TargetLoc'])]
     plt.plot(x_positions, subject_data['iscorrect'], marker='', linestyle='-', color='black', alpha=0.5)
-plt.xlabel("Singleton Position")
+plt.xlabel("Target Position")
 plt.ylabel("Proportion correct")
 barplot.set_xticklabels([-90, 0, 90])
-plt.savefig("/home/max/temp/SAMBA24/Fig10.svg")
+plt.savefig("/home/max/temp/SAMBA24/Fig9.svg")
 

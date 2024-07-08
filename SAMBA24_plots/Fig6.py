@@ -7,7 +7,7 @@ from color_palette import get_subpalette
 plt.ion()
 
 # insert color palette
-sns.set_palette(list(get_subpalette([]).values()))
+sns.set_palette(list(get_subpalette([14, 84, 44]).values()))
 
 # load up dataframe
 df = pd.read_excel("/home/max/data/behavior/SPACEPRIME/results_July_06_2024_14_16_40.xlsx")
