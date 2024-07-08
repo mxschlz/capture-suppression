@@ -27,3 +27,4 @@ plt.xlabel("Target Position")
 plt.ylabel("Proportion correct")
 barplot.set_xticklabels([-90, 0, 90])
 plt.savefig("/home/max/temp/SAMBA24/Fig9.svg")
+
