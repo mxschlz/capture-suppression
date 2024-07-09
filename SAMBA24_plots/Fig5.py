@@ -39,7 +39,7 @@ plt.savefig("/home/max/temp/SAMBA24/Fig5.svg")
 df_mean = df.groupby(['subject_id', 'SpatialPriming']).mean(numeric_only=True).reset_index()
 fig, ax = plt.subplots(figsize=(6, 4))
 # make barplot
-barplot = sns.barplot(data=df, y="iscorrect", x="SpatialPriming")
+barplot = sns.barplot(data=df, y="iscorrect", x="SpatialPriming", errorbar=("se", 2))
 # Get the positions of the bars for aligning lines correctly
 bar_positions = [patch.get_x() + patch.get_width() / 2 for patch in barplot.patches]
 # Plot individual subject data as lines
@@ -59,3 +59,19 @@ from stats import permutation_test
 x = df.iscorrect[df.SpatialPriming==1]
 y = df.iscorrect[df.SpatialPriming==-1]
 permutation_test(x, y)
+
+
+import statsmodels.formula.api as smf
+import statsmodels.api as sm
+
+# Define your mixed linear model formula
+# (adjust this to your specific research question and variables)
+# Define the GLMM formula (replace with your variables)
+md = smf.mixedlm("iscorrect ~ SpatialPriming", df,
+                 groups=df["subject_id"],
+                 family=sm.families.Binomial())  # Specify binomial family
+# Fit the model
+mdf = md.fit()
+
+# Print the results summary
+print(mdf.summary())
