@@ -17,6 +17,7 @@ df = df[(df['event_type'] == 'response') & (df['rt'] != 0)]
 df["LocDistance"] = (df["TargetLoc"] - df["SingletonLoc"]).abs()
 # get singleton present trials
 singletonpres = df[df["SingletonPresent"]==1]
+singletonpres = singletonpres[singletonpres["TargetLoc"] != 2]
 barplot = sns.barplot(data=singletonpres, x="LocDistance", y="iscorrect")
 df_mean = singletonpres.groupby(['subject_id', 'LocDistance']).mean(numeric_only=True).reset_index()
 bar_positions = [patch.get_x() + patch.get_width() / 2 for patch in barplot.patches]
