@@ -20,3 +20,6 @@ ax.set(title='pYIN fundamental frequency estimation')
 fig.colorbar(img, ax=ax, format="%+2.f dB")
 ax.plot(times, f0, label='f0', color='cyan', linewidth=3)
 ax.legend(loc='upper right')
+
+mean_f0 = f0[2:15].mean()
+print("Mean f0 = {:.2f}".format(mean_f0))
