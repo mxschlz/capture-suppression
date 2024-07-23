@@ -1,15 +1,4 @@
 import pandas as pd
-import os
-
-
-results_path = '/home/max/data/behavior/SPACEPRIME/'
-df = pd.read_excel(os.path.join(results_path, 'results_June_21_2024_15_43_27.xlsx'), index_col=0)
-
-# Get unique subject IDs
-subject_ids = df['subject_id'].unique()
-
-# Get max subject ID
-max_subject_id = max(subject_ids)
 
 
 # Define a function to generate simulated subjects
@@ -38,15 +27,3 @@ def generate_simulated_subjects(df, num_new_subjects, max_subject_id):
     simulated_df = pd.concat(simulated_dfs, ignore_index=True)
 
     return simulated_df
-
-
-# Generate 2 new subjects
-simulated_df = generate_simulated_subjects(df, 4, max_subject_id)
-
-appended = pd.concat([df, simulated_df])
-appended["bootstrapped"] = 0
-appended.bootstrapped[appended.subject_id > 99] = 1
-# Print unique subject IDs in the simulated data
-print(simulated_df['subject_id'].unique())
-
-appended.to_excel(os.path.join(results_path, 'simulated_subjects_appended.xlsx'), index=False)

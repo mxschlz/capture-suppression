@@ -37,7 +37,7 @@ fp = "/home/max/data/behavior/SPACEPRIME/results_July_01_2024_14_30_30.xlsx"
 df = pd.read_excel(fp, index_col=0)
 
 res = df[(df['event_type'] == 'response') & (df['rt'] != 0)]
-bs = bootstrap.generate_simulated_subjects(res, num_new_subjects=1000, max_subject_id=99)
+bs = bootstrap.generate_simulated_subjects(res, num_new_subjects=10000, max_subject_id=99)
 new = pd.concat([res, bs])
 # Filter for 'positive_priming' and 'negative_priming'
 pp_spatial = new[new['SpatialPriming'].isin([1])]
