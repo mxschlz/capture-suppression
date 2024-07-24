@@ -11,7 +11,7 @@ plt.ion()
 sns.set_palette(list(get_subpalette([14, 84, 44]).values()))
 
 # load up dataframe
-df = pd.read_excel("/home/max/data/behavior/SPACEPRIME/results_July_01_2024_14_30_30.xlsx")
+df = pd.read_excel("/home/max/data/behavior/SPACEPRIME/results_July_06_2024_14_16_40.xlsx", index_col=0)
 # some cleaning
 df = df[(df['event_type'] == 'response') & (df['rt'] != 0)]
 # get data for dashed line
@@ -57,19 +57,18 @@ plt.savefig("/home/max/temp/SAMBA24/figure5_subfigure.svg")
 from stats import permutation_test
 
 x = df.iscorrect[df.SpatialPriming==1]
-y = df.iscorrect[df.SpatialPriming==-1]
+y = df.iscorrect[df.SpatialPriming==0]
 permutation_test(x, y)
 
 
 import statsmodels.formula.api as smf
-import statsmodels.api as sm
 
 # Define your mixed linear model formula
 # (adjust this to your specific research question and variables)
 # Define the GLMM formula (replace with your variables)
-md = smf.mixedlm("iscorrect ~ SpatialPriming", df,
-                 groups=df["subject_id"],
-                 family=sm.families.Binomial())  # Specify binomial family
+df['iscorrect'] = df['iscorrect'].astype(int)
+md = smf.mixedlm("iscorrect ~ IdentityPriming", df,
+                 groups=df["subject_id"])
 # Fit the model
 mdf = md.fit()
 
