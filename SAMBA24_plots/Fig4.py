@@ -11,7 +11,7 @@ plt.ion()
 sns.set_palette(list(get_subpalette([104, 22]).values()))
 
 # load up dataframe
-df = pd.read_excel("/home/max/data/behavior/SPACEPRIME/results_July_01_2024_14_30_30.xlsx")
+df = pd.read_excel("/home/max/data/behavior/SPACEPRIME/results_July_06_2024_14_16_40.xlsx", index_col=0)
 # some cleaning
 df = df[(df['event_type'] == 'response') & (df['rt'] != 0)]
 
@@ -19,7 +19,7 @@ df = df[(df['event_type'] == 'response') & (df['rt'] != 0)]
 df_mean = df.groupby(['subject_id', 'SingletonPresent']).mean(numeric_only=True).reset_index()
 fig, ax = plt.subplots(figsize=(6, 4))
 # make barplot
-barplot = sns.barplot(data=df, y="iscorrect", x="SingletonPresent")
+barplot = sns.barplot(data=df, y="iscorrect", x="SingletonPresent", errorbar=("se", 2))
 # Get the positions of the bars for aligning lines correctly
 bar_positions = [patch.get_x() + patch.get_width() / 2 for patch in barplot.patches]
 # Plot individual subject data as lines
