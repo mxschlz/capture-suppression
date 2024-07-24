@@ -11,6 +11,41 @@ def cohen_d(x, y):
     return (np.mean(x) - np.mean(y)) / np.sqrt(((nx - 1) * np.std(x, ddof=1) ** 2 + (ny - 1) * np.std(y, ddof=1) ** 2) / dof)
 
 
+def cohen_d_av(mean1, mean2, sd1, sd2):
+    """
+    Calculates Cohen's d using the average standard deviation (d_av).
+
+    Args:
+        mean_diff: Mean difference between conditions.
+        sd1: Standard deviation of condition 1.
+        sd2: Standard deviation of condition 2.
+
+    Returns:
+        Cohen's d_av.
+    """
+    pooled_sd = np.sqrt((sd1**2 + sd2**2) / 2)
+    mean_diff = mean1 - mean2
+    d_av = mean_diff / pooled_sd
+    return d_av
+
+
+def cohen_d_rm(mean_diff, sd1, sd2, correlation):
+    """
+    Calculates Cohen's d for repeated measures (d_rm).
+
+    Args:
+        mean_diff: Mean difference between conditions.
+        sd1: Standard deviation of condition 1.
+        sd2: Standard deviation of condition 2.
+        correlation: Correlation between measures in the two conditions.
+
+    Returns:
+        Cohen's d_rm.
+    """
+    pooled_sd = np.sqrt((sd1**2 + sd2**2 - 2 * correlation * sd1 * sd2) / 2*(1-correlation))
+    d_rm = (mean_diff / pooled_sd) * np.sqrt(2 * (1 - correlation))
+    return d_rm
+
 def permutation_test(group1, group2, n_permutations=10000, plot=True, **kwargs):
     """
     Perform a permutation test to compare two groups.
