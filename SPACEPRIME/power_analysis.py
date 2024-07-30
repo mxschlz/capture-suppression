@@ -1,8 +1,9 @@
 # estimate sample size via power analysis
-from statsmodels.stats.power import TTestIndPower
-from stats import cohen_d
+import statsmodels.stats.power as smp
+import numpy as np
 import pandas as pd
 from stats import cohen_d_rm
+import matplotlib.pyplot as plt
 
 # load up dataframe
 df = pd.read_excel("/home/max/data/behavior/SPACEPRIME/results_July_06_2024_14_16_40.xlsx", index_col=0)
@@ -44,6 +45,18 @@ print(f"Cohen's d_rm for IdentityPriming: {identity_d_rm:.3f}")
 alpha = 0.05
 power = 0.8
 # perform power analysis
-analysis = TTestIndPower()
-result = analysis.solve_power(spatial_d_rm, power=power, nobs1=None, ratio=1.0, alpha=alpha)
-print('Sample Size: %.3f' % result)
+model = smp.TTestPower()
+result_spatial = model.solve_power(spatial_d_rm, power=power, alpha=alpha)
+result_identity = model.solve_power(identity_d_rm, power=power, alpha=alpha)
+# plot power as a function of sample size
+sample_sizes = np.array(range(5, 100))
+model.plot_power(dep_var="nobs", nobs=sample_sizes, effect_size=[spatial_d_rm, identity_d_rm])
+plt.legend([f"Cohen's d [spatial priming]: {spatial_d_rm:.3f}", f"Cohen's d [identity priming]: {identity_d_rm:.3f}"])
+plt.ylabel('Power')
+plt.hlines(y=power, xmin=0, xmax=100, linestyle='dashed', colors="black")
+plt.vlines(x=result_spatial, ymin=0, ymax=1, linestyle='dashed', colors="green")
+plt.vlines(x=result_identity, ymin=0, ymax=1, linestyle='dashed', colors="grey")
+plt.savefig("/home/max/figures/SPACEPRIME/power_analysis_WP1.svg")
+
+print(result_spatial)
+print(result_identity)
