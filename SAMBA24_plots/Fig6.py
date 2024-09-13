@@ -40,7 +40,7 @@ ax.set_ylabel('Proportion correct (Distractor absent - Distractor pesent)')
 ax.set_xlabel('Block')
 ax.set_ylim(-0.1, 0.1)
 ax.set_xticklabels([1, 2, 3, 4, 5, 6])
-plt.savefig("/home/max/temp/SAMBA24/Fig6.svg")
+plt.savefig("/home/max/obsolete/SAMBA24/Fig6.svg")
 
 
 # Filter the dataframe to create df_block_0

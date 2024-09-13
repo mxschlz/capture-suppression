@@ -45,7 +45,7 @@ for subject in subjects:
     # Aligning subject data with bar positions
     x_positions = [bar_positions[i] for i, _ in enumerate(subject_data['Singletonpres'])]
     plt.plot(x_positions, subject_data['correct'], marker='', linestyle='-', color='black', alpha=0.5)
-plt.savefig("/home/max/temp/SAMBA24/pilot_correct.svg")
+plt.savefig("/home/max/obsolete/SAMBA24/pilot_correct.svg")
 plt.close()
 
 
@@ -54,4 +54,4 @@ from stats import permutation_test
 x = df.correct[df.Singletonpres==1]
 y = df.correct[df.Singletonpres==0]
 permutation_test(x, y)
-plt.savefig("/home/max/temp/SAMBA24/permutation_pliot.svg")
+plt.savefig("/home/max/obsolete/SAMBA24/permutation_pliot.svg")

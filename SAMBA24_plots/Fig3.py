@@ -32,7 +32,7 @@ sns.scatterplot(x=pivot_df.negative_priming,
                 y=pivot_df.positive_priming, s=300, markers="O", color=palette[74])
 ax.set_xlabel("Percentage Correct (Negative Priming; NP)")
 ax.set_ylabel("Percentage Correct (Positive Priming; PP)")
-plt.savefig("/home/max/temp/SAMBA24/figure3.svg")
+plt.savefig("/home/max/obsolete/SAMBA24/figure3.svg")
 
 # control for distractor presence
 no_priming_trials = df[(df['spatial_priming'] == 'no_priming') & (df['Singletonpres'] == 1)]

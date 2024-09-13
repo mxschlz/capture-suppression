@@ -26,5 +26,5 @@ for subject in subjects:
 plt.xlabel("Target Position")
 plt.ylabel("Proportion correct")
 barplot.set_xticklabels([-90, 0, 90])
-plt.savefig("/home/max/temp/SAMBA24/Fig9.svg")
+plt.savefig("/home/max/obsolete/SAMBA24/Fig9.svg")
 

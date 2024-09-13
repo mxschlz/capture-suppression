@@ -4,7 +4,7 @@ import glob
 
 
 # define data directories
-root = "/home/max/temp/BA/"
+root = "/home/max/obsolete/BA/"
 conditions = ["f2f", "vcall", "prerec"]
 for condition in conditions:
 	file_pattern = f"STIP_*_{condition}*_*.csv"  # Adjust pattern if needed
@@ -71,14 +71,14 @@ for condition in conditions:
 	# Convert `Story` to categorical
 	final_df['Story'] = final_df['Story'].astype('category')
 	# save data
-	final_df.to_excel(f"/home/max/temp/BA/final_data/{condition}_final.xlsx", index=False)
+	final_df.to_excel(f"/home/max/obsolete/BA/final_data/{condition}_final.xlsx", index=False)
 
 
 # plot some data
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-df = pd.read_excel("/home/max/temp/BA/final_data/f2f_final.xlsx")
+df = pd.read_excel("/home/max/obsolete/BA/final_data/f2f_final.xlsx")
 # Melt the dataframe to have 'Emotional_Intensity' and 'Role' columns
 # Melt the dataframe to have 'Emotional_Intensity' and 'Role' columns
 df_melted = df.melt(id_vars=['Time', 'Obs_Targ_Identity', 'Story'],
@@ -93,7 +93,7 @@ for identity in list(story2["Obs_Targ_Identity"].unique()):
 	data = story2[story2["Obs_Targ_Identity"]==identity]
 	# Create the line plot with different styles for each Obs_Targ_Identity
 	sns.lineplot(x='Time', y='Emotional_Intensity', hue='Role', data=data)
-	plt.savefig(f"/home/max/temp/BA/own_plots/f2f_{identity}_story2.jpg")
+	plt.savefig(f"/home/max/obsolete/BA/own_plots/f2f_{identity}_story2.jpg")
 	plt.close()
 
 # Define the window size for the moving average (adjust as needed)
@@ -111,5 +111,5 @@ for identity in list(story1["Obs_Targ_Identity"].unique()):
 	data = story1[story1["Obs_Targ_Identity"]==identity]
 	# Create the line plot with different styles for each Obs_Targ_Identity
 	sns.lineplot(x='Time', y='Smoothed_Emotional_Intensity', hue='Role', data=data)
-	plt.savefig(f"/home/max/temp/BA/own_plots/smoothed/f2f_{identity}_story1.jpg")
+	plt.savefig(f"/home/max/obsolete/BA/own_plots/smoothed/f2f_{identity}_story1.jpg")
 	plt.close()

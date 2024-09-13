@@ -31,4 +31,4 @@ for subject in subjects:
 plt.xlabel("Absolute Target-Distractor Distance")
 plt.ylabel("Proportion correct")
 barplot.set_xticklabels(["90°", "180°"])
-plt.savefig("/home/max/temp/SAMBA24/Fig8.svg")
+plt.savefig("/home/max/obsolete/SAMBA24/Fig8.svg")

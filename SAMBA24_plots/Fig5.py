@@ -32,7 +32,7 @@ sns.lineplot(data=line_data, x="x", y="y", color="black", linestyle="solid")
 sns.scatterplot(data=pivot_df, x=-1, y=1, s=300, markers="O", color=palette[71], alpha=0.5)
 ax.set_xlabel("Percentage Correct (Negative Priming; NP)")
 ax.set_ylabel("Percentage Correct (Positive Priming; PP)")
-plt.savefig("/home/max/temp/SAMBA24/Fig5.svg")
+plt.savefig("/home/max/obsolete/SAMBA24/Fig5.svg")
 
 
 # make subject-wise lineplots for average values in df
@@ -51,7 +51,7 @@ for subject in subjects:
     plt.plot(x_positions, subject_data['iscorrect'], marker='', linestyle='-', color='black', alpha=0.5)
 ax.set_xlabel("NP                               X                               PP")
 ax.set_ylabel("Percentage Correct")
-plt.savefig("/home/max/temp/SAMBA24/figure5_subfigure.svg")
+plt.savefig("/home/max/obsolete/SAMBA24/figure5_subfigure.svg")
 
 
 from stats import permutation_test
