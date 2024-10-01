@@ -10,9 +10,9 @@ plt.ion()
 sns.set_palette(list(get_subpalette([14, 84, 44]).values()))
 
 # load up dataframe
-df = pd.read_excel("/home/max/data/behavior/SPACEPRIME/results_July_06_2024_14_16_40.xlsx")
+df = pd.read_excel("/home/max/data/behavior/SPACEPRIME/sub-99_clean.xlsx")
 # some cleaning
-df = df[(df['event_type'] == 'response') & (df['rt'] != 0)]
+df = df[(df['event_type'] == 'mouse_click') & (df['phase'] != 2)]
 barplot = sns.barplot(data=df, x="TargetLoc", y="iscorrect")
 df_mean = df.groupby(['subject_id', 'TargetLoc']).mean(numeric_only=True).reset_index()
 bar_positions = [patch.get_x() + patch.get_width() / 2 for patch in barplot.patches]

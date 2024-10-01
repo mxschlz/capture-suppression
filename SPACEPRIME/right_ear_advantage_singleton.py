@@ -10,9 +10,9 @@ plt.ion()
 sns.set_palette(list(get_subpalette([14, 84, 44]).values()))
 
 # load up dataframe
-df = pd.read_excel("/home/max/data/behavior/SPACEPRIME/results_July_06_2024_14_16_40.xlsx")
+df = pd.read_excel("/home/max/data/behavior/SPACEPRIME/sub-99_clean.xlsx")
 # some cleaning
-df = df[(df['event_type'] == 'response') & (df['rt'] != 0)]
+df = df[(df['event_type'] == 'mouse_click') & (df['phase'] != 2)]
 sp = df[df["SingletonPresent"] == 1]
 barplot = sns.barplot(data=sp, x="SingletonLoc", y="iscorrect")
 df_mean = sp.groupby(['subject_id', 'SingletonLoc']).mean(numeric_only=True).reset_index()

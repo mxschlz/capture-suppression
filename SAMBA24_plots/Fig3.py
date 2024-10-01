@@ -11,7 +11,7 @@ plt.ion()
 sns.set_palette(list(get_subpalette([14, 84, 44]).values()))
 
 # load dataframe
-fp = "/home/max/data/behavior/CAPSUP/all_subjects_additional_metrics_and_priming.csv"
+fp = "/home/max/data/behavior/SPACEPRIME/all_subjects_additional_metrics_and_priming.csv"
 df = pd.read_csv(fp)
 # get data for dashed line
 line_data = pd.DataFrame({'x': [0, 1], 'y': [0, 1]})
