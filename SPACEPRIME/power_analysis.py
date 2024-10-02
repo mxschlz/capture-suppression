@@ -60,3 +60,10 @@ plt.savefig("/home/max/figures/SPACEPRIME/power_analysis_WP1.svg")
 
 print(result_spatial)
 print(result_identity)
+
+# calculate estimated power for WP2 and 3
+n = 50
+result = model.solve_power(effect_size=0.5, power=None, alpha=alpha, nobs=n)
+
+model_ind = smp.TTestIndPower()
+result_ind = model_ind.solve_power(effect_size=0.6, power=None, alpha=alpha, nobs1=n)
