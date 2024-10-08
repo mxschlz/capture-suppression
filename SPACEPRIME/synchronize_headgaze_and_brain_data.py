@@ -2,6 +2,8 @@ import mne
 import pandas as pd
 from mne.viz.eyetracking import plot_gaze
 import numpy as np
+from matplotlib import pyplot as plt
+from encoding import EEG_TRIGGER_MAP
 
 
 # get headgaze data
@@ -54,6 +56,24 @@ zero_raw = mne.io.RawArray(zero_data, raw_hg.info)
 # Hänge die Null-Daten an das kürzere Raw-Objekt an
 raw_short = mne.concatenate_raws([raw_hg, zero_raw])
 # Jetzt kannst du die Daten zusammenführen
-concat = raw_eeg.add_channels([raw_short])
+raw = raw_eeg.add_channels([raw_short])
 
-events = mne.io.events
+events, event_id = mne.events_from_annotations(raw)
+epochs = mne.Epochs(raw, events=events, tmin=-0.3, tmax=1.0, baseline=None, preload=True)
+gaze_picks = ["Left Eye Center X", "Right Eye Center X", "Right Eye Center Y", "Left Eye Center Y"]
+head_picks = ["Roll", "Pitch", "Yaw"]
+epochs.apply_baseline().average().plot(picks=gaze_picks)
+#plot_gaze(epochs, width=1920, height=1080)
+data = epochs.apply_baseline().average().get_data(picks=head_picks)
+r = np.linspace(-0.3, 1, data.shape[1])
+theta = data[2]
+theta_rad = np.deg2rad(theta)
+# plot the stuff
+ax = plt.subplot(polar=True)
+ax.set_theta_zero_location('N', offset=0)
+ax.set_thetamin(-90)
+ax.set_thetamax(90)
+ax.plot(np.deg2rad(data[0]), r, 'r', label="Rotation", color="r")
+ax.plot(np.deg2rad(data[1]), r, 'r', label="Elevation", color="g")
+ax.plot(np.deg2rad(data[2]), r, 'r', label="Azimuth", color="b")
+ax.legend()
