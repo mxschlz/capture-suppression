@@ -1,34 +1,36 @@
-import matplotlib.pyplot as plt
 import mne
-import numpy as np
-import scipy.io as sio
+from SPACEPRIME.encoding import EEG_TRIGGER_MAP
 
-from pyprep.prep_pipeline import PrepPipeline
 
 mne.set_log_level("INFO")
 # get subject id and settings path
 subject_id = 101
 data_path = f"/home/max/data/SPACEPRIME/sub-{subject_id}/eeg/"
-settings_path = "/home/max/data/setting/"
+settings_path = "/home/max/data/settings/"
 # read raw fif
 raw = mne.io.read_raw_fif(data_path + "concatenated_raw.fif", preload=True)
 # Add a montage to the data
 montage = mne.channels.read_custom_montage(settings_path + "AS-96_REF.bvef")
+raw.set_montage(montage)
+# add reference channel
+raw.add_reference_channels(["Fz"])
+# get events
+events, event_id = mne.events_from_annotations(raw)
+event_dict = EEG_TRIGGER_MAP
 # Extract some info
 sample_rate = raw.info["sfreq"]
 # Make a copy of the data
 raw_copy = raw.copy()
-# Fit prep
-prep_params = {
-    "ref_chs": "eeg",
-    "reref_chs": "eeg",
-    "line_freqs": np.arange(50, sample_rate / 2, 50),
-}
-# instantiate
-prep = PrepPipeline(raw_copy, prep_params, montage)
-# fit pipeline
-prep.fit()
-# check bad channels
-print(f"Bad channels: {prep.interpolated_channels}")
-print(f"Bad channels original: {prep.noisy_channels_original['bad_all']}")
-print(f"Bad channels after interpolation: {prep.still_noisy_channels}")
+# filter raw
+raw_filt = raw.filter(1, 40)
+# cut epochs
+epochs = mne.Epochs(raw_filt, events=events, preload=True, tmin=-0.2, tmax=1.0)
+bad_chs = ["TP9"]
+epochs.info["bads"] = bad_chs
+epochs.interpolate_bads()
+# average reference
+epochs.set_eeg_reference(ref_channels="average", projection=True)
+epochs.apply_proj()
+# apply ICA
+ica = mne.preprocessing.ICA(n_components=20)
+ica.fit(epochs)
