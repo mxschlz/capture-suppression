@@ -10,9 +10,9 @@ plt.ion()
 sns.set_palette(list(get_subpalette([14, 84, 44]).values()))
 
 # load up dataframe
-df = pd.read_excel("/home/max/data/behavior/SPACEPRIME/sub-99_clean.xlsx")
+df = pd.read_excel("/home/max/data/SPACEPRIME/sub-101/beh/results_October_10_2024_16_56_41.xlsx", index_col=0)
 # some cleaning
-df = df[(df['event_type'] == 'mouse_click') & (df['phase'] != 2)]
+df = df[(df['event_type'] == 'mouse_click')]
 sp = df[df["SingletonPresent"] == 1]
 barplot = sns.barplot(data=sp, x="SingletonLoc", y="iscorrect")
 df_mean = sp.groupby(['subject_id', 'SingletonLoc']).mean(numeric_only=True).reset_index()
@@ -27,5 +27,5 @@ for subject in subjects:
 plt.xlabel("Singleton Position")
 plt.ylabel("Proportion correct")
 barplot.set_xticklabels([-90, 0, 90])
-plt.savefig("/home/max/obsolete/SAMBA24/Fig10.svg")
+plt.savefig("/home/max/figures/SPACEPRIME/singleton_iscorrect.svg")
 
