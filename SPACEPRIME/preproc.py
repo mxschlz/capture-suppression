@@ -1,4 +1,5 @@
 import mne
+import mne_icalabel
 
 
 mne.set_log_level("INFO")
@@ -18,20 +19,19 @@ bad_chs = ["TP9"]
 raw.info["bads"] = bad_chs
 raw.interpolate_bads()
 # average reference
-raw.set_eeg_reference(ref_channels="average", projection=True)
-raw.apply_proj()
+raw.set_eeg_reference(ref_channels="average")
 # Downsample because the computer crashes if sampled with 1000 Hz :-(
 raw = raw.resample(250)
 # Filter the data
-raw_filt = raw.filter(0.1, 40)
+raw_filt = raw.copy().filter(1, 100)
 # apply ICA
-ica = mne.preprocessing.ICA()
+ica = mne.preprocessing.ICA(method="infomax", fit_params=dict(extended=True))
 ica.fit(raw_filt)
-ica.plot_components(picks=range(20))
-ica.plot_sources(raw_filt, picks=range(20))
-exclude = [0]
-# ica.plot_properties(raw_filt, picks=exclude)
-ica.apply(raw_filt, exclude=exclude)
+#ica.plot_components(picks=range(20))
+#ica.plot_sources(raw_filt, picks=range(20))
+ic_labels = mne_icalabel.label_components(raw_filt, ica, method="iclabel")
+labels = ic_labels["labels"]
+exclude_idx = [idx for idx, label in enumerate(ic_labels["labels"]) if label not in ["brain", "other"]]
 # get events from annotations
 events, event_id = mne.events_from_annotations(raw)
 # rename the keys in the event_id
@@ -42,7 +42,6 @@ for key, value in event_id.items():
 event_id = renamed_event_id
 # filter for values above 10
 event_dict = {key: value for key, value in event_id.items() if value >= 9}
-
 # cut epochs
 epochs = mne.Epochs(raw_filt, events=events, event_id=event_dict, preload=True, tmin=-0.2, tmax=1.5, baseline=(None, 0))
 evokeds = epochs.average(by_event_type=True)

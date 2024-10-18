@@ -1,7 +1,7 @@
 import mne
-from SPACEPRIME.encoding import EEG_TRIGGER_MAP
 
-mne.set_log_level("INFO")
+
+mne.set_log_level("DEBUG")
 # get subject id and settings path
 subject_id = 101
 data_path = f"/home/max/data/SPACEPRIME/sub-{subject_id}/eeg/"
