@@ -9,6 +9,8 @@ data_path = f"/home/max/data/SPACEPRIME/sub-{subject_id}/eeg/"
 settings_path = "/home/max/data/SPACEPRIME/settings/"
 # read raw fif
 raw = mne.io.read_raw_fif(data_path + "sub-101_task-spaceprime_raw.fif", preload=True)
+# get events from annotations
+events, event_id = mne.events_from_annotations(raw)
 # add reference channel
 raw.add_reference_channels(["Fz"])
 # Add a montage to the data
@@ -21,7 +23,7 @@ raw.interpolate_bads()
 # average reference
 raw.set_eeg_reference(ref_channels="average")
 # Downsample because the computer crashes if sampled with 1000 Hz :-(
-raw = raw.resample(250)
+raw, events = raw.resample(250, events=events)
 # Filter the data. These values are needed for the CNN to label the ICs effectively
 raw_filt = raw.copy().filter(1, 100)
 # apply ICA
@@ -34,9 +36,7 @@ print(f"Excluding these ICA components: {exclude_idx}")
 reconst_raw = raw.copy()
 ica.apply(reconst_raw, exclude=exclude_idx)
 # band pass filter
-reconst_raw_filt = reconst_raw.copy().filter(0.1, None).notch_filter([50, 100])
-# get events from annotations
-events, event_id = mne.events_from_annotations(raw)
+reconst_raw_filt = reconst_raw.copy().filter(0.1, 40)
 # rename the keys in the event_id
 renamed_event_id = {}
 for key, value in event_id.items():
@@ -46,7 +46,9 @@ event_id = renamed_event_id
 # filter for values above 10
 event_dict = {key: value for key, value in event_id.items() if value >= 9}
 # cut epochs
-epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=event_dict, preload=True, tmin=-0.2, tmax=1.5, baseline=(None, 0))
+epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=event_dict, preload=True, tmin=-0.2, tmax=1.5)
+# plot epochs
+epochs.plot_image(picks="Cz")
 # adjust timeline of epochs
 times = epochs.get_data()[2]
 evokeds = epochs.average(by_event_type=True)
@@ -54,4 +56,13 @@ evokeds = epochs.average(by_event_type=True)
 np_trials = [x for x in evokeds if int(x.comment) > 200 ]
 pp_trials = [x for x in evokeds if 200 > int(x.comment) > 100 ]
 c_trials = [x for x in evokeds if int(x.comment) < 100 ]
+left_target_trials = [x for x in evokeds if int(x.comment) in ]
+right_target_trials = None
+left_singleton_trials = None
+right_singleton_trials = None
+singleton_abs_trials = [x for x in evokeds if x.comment.endswith("0")]
+singleton_pres_trials = [x for x in evokeds if not x.comment.endswith("0")]
+conds = list(event_dict.keys())
+evks = dict(zip(conds, evokeds))
 
+conds_left = []
