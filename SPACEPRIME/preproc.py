@@ -1,6 +1,7 @@
 import mne
 import mne_icalabel
-
+import autoreject
+from SPACEPRIME.encoding import encoding
 
 mne.set_log_level("INFO")
 # get subject id and settings path
@@ -37,32 +38,16 @@ reconst_raw = raw.copy()
 ica.apply(reconst_raw, exclude=exclude_idx)
 # band pass filter
 reconst_raw_filt = reconst_raw.copy().filter(0.1, 40)
-# rename the keys in the event_id
-renamed_event_id = {}
-for key, value in event_id.items():
-	new_key = key.replace('Stimulus/S', '').strip()  # Remove "Stimulus/S" and strip any spaces
-	renamed_event_id[new_key] = value
-event_id = renamed_event_id
-# filter for values above 10
-event_dict = {key: value for key, value in event_id.items() if value >= 9}
 # cut epochs
-epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=event_dict, preload=True, tmin=-0.2, tmax=1.5)
+# get rejection criteria:
+#reject = reject_based_on_snr(reconst_raw_filt, signal_interval=(0.35, 0.6), epoch_interval=(-0.2, 1.5),
+                             #event_dict=event_dict)
+epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=-0.2, tmax=1.5,
+                    baseline=None)
+# reject epochs
+ar = autoreject.AutoReject(n_jobs=-1)
+epochs, log = ar.fit_transform(epochs, return_log=True)
 # plot epochs
 epochs.plot_image(picks="Cz")
-# adjust timeline of epochs
-times = epochs.get_data()[2]
-evokeds = epochs.average(by_event_type=True)
-# sort evokeds
-np_trials = [x for x in evokeds if int(x.comment) > 200 ]
-pp_trials = [x for x in evokeds if 200 > int(x.comment) > 100 ]
-c_trials = [x for x in evokeds if int(x.comment) < 100 ]
-left_target_trials = [x for x in evokeds if int(x.comment) in ]
-right_target_trials = None
-left_singleton_trials = None
-right_singleton_trials = None
-singleton_abs_trials = [x for x in evokeds if x.comment.endswith("0")]
-singleton_pres_trials = [x for x in evokeds if not x.comment.endswith("0")]
-conds = list(event_dict.keys())
-evks = dict(zip(conds, evokeds))
-
-conds_left = []
+# save epochs
+epochs.save("/home/max/data/SPACEPRIME/derivatives/epoching/sub-101/eeg/sub-101_task-spaceprime-epo.fif", overwrite=True)
