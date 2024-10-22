@@ -10,7 +10,7 @@ plt.ion()
 sns.set_palette(list(get_subpalette([14, 84, 44]).values()))
 
 # load up dataframe
-df = pd.read_excel("/home/max/data/SPACEPRIME/sub-101/beh/results_October_10_2024_16_56_41.xlsx", index_col=0)
+df = pd.read_excel("/home/max/data/SPACEPRIME/sub-101/beh/sub-101_task-spaceprime.xlsx", index_col=0)
 df = df[(df['event_type'] == 'mouse_click')]
 
 # make subject-wise lineplots for average values in df
