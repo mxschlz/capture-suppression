@@ -26,7 +26,7 @@ for subject in subjects:
     # Aligning subject data with bar positions
     x_positions = [bar_positions[i] for i, _ in enumerate(subject_data['Priming'])]
     plt.plot(x_positions, subject_data['iscorrect'], marker='', linestyle='-', color='black', alpha=0.5)
-plt.xlabel("Target Position")
+plt.xlabel("Priming")
 plt.ylabel("Proportion correct")
 barplot.set_xticklabels([-1, 0, 1])
 # save figure
