@@ -6,10 +6,10 @@ from SPACEPRIME.encoding import encoding
 mne.set_log_level("INFO")
 # get subject id and settings path
 subject_id = 101
-data_path = f"/home/max/data/SPACEPRIME/sub-{subject_id}/eeg/"
+data_path = f"/home/max/data/SPACEPRIME/raw/sub-{subject_id}/eeg/"
 settings_path = "/home/max/data/SPACEPRIME/settings/"
 # read raw fif
-raw = mne.io.read_raw_fif(data_path + "sub-101_task-spaceprime_raw.fif", preload=True)
+raw = mne.io.read_raw_fif(data_path + f"sub-{subject_id}_task-spaceprime_raw.fif", preload=True)
 # get events from annotations
 events, event_id = mne.events_from_annotations(raw)
 # add reference channel
@@ -37,17 +37,19 @@ print(f"Excluding these ICA components: {exclude_idx}")
 reconst_raw = raw.copy()
 ica.apply(reconst_raw, exclude=exclude_idx)
 # band pass filter
-reconst_raw_filt = reconst_raw.copy().filter(0.1, 40)
+reconst_raw_filt = reconst_raw.copy().filter(1, 40)
+raw.save(f"/home/max/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime_raw.fif",
+         overwrite=True)
 # cut epochs
 # get rejection criteria:
 #reject = reject_based_on_snr(reconst_raw_filt, signal_interval=(0.35, 0.6), epoch_interval=(-0.2, 1.5),
                              #event_dict=event_dict)
-epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=-0.2, tmax=1.5,
+epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=-0.2, tmax=2.0,
                     baseline=None)
 # reject epochs
 ar = autoreject.AutoReject(n_jobs=-1)
 epochs, log = ar.fit_transform(epochs, return_log=True)
 # plot epochs
-epochs.plot_image(picks="Cz")
+epochs.copy().apply_baseline().plot_image(picks="Cz")
 # save epochs
-epochs.save("/home/max/data/SPACEPRIME/derivatives/epoching/sub-101/eeg/sub-101_task-spaceprime-epo.fif", overwrite=True)
+epochs.save(f"/home/max/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif", overwrite=True)
