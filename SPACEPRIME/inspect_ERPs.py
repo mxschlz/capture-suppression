@@ -41,27 +41,35 @@ contra_singleton_epochs = np.mean(np.concatenate([left_singleton_epochs.copy().g
 # get the ipsilateral evoked response and average
 ipsi_singleton_epochs = np.mean(np.concatenate([left_singleton_epochs.copy().get_data(picks="C3"),
                                right_singleton_epochs.copy().get_data(picks="C4")], axis=1), axis=1)
-from scipy.stats import ttest_ind
+from scipy.stats import ttest_ind, ttest_rel
 result_target = ttest_ind(contra_target_epochs, ipsi_target_epochs, axis=0)
 result_singleton = ttest_ind(contra_singleton_epochs, ipsi_singleton_epochs, axis=0)
 # plot the data
 times = epochs.average().times
-fig, ax = plt.subplots(2, 2, sharex=True)
+fig, ax = plt.subplots(2, 2, sharex=False)
 ax[0][0].plot(times, contra_target_data[0], color="r")
 ax[0][0].plot(times, ipsi_target_data[0], color="b")
 ax[0][0].axvspan(0.65, 0.85, color='gray', alpha=0.3)  # Shade the area
+ax[0][0].axvspan(0.35, 0.55, color='gray', alpha=0.3)  # Shade the area
 ax[0][0].legend(["Contra", "Ipsi"])
 ax[0][0].set_title("Target lateral")
 ax[0][0].set_ylabel("Amplitude [µV]")
 ax[0][1].plot(times, contra_singleton_data[0], color="r")
+ax[0][1].axvspan(0.65, 0.85, color='gray', alpha=0.3)  # Shade the area
+ax[0][1].axvspan(0.35, 0.55, color='gray', alpha=0.3)  # Shade the area
 ax[0][1].plot(times, ipsi_singleton_data[0], color="b")
 ax[0][1].axvspan(0.65, 0.85, color='gray', alpha=0.3)  # Shade the area
+ax[0][1].axvspan(0.35, 0.55, color='gray', alpha=0.3)  # Shade the area
 ax[0][1].legend(["Contra", "Ipsi"])
 ax[0][1].set_title("Singleton lateral")
 ax[0][1].set_ylabel("Amplitude [µV]")
 ax[0][1].set_xlabel("Time [s]")
 ax[1][0].plot(times, result_target[0])
+ax[1][0].axvspan(0.65, 0.85, color='gray', alpha=0.3)  # Shade the area
+ax[1][0].axvspan(0.35, 0.55, color='gray', alpha=0.3)  # Shade the area
 ax[1][1].plot(times, result_singleton[0])
+ax[1][1].axvspan(0.65, 0.85, color='gray', alpha=0.3)  # Shade the area
+ax[1][1].axvspan(0.35, 0.55, color='gray', alpha=0.3)  # Shade the area
 plt.tight_layout()
 
 # compute power density spectrum for evoked response and look for frequency tagging
