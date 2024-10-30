@@ -5,7 +5,7 @@ plt.ion()
 
 
 # some params
-freqs = np.arange(1, 31, 1)  # 1 to 30 Hz
+freqs = np.arange(1, 31, 0.5)  # 1 to 30 Hz
 n_cycles = freqs / 2  # different number of cycle per frequency
 method = "morlet"  # wavelet
 decim = 1  # keep all the samples along the time axis
@@ -29,7 +29,7 @@ power.plot_topo(baseline=(None, 0), mode="zscore")
 power.plot(baseline=(None, 0), combine="mean", mode="zscore")
 # now, calculate single-trial alpha power lateralization indices for targets and singletons
 # only use alpha frequency for the lateralization index analysis
-alpha_freqs = np.arange(1, 31, 1)
+alpha_freqs = np.arange(1, 31, 0.5)
 n_cycles_alpha = alpha_freqs / 2
 # fig, ax = plt.subplots(1, 2)
 power_select_left = left_target_epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles_alpha, decim=decim,
