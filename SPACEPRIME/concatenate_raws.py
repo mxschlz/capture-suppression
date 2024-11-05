@@ -10,4 +10,4 @@ for filename in raw_filenames:
 	raws.append(mne.io.read_raw_brainvision(data_path + filename, preload=True))
 
 raw = mne.concatenate_raws(raws)
-raw.save(data_path + "concatenated_raw.fif")
+raw.save(data_path + f"sub-{subject_id}_task-spaceprime_raw.fif")
