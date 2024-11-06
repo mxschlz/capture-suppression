@@ -13,7 +13,6 @@ all_conds = list(epochs.event_id.keys())
 left_singleton_epochs = epochs[[x for x in all_conds if "Target-2-Singleton-1" in x]]
 right_singleton_epochs = epochs[[x for x in all_conds if "Target-2-Singleton-3" in x]]
 mne.epochs.equalize_epoch_counts([left_singleton_epochs, right_singleton_epochs], method="random")
-
 # get the contralateral evoked response and average
 contra_singleton_data = np.mean([left_singleton_epochs.copy().average(picks=["C4"]).get_data(),
                                     right_singleton_epochs.copy().average(picks=["C3"]).get_data()], axis=0)
