@@ -1,19 +1,15 @@
-import matplotlib
-matplotlib.use("Qt5Agg")
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from color_palette import get_subpalette
-from scipy.stats import ttest_ind
 plt.ion()
 
 # insert color palette
 sns.set_palette(list(get_subpalette([14, 84, 44]).values()))
-
-# load up dataframe
-df = pd.read_excel("/home/max/data/SPACEPRIME/sub-101/beh/results_October_10_2024_16_56_41.xlsx", index_col=0)
-# some cleaning
-df = df[(df['event_type'] == 'mouse_click')]
+# load up the data
+df = pd.read_csv("/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-102/beh/sub-102_clean.csv", index_col=0)
+# filter for mouse click responses on time (!= phase 2 --> ITI)
+df = df[(df['event_type'] == 'mouse_click') & (df["phase"] != 2)]
 
 # Filter the dataframe to only include rows where SingletonPresent is 0
 df_singleton_absent = df[df['SingletonPresent'] == 0]
@@ -38,6 +34,6 @@ fig, ax = plt.subplots(figsize=(6, 4))
 barplot = sns.barplot(x='block', y='iscorrect_diff', data=df_merged, errorbar=("se", 1))
 ax.set_ylabel('Proportion correct (Distractor absent - Distractor pesent)')
 ax.set_xlabel('Block')
-ax.set_ylim(-0.1, 0.1)
-ax.set_xticklabels([1, 2, 3, 4, 5, 6, 7, 8])
+# ax.set_ylim(-0.1, 0.1)
+ax.set_xticklabels([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 plt.savefig("/home/max/figures/SPACEPRIME/iscorrect_reversal_over_blocks.svg")

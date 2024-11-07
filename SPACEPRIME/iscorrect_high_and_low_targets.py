@@ -1,5 +1,3 @@
-import matplotlib
-matplotlib.use("Qt5Agg")
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -10,8 +8,8 @@ plt.ion()
 # insert color palette
 sns.set_palette(list(get_subpalette([14, 84, 44]).values()))
 # load up dataframe
-df = pd.read_excel("/home/max/data/SPACEPRIME/sub-101/beh/sub-101_task-spaceprime.xlsx", index_col=0)
-df = df[(df['event_type'] == 'mouse_click')]
+df = pd.read_csv("/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-102/beh/sub-102_clean.csv", index_col=0)
+df = df[(df['event_type'] == 'mouse_click') & (df["phase"] != 2)]
 # plot the data
 barplot = sns.barplot(data=df, x="target_modulation", y="iscorrect", errorbar=None, hue="SingletonPresent")
 plt.xlabel("Target pitch")
