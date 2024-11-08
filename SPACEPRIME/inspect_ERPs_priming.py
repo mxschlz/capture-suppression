@@ -3,8 +3,9 @@ import matplotlib.pyplot as plt
 plt.ion()
 
 
+subject_id = 102
 # load epochs
-epochs = mne.read_epochs("/home/max/data/SPACEPRIME/derivatives/epoching/sub-101/eeg/sub-101_task-spaceprime-epo.fif",
+epochs = mne.read_epochs(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif",
                          preload=True)
 # epochs.apply_baseline()
 all_conds = list(epochs.event_id.keys())
