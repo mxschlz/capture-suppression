@@ -5,9 +5,16 @@ plt.ion()
 
 
 subject_id = 102
-# load epochs
-epochs = mne.read_epochs(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif",
-                         preload=True).crop(0, 0.5)
+if subject_id == 101:
+    # load epochs
+    epochs = mne.read_epochs(
+        f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif",
+        preload=True).crop(0.35, 0.85)
+elif subject_id == 102:
+    # load epochs
+    epochs = mne.read_epochs(
+        f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif",
+        preload=True).crop(0, 0.5)
 # epochs.apply_baseline()
 all_conds = list(epochs.event_id.keys())
 # Separate epochs based on distractor location
@@ -17,6 +24,9 @@ mne.epochs.equalize_epoch_counts([left_singleton_epochs, right_singleton_epochs]
 # get the contralateral evoked response and average
 contra_singleton_data = np.mean([left_singleton_epochs.copy().average(picks=["C4"]).get_data(),
                                     right_singleton_epochs.copy().average(picks=["C3"]).get_data()], axis=0)
+# get the ipsilateral evoked response and average
+ipsi_singleton_data = np.mean([left_singleton_epochs.copy().average(picks=["C3"]).get_data(),
+                                  right_singleton_epochs.copy().average(picks=["C4"]).get_data()], axis=0)
 # now, do the same for the lateral targets
 # Separate epochs based on target location
 left_target_epochs = epochs[[x for x in all_conds if "Target-1-Singleton-2" in x]]
@@ -25,6 +35,9 @@ mne.epochs.equalize_epoch_counts([left_target_epochs, right_target_epochs], meth
 # get the contralateral evoked response and average
 contra_target_data = np.mean([left_target_epochs.copy().average(picks=["C4"]).get_data(),
                                  right_target_epochs.copy().average(picks=["C3"]).get_data()], axis=0)
+# get the ipsilateral evoked response and average
+ipsi_target_data = np.mean([left_target_epochs.copy().average(picks=["C3"]).get_data(),
+                               right_target_epochs.copy().average(picks=["C4"]).get_data()], axis=0)
 # get the trial-wise data for controls
 left_control_epochs = epochs[[x for x in all_conds if not "Target-1" in x and not "Singleton-1" in x and not "Singleton-0" in x]]
 right_control_epochs = epochs[[x for x in all_conds if not "Target-3" in x and not "Singleton-3" in x and not "Singleton-0" in x]]
@@ -32,7 +45,11 @@ mne.epochs.equalize_epoch_counts([left_control_epochs, right_control_epochs], me
 # get the contralateral evoked response and average
 contra_control_data = np.mean([left_control_epochs.copy().average(picks=["C4"]).get_data(),
                                  right_control_epochs.copy().average(picks=["C3"]).get_data()], axis=0)
-
+ipsi_control_data = np.mean([left_control_epochs.copy().average(picks=["C3"]).get_data(),
+                                 right_control_epochs.copy().average(picks=["C4"]).get_data()], axis=0)
+diff_singleton = contra_singleton_data - ipsi_singleton_data
+diff_target = contra_target_data - ipsi_target_data
+diff_control = contra_control_data - ipsi_control_data
 times = epochs.average().times
 # first plot
 plt.plot(times, contra_target_data[0], color="forestgreen")
