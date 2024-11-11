@@ -6,9 +6,9 @@ from SPACEPRIME.encoding import encoding, encoding_sub_101
 
 mne.set_log_level("INFO")
 # get subject id and settings path
-subject_id = 101
-data_path = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/raw/sub-{subject_id}/eeg/"
-settings_path = "/home/max/Insync/schulz.max5@gmail.com/Google Drive/PhD/data/SPACEPRIME/settings/"
+subject_id = 102
+data_path = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject_id}/eeg/"
+settings_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/settings/"
 # read raw fif
 raw = mne.io.read_raw_fif(data_path + f"sub-{subject_id}_task-spaceprime_raw.fif", preload=True)
 # get events from annotations
@@ -38,21 +38,25 @@ print(f"Excluding these ICA components: {exclude_idx}")
 reconst_raw = raw.copy()
 ica.apply(reconst_raw, exclude=exclude_idx)
 # band pass filter
-reconst_raw_filt = reconst_raw.copy().filter(1, 40)
-reconst_raw_filt.save(f"/home/max/Insync/schulz.max5@gmail.com/Google Drive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif",
+reconst_raw_filt = reconst_raw.copy().filter(1, None).notch_filter([50, 100])
+reconst_raw_filt.save(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime_raw.fif",
                       overwrite=True)
 # cut epochs
+# flat = dict(eeg=1e-6)
+# reject=dict(eeg=200e-6)
 if subject_id == 101:
-    epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding_sub_101, preload=True, tmin=-0.2, tmax=1.5,
+    epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding_sub_101, preload=True, tmin=-0.5, tmax=2.0,
                         baseline=None)
 else:
-    epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=-0.2, tmax=1.5,
+    epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=-0.5, tmax=2.0,
                         baseline=None)
 ar = autoreject.AutoReject(n_jobs=-1)
 epochs_ar, log = ar.fit_transform(epochs, return_log=True)
 # save epochs
-epochs_ar.save(f"/home/max/Insync/schulz.max5@gmail.com/Google Drive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif",
+epochs_ar.save(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif",
             overwrite=True)
 # save the drop log
-log.save(f"/home/max/Insync/schulz.max5@gmail.com/Google Drive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo_log.npz",
+log.save(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo_log.npz",
          overwrite=True)
+#epochs.save(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif",
+            #overwrite=True)
