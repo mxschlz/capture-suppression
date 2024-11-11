@@ -21,9 +21,10 @@ raw.add_reference_channels(["Fz"])
 montage = mne.channels.read_custom_montage(settings_path + "AS-96_REF.bvef")
 raw.set_montage(montage)
 # interpolate bad channels
-bad_chs = ["TP9"]
-raw.info["bads"] = bad_chs
-raw.interpolate_bads()
+if subject_id == 101:
+    bad_chs = ["TP9"]
+    raw.info["bads"] = bad_chs
+    raw.interpolate_bads()
 # average reference
 raw.set_eeg_reference(ref_channels="average")
 # Filter the data. These values are needed for the CNN to label the ICs effectively
