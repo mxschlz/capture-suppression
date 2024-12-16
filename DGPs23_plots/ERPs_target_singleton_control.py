@@ -9,13 +9,17 @@ if subject_id == 101:
     # load epochs
     epochs = mne.read_epochs(
         f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif",
-        preload=True).crop(0.35, 0.85)
+        preload=True)
 elif subject_id == 102:
     # load epochs
     epochs = mne.read_epochs(
         f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif",
-        preload=True).crop(0, 0.5)
-# epochs.apply_baseline()
+        preload=True)
+epochs.apply_baseline()
+if subject_id == 101:
+    epochs.crop(0.35, 0.85)
+elif subject_id == 102:
+    epochs.crop(0, 0.5)
 all_conds = list(epochs.event_id.keys())
 # Separate epochs based on distractor location
 left_singleton_epochs = epochs[[x for x in all_conds if "Target-2-Singleton-1" in x]]
@@ -52,11 +56,15 @@ diff_target = contra_target_data - ipsi_target_data
 diff_control = contra_control_data - ipsi_control_data
 times = epochs.average().times
 # first plot
-plt.plot(times, contra_target_data[0], color="forestgreen")
-plt.plot(times, contra_singleton_data[0], color="red")
-plt.plot(times, contra_control_data[0], color="grey")
+fig, ax = plt.subplots(2, 1, sharex=True)
+ax[0].plot(times, contra_target_data[0], color="forestgreen")
+ax[0].plot(times, contra_singleton_data[0], color="red")
+ax[0].plot(times, contra_control_data[0], color="grey")
+ax[1].plot(times, diff_target[0], color="forestgreen")
+ax[1].plot(times, diff_singleton[0], color="red")
+ax[1].plot(times, diff_control[0], color="grey")
 plt.legend(["Target", "Distractor", "Control"])
 plt.ylabel("Amplitude [µV]")
 plt.xlabel("Time [s]")
 plt.ylabel("Amplitude [µV]")
-plt.savefig("/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/Conferences/DGPs24/Fig9.svg")
+#plt.savefig("/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/Conferences/DGPs24/Fig9.svg")
