@@ -1,12 +1,15 @@
 import mne
 import mne_icalabel
 import autoreject
+import os
+import pandas as pd
 from SPACEPRIME.encoding import encoding, encoding_sub_101
+import numpy as np
 
 
 mne.set_log_level("INFO")
 # get subject id and settings path
-subject_id = 102
+subject_id = 104
 data_path = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject_id}/eeg/"
 settings_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/settings/"
 # read raw fif
@@ -25,6 +28,10 @@ if subject_id == 101:
     bad_chs = ["TP9"]
     raw.info["bads"] = bad_chs
     raw.interpolate_bads()
+if subject_id == 104:
+    bad_chs = ["P2"]
+    raw.info["bads"] = bad_chs
+    raw.interpolate_bads()
 # average reference
 raw.set_eeg_reference(ref_channels="average")
 # Filter the data. These values are needed for the CNN to label the ICs effectively
@@ -39,7 +46,11 @@ print(f"Excluding these ICA components: {exclude_idx}")
 reconst_raw = raw.copy()
 ica.apply(reconst_raw, exclude=exclude_idx)
 # band pass filter
-reconst_raw_filt = reconst_raw.copy().filter(1, None).notch_filter([50, 100])
+reconst_raw_filt = reconst_raw.copy().filter(1, 40)
+try:
+    os.makedirs(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/eeg/")
+except FileExistsError:
+    print("EEG preproc directory already exists")
 reconst_raw_filt.save(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime_raw.fif",
                       overwrite=True)
 # cut epochs
@@ -51,6 +62,25 @@ if subject_id == 101:
 else:
     epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=-0.5, tmax=2.0,
                         baseline=None)
+# append behavior to metadata attribute in epochs for later analyses
+beh = pd.read_csv(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/beh/sub-{subject_id}_clean.csv")
+metadata = beh[(beh["event_type"]=="mouse_click") & (beh["phase"]==1)]
+# get absolute trial_nr count
+metadata['absolute_trial_nr'] = (metadata['block']) * 180 + metadata['trial_nr'] - 1
+# Find duplicate trial numbers
+duplicates = metadata[metadata.duplicated(subset='absolute_trial_nr', keep=False)]
+print("Duplicate trial numbers:\n", duplicates)
+# drop duplicates
+metadata = metadata.drop_duplicates(subset='absolute_trial_nr', keep='first')  # or 'last'
+# Create a new DataFrame to store aligned behavioral data
+metadata_to_append = metadata.set_index('absolute_trial_nr')
+# Create a complete range of trial numbers
+all_trials = pd.RangeIndex(start=0, stop=len(epochs), step=1, name='absolute_trial_nr')
+# Reindex the DataFrame with the complete range
+metadata_to_append = metadata_to_append.reindex(all_trials)
+# append metadata to epochs
+epochs.metadata = metadata_to_append
+# run AutoReject
 ar = autoreject.AutoReject(n_jobs=-1)
 epochs_ar, log = ar.fit_transform(epochs, return_log=True)
 # save epochs
