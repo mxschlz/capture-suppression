@@ -20,7 +20,7 @@ raw, events = raw.resample(250, events=events)
 # add reference channel
 raw.add_reference_channels(["Fz"])
 # Add a montage to the data
-montage = mne.channels.read_custom_montage(settings_path + "AS-96_REF.bvef")
+montage = mne.channels.read_custom_montage(settings_path + "CACS-64_NO_REF.bvef")
 raw.set_montage(montage)
 # interpolate bad channels
 if subject_id == 101:
@@ -39,7 +39,7 @@ raw_filt = raw.copy().filter(1, 100)
 ica = mne.preprocessing.ICA(method="infomax", fit_params=dict(extended=True))
 ica.fit(raw_filt)
 ic_labels = mne_icalabel.label_components(raw_filt, ica, method="iclabel")
-exclude_idx = [idx for idx, (label, prob) in enumerate(zip(ic_labels["labels"], ic_labels["y_pred_proba"])) if label not in ["brain", "other"] and prob > 0.9]
+exclude_idx = [idx for idx, (label, prob) in enumerate(zip(ic_labels["labels"], ic_labels["y_pred_proba"])) if label not in ["brain", "other"]]
 print(f"Excluding these ICA components: {exclude_idx}")
 # ica.apply() changes the Raw object in-place, so let's make a copy first:
 reconst_raw = raw.copy()
@@ -50,8 +50,16 @@ try:
     os.makedirs(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/eeg/")
 except FileExistsError:
     print("EEG derivatives preprocessing directory already exists")
+# save the preprocessed raw file
 reconst_raw_filt.save(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime_raw.fif",
                       overwrite=True)
+# save the ica fit
+ica.save(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime_ica.fif",
+         overwrite=True)
+# save the indices that were excluded
+with open(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime_ica_labels.txt", "w") as file:
+    for item in exclude_idx:
+        file.write(f"{item}\n")
 # cut epochs
 # flat = dict(eeg=1e-6)
 # reject=dict(eeg=200e-6)
@@ -59,7 +67,7 @@ if subject_id == 101:
     epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding_sub_101, preload=True, tmin=-0.5, tmax=2.0,
                         baseline=None)
 else:
-    epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=-0.5, tmax=2.0,
+    epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=-0.5, tmax=1.5,
                         baseline=None)
 # append behavior to metadata attribute in epochs for later analyses
 beh = pd.read_csv(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/beh/sub-{subject_id}_clean.csv")
