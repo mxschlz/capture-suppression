@@ -10,7 +10,7 @@ n_cycles = freqs / 2  # different number of cycle per frequency
 method = "morlet"  # wavelet
 decim = 1  # keep all the samples along the time axis
 # select subject id
-subject_id = 102
+subject_id = 104
 # load epochs
 epochs = mne.read_epochs(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif",
                          preload=True)
@@ -82,14 +82,14 @@ contra_singleton_epochs_data = np.mean(np.concatenate([left_singleton_epochs.cop
 ipsi_singleton_epochs_data = np.mean(np.concatenate([left_singleton_epochs.copy().get_data(picks="C3"),
                                right_singleton_epochs.copy().get_data(picks="C4")], axis=1), axis=1)
 # make epochs from data
-ipsi_target_epochs = mne.EpochsArray(data=ipsi_target_epochs_data.reshape(132, 1, 626),
+ipsi_target_epochs = mne.EpochsArray(data=ipsi_target_epochs_data.reshape(155, 1, 501),
                                      info=mne.create_info(ch_names=["Ipsi Target"], sfreq=250, ch_types="eeg"))
-contra_target_epochs = mne.EpochsArray(data=contra_target_epochs_data.reshape(132, 1, 626),
+contra_target_epochs = mne.EpochsArray(data=contra_target_epochs_data.reshape(155, 1, 501),
                                      info=mne.create_info(ch_names=["Contra Target"], sfreq=250, ch_types="eeg"))
 # do the same for singleton epochs
-ipsi_singleton_epochs = mne.EpochsArray(data=ipsi_singleton_epochs_data.reshape(142, 1, 626),
+ipsi_singleton_epochs = mne.EpochsArray(data=ipsi_singleton_epochs_data.reshape(146, 1, 501),
                                      info=mne.create_info(ch_names=["Ipsi Singleton"], sfreq=250, ch_types="eeg"))
-contra_singleton_epochs = mne.EpochsArray(data=contra_singleton_epochs_data.reshape(142, 1, 626),
+contra_singleton_epochs = mne.EpochsArray(data=contra_singleton_epochs_data.reshape(146, 1, 501),
                                      info=mne.create_info(ch_names=["Contra Singleton"], sfreq=250, ch_types="eeg"))
 # now, calculate single-trial alpha power lateralization indices for targets and singletons
 # only use alpha frequency for the lateralization index analysis
