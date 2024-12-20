@@ -123,3 +123,49 @@ def permutation_test(group1, group2, n_permutations=10000, plot=True, **kwargs):
         plt.show()
 
     return p_value
+
+
+def remove_outliers(df, column_name, threshold=2):
+    """
+    Marks outliers in a DataFrame column as NaN based on standard deviation.
+
+    Args:
+        df: The input DataFrame.
+        column_name: The name of the column to check for outliers.
+        threshold: The number of standard deviations to use as a threshold.
+
+    Returns:
+        A new DataFrame with outliers marked as NaN, or the original DataFrame if no outliers are found
+        or if the column is not numeric. Returns None if the column does not exist.
+    """
+    if column_name not in df.columns:
+        print(f"Column '{column_name}' not found in DataFrame.")
+        return None
+
+    if not pd.api.types.is_numeric_dtype(df[column_name]):
+        print(f"Column '{column_name}' is not numeric. Outlier marking not possible.")
+        return df
+
+    mean = df[column_name].mean()
+    std = df[column_name].std()
+
+    if std == 0:
+        print(f"Standard deviation of column '{column_name}' is zero. No outliers marked.")
+        return df
+
+    upper_bound = mean + threshold * std
+    lower_bound = mean - threshold * std
+
+    df_copy = df.copy()  # Operate on a copy to avoid modifying the original DataFrame
+
+    outlier_mask = (df_copy[column_name] < lower_bound) | (df_copy[column_name] > upper_bound)
+    num_outliers = outlier_mask.sum()
+
+    df_copy.loc[outlier_mask, column_name] = np.nan
+
+    if num_outliers > 0:
+        print(f"{num_outliers} outliers marked as NaN in column '{column_name}'.")
+    else:
+        print(f"No outliers found in column '{column_name}'.")
+
+    return df_copy
