@@ -57,3 +57,11 @@ encoding = {
     "Target-3-Singleton-1-NP": 32,
     "Target-3-Singleton-2-NP": 33
 }
+FLANKER_MAP = {
+    "congruent_left": 240,
+    "congruent_right": 241,
+    "incongruent_left": 243,
+    "incongruent_right": 244,
+    "neutral_left": 245,
+    "neutral_right": 246
+}
