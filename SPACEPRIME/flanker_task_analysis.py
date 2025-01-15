@@ -2,6 +2,7 @@ import pandas as pd
 import seaborn as sns
 from scipy.stats import ttest_rel
 from stats import remove_outliers
+import mne
 
 
 # define subject
@@ -19,3 +20,6 @@ mapping = dict(congruent=1, incongruent=0, neutral=2)
 df["congruency_int"] = df["congruency"].map(mapping)
 # do dependent sample t test
 ttest_rel(df[df["congruency_int"]==2]["rt"], df[df["congruency_int"]==0]["rt"], nan_policy="omit")
+# analyse neural data
+epochs = mne.read_epochs(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-flanker-epo.fif", preload=True)
+epochs.average().plot(picks="POz")
