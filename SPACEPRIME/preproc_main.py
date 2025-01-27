@@ -1,14 +1,18 @@
+#import matplotlib
+#matplotlib.use('TkAgg')
 import mne
 import mne_icalabel
 import autoreject
 import os
 import pandas as pd
 from SPACEPRIME.encoding import encoding, encoding_sub_101
+import glob
+
 
 
 mne.set_log_level("INFO")
 # get subject id and settings path
-subject_id = 104
+subject_id = 103
 data_path = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject_id}/eeg/"
 settings_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/settings/"
 # read raw fif
@@ -25,12 +29,13 @@ raw.set_montage(montage)
 # interpolate bad channels
 if subject_id == 101:
     bad_chs = ["TP9"]
-    raw.info["bads"] = bad_chs
     raw.interpolate_bads()
 if subject_id == 104:
     bad_chs = ["P2"]
-    raw.info["bads"] = bad_chs
-    raw.interpolate_bads()
+if subject_id == 103:
+    bad_chs = ["P2"]
+raw.info["bads"] = bad_chs
+raw.interpolate_bads()
 # average reference
 raw.set_eeg_reference(ref_channels="average")
 # Filter the data. These values are needed for the CNN to label the ICs effectively
@@ -41,6 +46,7 @@ ica.fit(raw_filt)
 ic_labels = mne_icalabel.label_components(raw_filt, ica, method="iclabel")
 exclude_idx = [idx for idx, (label, prob) in enumerate(zip(ic_labels["labels"], ic_labels["y_pred_proba"])) if label not in ["brain", "other"]]
 print(f"Excluding these ICA components: {exclude_idx}")
+# ica.plot_properties(raw_filt, picks=exclude_idx)  # inspect the identified IC
 # ica.apply() changes the Raw object in-place, so let's make a copy first:
 reconst_raw = raw.copy()
 ica.apply(reconst_raw, exclude=exclude_idx)
@@ -70,7 +76,7 @@ else:
     epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=-0.5, tmax=1.5,
                         baseline=None)
 # append behavior to metadata attribute in epochs for later analyses
-beh = pd.read_csv(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/beh/sub-{subject_id}_clean.csv")
+beh = pd.read_csv(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/beh/sub-{subject_id}_clean*.csv")[0])
 # append metadata to epochs
 epochs.metadata = beh
 # run AutoReject

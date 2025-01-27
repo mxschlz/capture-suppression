@@ -4,11 +4,12 @@ import autoreject
 import os
 import pandas as pd
 from SPACEPRIME.encoding import FLANKER_MAP
+import glob
 
 
 mne.set_log_level("INFO")
 # get subject id and settings path
-subject_id = 104
+subject_id = 103
 data_path = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject_id}/eeg/"
 settings_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/settings/"
 # read raw fif
@@ -25,12 +26,13 @@ raw.set_montage(montage)
 # interpolate bad channels
 if subject_id == 101:
     bad_chs = ["TP9"]
-    raw.info["bads"] = bad_chs
     raw.interpolate_bads()
 if subject_id == 104:
     bad_chs = ["P2"]
-    raw.info["bads"] = bad_chs
-    raw.interpolate_bads()
+if subject_id == 103:
+    bad_chs = ["P2"]
+raw.info["bads"] = bad_chs
+raw.interpolate_bads()
 # average reference
 raw.set_eeg_reference(ref_channels="average")
 # Filter the data. These values are needed for the CNN to label the ICs effectively
@@ -66,7 +68,7 @@ with open(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRI
 epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=FLANKER_MAP, preload=True, tmin=-0.5, tmax=1.0,
                     baseline=None)
 # append behavior to metadata attribute in epochs for later analyses
-beh = pd.read_csv(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject_id}/beh/flanker_data_{subject_id}.csv")
+beh = pd.read_csv(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject_id}/beh/flanker_data_{subject_id}*.csv")[0])
 # append metadata to epochs
 epochs.metadata = beh
 # run AutoReject
