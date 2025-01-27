@@ -3,12 +3,13 @@ import seaborn as sns
 from scipy.stats import ttest_rel
 from stats import remove_outliers
 import mne
+import glob
 
 
 # define subject
-subject_id = 104
+subject_id = 103
 # load dataframe
-df = pd.read_csv(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject_id}/beh/flanker_data_{subject_id}.csv")
+df = pd.read_csv(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject_id}/beh/flanker_data_{subject_id}*.csv")[0])
 # clean rt data
 df = remove_outliers(df, column_name="rt", threshold=2)
 # plot reaction time distribution
