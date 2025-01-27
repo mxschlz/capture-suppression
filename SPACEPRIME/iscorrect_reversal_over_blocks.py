@@ -1,27 +1,32 @@
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from color_palette import get_subpalette
+import glob
+import os
 plt.ion()
 
 
-subject_id = 104
-# insert color palette
-sns.set_palette(list(get_subpalette([14, 84, 44]).values()))
 # load up the data
 # load data from children
-df = pd.read_excel("/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME_behavioral_pilot_n-5/results_July_06_2024_14_16_40.xlsx")
+#df = pd.read_excel("/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME_behavioral_pilot_n-5/results_July_06_2024_14_16_40.xlsx")
 # some cleaning
-df = df[(df['event_type'] == 'response') & (df['rt'] != 0)]# Filter the dataframe to only include rows where SingletonPresent is 0
+#df = df[(df['event_type'] == 'response') & (df['rt'] != 0)]# Filter the dataframe to only include rows where SingletonPresent is 0
+# define data root dir
+data_root = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/"
+# get all the subject ids
+subjects = os.listdir(data_root)
+df = pd.concat([pd.read_csv(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/{subject}/beh/{subject}_clean*.csv")[0]) for subject in subjects])
+sub_id = 106
+df = df[df["subject_id"]==sub_id]
 df_singleton_absent = df[df['SingletonPresent'] == 0]
 df_singleton_present = df[df['SingletonPresent'] == 1]
 
 # Calculate the mean of iscorrect for each block and subject_id
-df_singleton_absent_mean = (df_singleton_absent.groupby(['block', "subject_id"])['iscorrect']
+df_singleton_absent_mean = (df_singleton_absent.groupby(['block', "subject_id"])['select_target']
                        .mean().reset_index(name='iscorrect_singleton_absent'))
 
 # Calculate the mean of iscorrect for each block and subject_id
-df_singleton_present_mean = (df_singleton_present.groupby(['block', "subject_id"])['iscorrect']
+df_singleton_present_mean = (df_singleton_present.groupby(['block', "subject_id"])['select_target']
                        .mean().reset_index(name='iscorrect_singleton_present'))
 
 # Merge df_singleton_absent_mean and df_singleton_present_mean on block and subject_id
