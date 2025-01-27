@@ -4,13 +4,13 @@ import matplotlib.pyplot as plt
 plt.ion()
 
 
-subject_id = 102
+subject_id = 104
 if subject_id == 101:
     # load epochs
     epochs = mne.read_epochs(
         f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif",
         preload=True)
-elif subject_id == 102:
+else:
     # load epochs
     epochs = mne.read_epochs(
         f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif",

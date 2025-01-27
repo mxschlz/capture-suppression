@@ -9,8 +9,10 @@ subject_id = 104
 # insert color palette
 sns.set_palette(list(get_subpalette([14, 84, 44]).values()))
 # load up the data
-df = pd.read_csv(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/beh/sub-{subject_id}_clean.csv", index_col=None)
-# Filter the dataframe to only include rows where SingletonPresent is 0
+# load data from children
+df = pd.read_excel("/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME_behavioral_pilot_n-5/results_July_06_2024_14_16_40.xlsx")
+# some cleaning
+df = df[(df['event_type'] == 'response') & (df['rt'] != 0)]# Filter the dataframe to only include rows where SingletonPresent is 0
 df_singleton_absent = df[df['SingletonPresent'] == 0]
 df_singleton_present = df[df['SingletonPresent'] == 1]
 
