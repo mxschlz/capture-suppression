@@ -12,7 +12,7 @@ import glob
 
 mne.set_log_level("INFO")
 # get subject id and settings path
-subject_id = 103
+subject_id = 106
 data_path = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject_id}/eeg/"
 settings_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/settings/"
 # read raw fif
@@ -20,7 +20,7 @@ raw = mne.io.read_raw_fif(data_path + f"sub-{subject_id}_task-spaceprime_raw.fif
 # get events from annotations
 events, event_id = mne.events_from_annotations(raw)
 # Downsample because the computer crashes if sampled with 1000 Hz :-(
-raw, events = raw.resample(250, events=events)
+raw = raw.resample(250)
 # add reference channel
 raw.add_reference_channels(["Fz"])
 # Add a montage to the data
@@ -30,9 +30,7 @@ raw.set_montage(montage)
 if subject_id == 101:
     bad_chs = ["TP9"]
     raw.interpolate_bads()
-if subject_id == 104:
-    bad_chs = ["P2"]
-if subject_id == 103:
+if subject_id in [102, 103, 106]:
     bad_chs = ["P2"]
 raw.info["bads"] = bad_chs
 raw.interpolate_bads()
