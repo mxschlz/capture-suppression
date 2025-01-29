@@ -27,6 +27,35 @@ encoding_sub_101 = {
     "Target-3-Singleton-1-NP": 34,
     "Target-3-Singleton-2-NP": 35
 }
+encoding_sub_106 = {
+    "Target-1-Singleton-0-C": 6,
+    "Target-1-Singleton-2-C": 7,
+    "Target-1-Singleton-3-C": 8,
+    "Target-1-Singleton-0-PP": 15,
+    "Target-1-Singleton-2-PP": 16,
+    "Target-1-Singleton-3-PP": 17,
+    "Target-1-Singleton-0-NP": 24,
+    "Target-1-Singleton-2-NP": 25,
+    "Target-1-Singleton-3-NP": 26,
+    "Target-2-Singleton-0-C": 9,
+    "Target-2-Singleton-1-C": 10,
+    "Target-2-Singleton-3-C": 11,
+    "Target-2-Singleton-0-PP": 18,
+    "Target-2-Singleton-1-PP": 19,
+    "Target-2-Singleton-3-PP": 20,
+    "Target-2-Singleton-0-NP": 27,
+    "Target-2-Singleton-1-NP": 28,
+    "Target-2-Singleton-3-NP": 29,
+    "Target-3-Singleton-0-C": 12,
+    "Target-3-Singleton-1-C": 13,
+    "Target-3-Singleton-2-C": 14,
+    "Target-3-Singleton-0-PP": 21,
+    "Target-3-Singleton-1-PP": 22,
+    "Target-3-Singleton-2-PP": 23,
+    "Target-3-Singleton-0-NP": 30,
+    "Target-3-Singleton-1-NP": 31,
+    "Target-3-Singleton-2-NP": 32
+}
 # usually, use the following encoding for the subjects
 encoding = {
     "Target-1-Singleton-0-C": 7,
