@@ -1,6 +1,8 @@
 import mne
 import numpy as np
 import matplotlib.pyplot as plt
+import os
+import glob
 plt.ion()
 
 
@@ -9,11 +11,12 @@ freqs = np.arange(1, 31, 1)  # 1 to 30 Hz
 n_cycles = freqs / 2  # different number of cycle per frequency
 method = "morlet"  # wavelet
 decim = 1  # keep all the samples along the time axis
-# select subject id
-subject_id = 104
+# define data root dir
+data_root = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/"
+# get all the subject ids
+subjects = os.listdir(data_root)
 # load epochs
-epochs = mne.read_epochs(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif",
-                         preload=True)
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106]])
 all_conds = list(epochs.event_id.keys())
 # Separate epochs based on distractor location
 left_singleton_epochs = epochs[[x for x in all_conds if "Target-2-Singleton-1" in x]]
