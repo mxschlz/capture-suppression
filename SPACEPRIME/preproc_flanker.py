@@ -22,7 +22,7 @@ params = dict(
 )
 settings_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/settings/"
 # get subject id and settings path
-subject_ids = [103, 104, 106]
+subject_ids = [105]
 for subject_id in subject_ids:
     data_path = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject_id}/eeg/"
     # read raw fif
@@ -39,10 +39,13 @@ for subject_id in subject_ids:
     # interpolate bad channels
     if subject_id == 101:
         bad_chs = ["TP9"]
-    if subject_id in [102, 103, 106]:
+    elif subject_id in [102, 103, 106]:
         bad_chs = ["P2"]
-    raw.info["bads"] = bad_chs
-    raw.interpolate_bads()
+    else:
+        bad_chs = None
+    if bad_chs:
+        raw.info["bads"] = bad_chs
+        raw.interpolate_bads()
     # average reference
     raw.set_eeg_reference(ref_channels="average")
     # Filter the data. These values are needed for the CNN to label the ICs effectively

@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 
 
 # Function to plot individual subject lines
-def plot_individual_lines(ax, data, x_col="Priming", y_col="iscorrect"):
+def plot_individual_lines(ax, data, x_col="Priming", y_col="select_target"):
     # get positions of barplots in axis
     bar_positions = [patch.get_x() + patch.get_width() / 2 for patch in ax.patches]
 

@@ -1,13 +1,17 @@
 import mne
 import numpy as np
 import matplotlib.pyplot as plt
+import os
+import glob
 plt.ion()
 
 
-subject_id = 104
+# define data root dir
+data_root = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/"
+# get all the subject ids
+subjects = os.listdir(data_root)
 # load epochs
-epochs = mne.read_epochs(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif",
-                         preload=True)
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106]])
 # epochs.apply_baseline()
 all_conds = list(epochs.event_id.keys())
 # Separate epochs based on distractor location
@@ -41,7 +45,7 @@ contra_singleton_epochs_data = np.mean(np.concatenate([left_singleton_epochs.cop
                                  right_singleton_epochs.copy().get_data(picks="C3")], axis=1), axis=1)
 ipsi_singleton_epochs_data = np.mean(np.concatenate([left_singleton_epochs.copy().get_data(picks="C3"),
                                right_singleton_epochs.copy().get_data(picks="C4")], axis=1), axis=1)
-from scipy.stats import ttest_ind, ttest_rel
+from scipy.stats import ttest_ind
 result_target = ttest_ind(contra_target_epochs_data, ipsi_target_epochs_data, axis=0)
 result_singleton = ttest_ind(contra_singleton_epochs_data, ipsi_singleton_epochs_data, axis=0)
 # plot the data
@@ -50,28 +54,28 @@ fig, ax = plt.subplots(2, 2)
 # first plot
 ax[0][0].plot(times, contra_target_data[0], color="r")
 ax[0][0].plot(times, ipsi_target_data[0], color="b")
-ax[0][0].axvspan(0.35, 0.55, color='gray', alpha=0.3)  # Shade the area
-ax[0][0].axvspan(0.05, 0.25, color='gray', alpha=0.3)  # Shade the area
+ax[0][0].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
+ax[0][0].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[0][0].legend(["Contra", "Ipsi"])
 ax[0][0].set_title("Target lateral")
 ax[0][0].set_ylabel("Amplitude [µV]")
 ax[0][0].set_xlabel("Time [s]")
 # second plot
 ax[0][1].plot(times, contra_singleton_data[0], color="r")
-ax[0][1].axvspan(0.35, 0.55, color='gray', alpha=0.3)  # Shade the area
-ax[0][1].axvspan(0.05, 0.25, color='gray', alpha=0.3)  # Shade the area
+ax[0][1].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
+ax[0][1].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[0][1].plot(times, ipsi_singleton_data[0], color="b")
 ax[0][1].set_title("Singleton lateral")
 ax[0][1].set_ylabel("Amplitude [µV]")
 ax[0][1].set_xlabel("Time [s]")
 # third plot
 ax[1][0].plot(times, result_target[0])
-ax[1][0].axvspan(0.35, 0.55, color='gray', alpha=0.3)  # Shade the area
-ax[1][0].axvspan(0.05, 0.25, color='gray', alpha=0.3)  # Shade the area
+ax[1][0].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
+ax[1][0].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 # fourth plot
 ax[1][1].plot(times, result_singleton[0])
-ax[1][1].axvspan(0.35, 0.55, color='gray', alpha=0.3)  # Shade the area
-ax[1][1].axvspan(0.05, 0.25, color='gray', alpha=0.3)  # Shade the area
+ax[1][1].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
+ax[1][1].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 plt.tight_layout()
 # compute power density spectrum for evoked response and look for frequency tagging
 # first, create epochs objects from numpy arrays computed above for ipsi and contra targets
