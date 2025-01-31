@@ -16,8 +16,6 @@ data_root = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPR
 # get all the subject ids
 subjects = os.listdir(data_root)
 df = pd.concat([pd.read_csv(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/{subject}/beh/{subject}_clean*.csv")[0]) for subject in subjects])
-sub_id = 106
-df = df[df["subject_id"]==sub_id]
 df_singleton_absent = df[df['SingletonPresent'] == 0]
 df_singleton_present = df[df['SingletonPresent'] == 1]
 
@@ -37,9 +35,8 @@ df_merged['iscorrect_diff'] = df_merged['iscorrect_singleton_absent'] - df_merge
 
 # Add labels and title
 fig, ax = plt.subplots(figsize=(6, 4))
-barplot = sns.barplot(x='block', y='iscorrect_diff', data=df_merged, errorbar=("se", 1))
+barplot = sns.barplot(x='block', y='iscorrect_diff', data=df_merged[df_merged["subject_id"]==105], errorbar=("se", 1))
 ax.set_ylabel('Proportion correct (Distractor absent - Distractor pesent)')
 ax.set_xlabel('Block')
 # ax.set_ylim(-0.1, 0.1)
 ax.set_xticklabels([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
-plt.savefig("/home/max/figures/SPACEPRIME/iscorrect_reversal_over_blocks.svg")
