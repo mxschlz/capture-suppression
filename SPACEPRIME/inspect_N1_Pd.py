@@ -11,7 +11,8 @@ data_root = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPR
 # get all the subject ids
 subjects = os.listdir(data_root)
 # load epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106]])
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106, 107]])
+#epochs = epochs["select_target==True"]
 # epochs.apply_baseline()
 all_conds = list(epochs.event_id.keys())
 # Separate epochs based on distractor location
@@ -54,17 +55,21 @@ fig, ax = plt.subplots(2, 2)
 # first plot
 ax[0][0].plot(times, contra_target_data[0], color="r")
 ax[0][0].plot(times, ipsi_target_data[0], color="b")
+ax[0][0].plot(times, (contra_target_data-ipsi_target_data)[0], color="g")
 ax[0][0].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
 ax[0][0].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
-ax[0][0].legend(["Contra", "Ipsi"])
+ax[0][0].hlines(y=0, xmin=times[0], xmax=times[-1])
+ax[0][0].legend(["Contra", "Ipsi", "Contra-Ipsi"])
 ax[0][0].set_title("Target lateral")
 ax[0][0].set_ylabel("Amplitude [µV]")
 ax[0][0].set_xlabel("Time [s]")
 # second plot
 ax[0][1].plot(times, contra_singleton_data[0], color="r")
+ax[0][1].plot(times, ipsi_singleton_data[0], color="b")
+ax[0][1].plot(times, (contra_singleton_data-ipsi_singleton_data)[0], color="g")
 ax[0][1].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
 ax[0][1].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
-ax[0][1].plot(times, ipsi_singleton_data[0], color="b")
+ax[0][1].hlines(y=0, xmin=times[0], xmax=times[-1])
 ax[0][1].set_title("Singleton lateral")
 ax[0][1].set_ylabel("Amplitude [µV]")
 ax[0][1].set_xlabel("Time [s]")
@@ -72,23 +77,10 @@ ax[0][1].set_xlabel("Time [s]")
 ax[1][0].plot(times, result_target[0])
 ax[1][0].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
 ax[1][0].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
+ax[1][0].hlines(y=0, xmin=times[0], xmax=times[-1])
 # fourth plot
 ax[1][1].plot(times, result_singleton[0])
 ax[1][1].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
 ax[1][1].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
+ax[1][1].hlines(y=0, xmin=times[0], xmax=times[-1])
 plt.tight_layout()
-# compute power density spectrum for evoked response and look for frequency tagging
-# first, create epochs objects from numpy arrays computed above for ipsi and contra targets
-ipsi_target_epochs = mne.EpochsArray(data=ipsi_target_epochs_data.reshape(len(left_target_epochs), 1, 501),
-                                     info=mne.create_info(ch_names=["Ipsi Target"], sfreq=250, ch_types="eeg"))
-contra_target_epochs = mne.EpochsArray(data=contra_target_epochs_data.reshape(len(left_target_epochs), 1, 501),
-                                     info=mne.create_info(ch_names=["Contra Target"], sfreq=250, ch_types="eeg"))
-# now, compute the power spectra for both ipsi and contra targets
-target_diff = mne.EpochsArray(data=(contra_target_epochs.get_data() - ipsi_target_epochs.get_data()),
-                              info=mne.create_info(ch_names=["Contra - Ipsi Target"], sfreq=250, ch_types="eeg"))
-# subtract the ipsi from the contralateral target power
-powerdiff_target = target_diff.compute_psd(method="welch")
-powerdiff_target.plot()
-# another approach on all epochs together
-psd = epochs.average().compute_psd("welch")
-psd.plot(average=True)

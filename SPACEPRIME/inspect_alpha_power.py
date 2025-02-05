@@ -16,7 +16,7 @@ data_root = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPR
 # get all the subject ids
 subjects = os.listdir(data_root)
 # load epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106]])
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106, 107]])
 all_conds = list(epochs.event_id.keys())
 # Separate epochs based on distractor location
 left_singleton_epochs = epochs[[x for x in all_conds if "Target-2-Singleton-1" in x]]
@@ -30,17 +30,17 @@ mne.epochs.equalize_epoch_counts([left_target_epochs, right_target_epochs], meth
 # compute power spectrogram averaged over all 64 electrodes
 power = epochs.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, decim=decim, n_jobs=-1, return_itc=False,
                            average=True)
-power.plot_topo(baseline=(None, 0), mode="zscore")
-power.plot(baseline=(None, 0), combine="mean", mode="zscore")
+power.plot(baseline=(None, 0), combine="mean", mode="logratio")
+power.plot_topo(baseline=(None, 0), mode="logratio")
 # now, calculate single-trial alpha power lateralization indices for targets and singletons
 # only use alpha frequency for the lateralization index analysis
-alpha_freqs = np.arange(1, 31, 1)
+alpha_freqs = np.arange(8, 13, 1)
 n_cycles_alpha = alpha_freqs / 2
 # fig, ax = plt.subplots(1, 2)
 power_select_left = left_target_epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles_alpha, decim=decim,
-                                                       n_jobs=-1, return_itc=False, average=True).get_data()
+                                                       n_jobs=-1, return_itc=False, average=False).get_data()
 power_select_right = right_target_epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles_alpha, decim=decim,
-                                                         n_jobs=-1, return_itc=False, average=True).get_data()
+                                                         n_jobs=-1, return_itc=False, average=False).get_data()
 li_selection = (power_select_left - power_select_right) / (power_select_left + power_select_right)
 power_selection = mne.time_frequency.AverageTFRArray(data=li_selection, method=method, freqs=alpha_freqs,
                                                     info=power.info, times=power.times)
@@ -55,7 +55,7 @@ li_suppression = (power_suppress_left - power_suppress_right) / (power_suppress_
 power_suppression = mne.time_frequency.AverageTFRArray(data=li_suppression, method=method, freqs=alpha_freqs,
                                                       info=power.info, times=power.times)
 power_suppression.plot_topo(tmin=0, tmax=1)
-#power_suppression.average().plot()
+#power_suppression.plot()
 powerdiff = li_selection - li_suppression
 powerdiff_array = mne.time_frequency.AverageTFRArray(data=powerdiff, method=method, freqs=alpha_freqs, info=power.info,
                                                     times=power.times)
