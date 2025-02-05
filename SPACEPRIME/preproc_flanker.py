@@ -9,7 +9,6 @@ from SPACEPRIME.encoding import *
 import glob
 
 
-
 mne.set_log_level("INFO")
 params = dict(
     resampling_freq=250,
@@ -17,12 +16,12 @@ params = dict(
     highpass=1,
     lowpass=40,
     ica_label_prob=0.9,
-    epoch_tmin=-0.5,
+    epoch_tmin=-0.2,
     epoch_tmax=1.0
 )
 settings_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/settings/"
 # get subject id and settings path
-subject_ids = [105]
+subject_ids = [103, 104, 105, 106, 107]
 for subject_id in subject_ids:
     data_path = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject_id}/eeg/"
     # read raw fif
@@ -76,9 +75,14 @@ for subject_id in subject_ids:
     with open(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-flanker_ica_labels.txt", "w") as file:
         for item in exclude_idx:
             file.write(f"{item}\n")
-    # cut epochs
-    epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=FLANKER_MAP, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
-                        baseline=None)
+    if subject_id in [103, 104, 106]:
+        epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=FLANKER_MAP, preload=True,
+                            tmin=params["epoch_tmin"]+0.05, tmax=params["epoch_tmax"]+0.05,
+                            baseline=None)
+    else:
+        # cut epochs
+        epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=FLANKER_MAP, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
+                            baseline=None)
     # append behavior to metadata attribute in epochs for later analyses
     beh = pd.read_csv(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject_id}/beh/flanker_data_{subject_id}*.csv")[0])
     # append metadata to epochs

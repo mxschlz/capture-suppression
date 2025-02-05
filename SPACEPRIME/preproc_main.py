@@ -6,6 +6,7 @@ import autoreject
 import os
 import pandas as pd
 from SPACEPRIME.encoding import *
+from rename_events import add_to_events
 import glob
 
 
@@ -17,7 +18,7 @@ params = dict(
     highpass=1,
     lowpass=40,
     ica_label_prob=0.9,
-    epoch_tmin=-0.5,
+    epoch_tmin=-0.2,
     epoch_tmax=1.0
 )
 settings_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/settings/"
@@ -82,14 +83,18 @@ for subject_id in subject_ids:
     # flat = dict(eeg=1e-6)
     # reject=dict(eeg=200e-6)
     if subject_id == 101:
-        epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding_sub_101, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"]+0.5,
+        epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding_sub_101, preload=True, tmin=params["epoch_tmin"]+0.3, tmax=params["epoch_tmax"]+0.3,
                             baseline=None)
-    elif subject_id == 106:
-        epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding_sub_106, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
+    elif subject_id == 102:
+        epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=params["epoch_tmin"]+0.08, tmax=params["epoch_tmax"]+0.08,
                             baseline=None)
-    else:
+    elif subject_id in [103, 104, 105]:
         epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
                             baseline=None)
+    if subject_id >= 106:
+        epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding_sub_106, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
+                            baseline=None)
+        epochs = add_to_events(epochs, new_encoding=encoding)
     # append behavior to metadata attribute in epochs for later analyses
     beh = pd.read_csv(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/beh/sub-{subject_id}_clean*.csv")[0])
     # append metadata to epochs
