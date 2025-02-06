@@ -3,15 +3,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import glob
+import SPACEPRIME
 plt.ion()
 
 
 # define data root dir
-data_root = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/"
+data_root = SPACEPRIME.get_data_path()+"derivatives/preprocessing/"
 # get all the subject ids
 subjects = os.listdir(data_root)
 # load epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106, 107]])
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{SPACEPRIME.get_data_path()}derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106, 107]])
 #epochs = epochs["select_target==True"]
 # epochs.apply_baseline()
 all_conds = list(epochs.event_id.keys())

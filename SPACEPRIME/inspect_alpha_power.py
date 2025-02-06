@@ -3,20 +3,22 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import glob
+import SPACEPRIME
 plt.ion()
 
 
+# define data root dir
+data_root = SPACEPRIME.get_data_path()+"derivatives/preprocessing/"
+# get all the subject ids
+subjects = os.listdir(data_root)
+# load epochs
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{SPACEPRIME.get_data_path()}derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106, 107]])
 # some params
 freqs = np.arange(1, 31, 1)  # 1 to 30 Hz
 n_cycles = freqs / 2  # different number of cycle per frequency
 method = "morlet"  # wavelet
-decim = 1  # keep all the samples along the time axis
-# define data root dir
-data_root = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/"
-# get all the subject ids
-subjects = os.listdir(data_root)
-# load epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106, 107]])
+decim = 5  # keep all the samples along the time axis
+#epochs = epochs["phase==1"]
 all_conds = list(epochs.event_id.keys())
 # Separate epochs based on distractor location
 left_singleton_epochs = epochs[[x for x in all_conds if "Target-2-Singleton-1" in x]]
@@ -29,18 +31,18 @@ right_target_epochs = epochs[[x for x in all_conds if "Target-3-Singleton-2" in 
 mne.epochs.equalize_epoch_counts([left_target_epochs, right_target_epochs], method="random")
 # compute power spectrogram averaged over all 64 electrodes
 power = epochs.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, decim=decim, n_jobs=-1, return_itc=False,
-                           average=True)
-power.plot(baseline=(None, 0), combine="mean", mode="logratio")
-power.plot_topo(baseline=(None, 0), mode="logratio")
+                           average=False)
+power.average().plot(baseline=(None, 0), combine="mean", mode="logratio")
+power.average().plot_topo(baseline=(None, 0), mode="logratio")
 # now, calculate single-trial alpha power lateralization indices for targets and singletons
 # only use alpha frequency for the lateralization index analysis
-alpha_freqs = np.arange(8, 13, 1)
+alpha_freqs = np.arange(1, 31, 1)
 n_cycles_alpha = alpha_freqs / 2
 # fig, ax = plt.subplots(1, 2)
 power_select_left = left_target_epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles_alpha, decim=decim,
-                                                       n_jobs=-1, return_itc=False, average=False).get_data()
+                                                       n_jobs=-1, return_itc=False, average=False).average().get_data()
 power_select_right = right_target_epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles_alpha, decim=decim,
-                                                         n_jobs=-1, return_itc=False, average=False).get_data()
+                                                         n_jobs=-1, return_itc=False, average=False).average().get_data()
 li_selection = (power_select_left - power_select_right) / (power_select_left + power_select_right)
 power_selection = mne.time_frequency.AverageTFRArray(data=li_selection, method=method, freqs=alpha_freqs,
                                                     info=power.info, times=power.times)
@@ -48,9 +50,9 @@ power_selection.plot_topo(tmin=0, tmax=1)
 #power_selection.average().plot()
 # do the same for lateralized singletons
 power_suppress_left = left_singleton_epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles_alpha, decim=decim,
-                                                        n_jobs=-1, return_itc=False, average=True).get_data()
+                                                        n_jobs=-1, return_itc=False, average=False).average().get_data()
 power_suppress_right = right_singleton_epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles_alpha, decim=decim,
-                                                          n_jobs=-1, return_itc=False, average=True).get_data()
+                                                          n_jobs=-1, return_itc=False, average=False).average().get_data()
 li_suppression = (power_suppress_left - power_suppress_right) / (power_suppress_left + power_suppress_right)
 power_suppression = mne.time_frequency.AverageTFRArray(data=li_suppression, method=method, freqs=alpha_freqs,
                                                       info=power.info, times=power.times)
@@ -60,6 +62,11 @@ powerdiff = li_selection - li_suppression
 powerdiff_array = mne.time_frequency.AverageTFRArray(data=powerdiff, method=method, freqs=alpha_freqs, info=power.info,
                                                     times=power.times)
 powerdiff_array.plot_topo(tmin=0, tmax=1)
+# Define time points for topographic maps
+time_points = np.arange(0, 1.5, 0.5)  # 50 ms steps
+for tp in time_points:
+    fig = epochs.average().plot_topomap(times=tp, ch_type='eeg',
+                                        time_unit='s', show=False)
 # now, look at contra vs ipsi electrode powers to enhance the alpha lateralization
 # get the contralateral evoked response and average
 contra_singleton_data = np.mean([left_singleton_epochs.copy().average(picks=["C4"]).get_data(),
