@@ -17,7 +17,7 @@ params = dict(
     lowpass=40,
     ica_label_prob=0.9,
     epoch_tmin=-0.2,
-    epoch_tmax=1.0
+    epoch_tmax=0.8
 )
 settings_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/settings/"
 # get subject id and settings path
