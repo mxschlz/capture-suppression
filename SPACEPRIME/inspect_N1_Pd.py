@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import os
 import glob
 import SPACEPRIME
+from mne.stats import permutation_cluster_test
 plt.ion()
 
 
@@ -50,6 +51,9 @@ contra_singleton_epochs_data = np.mean(np.concatenate([left_singleton_epochs.cop
 ipsi_singleton_epochs_data = np.mean(np.concatenate([left_singleton_epochs.copy().get_data(picks="C3"),
                                right_singleton_epochs.copy().get_data(picks="C4")], axis=1), axis=1)
 
+# get difference waves
+diff_wave_target = contra_target_data - ipsi_target_data
+diff_wave_distractor = contra_singleton_data - ipsi_singleton_data
 # run ttests
 from scipy.stats import ttest_ind
 result_target = ttest_ind(contra_target_epochs_data, ipsi_target_epochs_data, axis=0)
@@ -60,7 +64,7 @@ fig, ax = plt.subplots(2, 2)
 # first plot
 ax[0][0].plot(times, contra_target_data[0], color="r")
 ax[0][0].plot(times, ipsi_target_data[0], color="b")
-ax[0][0].plot(times, (contra_target_data-ipsi_target_data)[0], color="g")
+ax[0][0].plot(times, diff_wave_target[0], color="g")
 ax[0][0].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
 ax[0][0].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[0][0].hlines(y=0, xmin=times[0], xmax=times[-1])
@@ -71,7 +75,7 @@ ax[0][0].set_xlabel("Time [s]")
 # second plot
 ax[0][1].plot(times, contra_singleton_data[0], color="r")
 ax[0][1].plot(times, ipsi_singleton_data[0], color="b")
-ax[0][1].plot(times, (contra_singleton_data-ipsi_singleton_data)[0], color="g")
+ax[0][1].plot(times, diff_wave_distractor[0], color="g")
 ax[0][1].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
 ax[0][1].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[0][1].hlines(y=0, xmin=times[0], xmax=times[-1])
@@ -90,33 +94,38 @@ ax[1][1].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[1][1].hlines(y=0, xmin=times[0], xmax=times[-1])
 plt.tight_layout()
 
-# some stats
-observed_target_diff = contra_target_data - ipsi_target_data
-observed_singleton_diff = contra_singleton_data - ipsi_singleton_data
 
-# Initialize a list to save the results of each permutation
-results = list()
-
-pooled = np.concatenate([contra_target_epochs_data, ipsi_target_epochs_data], axis=0)
-len_group = contra_target_epochs_data.shape[0]
+# number of permutations
 n_permutations = 10000
-# Perform n_permutations permutations
-for _ in range(n_permutations):
-    # Randomly permute the pooled data
-    permuted = np.random.permutation(pooled)
+# some stats
+n_jobs = -1
+pval = 0.05
+threshold = dict(start=0, step=0.2)  # the smaller the step and the closer the start to 0, the better the approximation
 
-    assigned1 = permuted[:len_group]
-    assigned2 = permuted[len_group:]
+# mne.viz.plot_ch_adjacency(epochs.info, adjacency, epochs.info["ch_names"])
+X = [contra_target_epochs_data, ipsi_target_epochs_data]
+t_obs, clusters, cluster_pv, h0 = permutation_cluster_test(X, threshold=threshold, n_permutations=n_permutations,
+                                                           n_jobs=n_jobs, out_type="mask", tail=0)
+times = epochs.times
+fig, (ax, ax2) = plt.subplots(2, 1, figsize=(8, 4))
+ax.set_title("Contra minus ipsi")
+ax.plot(
+    times,
+    contra_target_epochs_data.mean(axis=0) - ipsi_target_epochs_data.mean(axis=0),
+    label="ERP Contrast (Contra minus ipsi)",
+)
+ax.set_ylabel("EEG (µV)")
+ax.legend()
 
-    # Calculate the difference in means for this permutation
-    results.append(ttest_ind(a=assigned1, b=assigned2, axis=0)[0])
+for i_c, c in enumerate(clusters):
+    c = c[0]
+    if cluster_pv[i_c] <= pval:
+        h = ax2.axvspan(times[c.start], times[c.stop - 1], color="r", alpha=0.3)
+    else:
+        h = 0
+        ax2.axvspan(times[c.start], times[c.stop - 1], color=(0.3, 0.3, 0.3), alpha=0.3)
 
-# Convert results to a numpy array and take absolute values
-results = np.abs(np.array(results))
-
-# Count how many permutations have a difference as extreme as or more extreme than observed_diff
-values_as_or_more_extreme = sum(results >= observed_target_diff[0])
-
-# Calculate the p-value
-num_simulations = results.shape[0]
-p_value = values_as_or_more_extreme / num_simulations
+hf = plt.plot(times, t_obs, "g")
+ax2.legend((h,), ("cluster p-value < 0.05",))
+ax2.set_xlabel("time (ms)")
+ax2.set_ylabel("f-values")
