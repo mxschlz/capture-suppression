@@ -5,7 +5,7 @@ def get_data_path():
   if os.name == 'nt':  # Windows
     data_path = 'G:\\Meine Ablage\\PhD\\data\\SPACEPRIME\\'
   elif os.name == 'posix':  # Linux
-    data_path = '/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME'
+    data_path = '/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/'
   else:
     raise OSError("Unsupported operating system.")
   return data_path
