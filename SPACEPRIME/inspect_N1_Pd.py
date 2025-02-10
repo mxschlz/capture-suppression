@@ -26,6 +26,7 @@ contra_singleton_data = np.mean([left_singleton_epochs.copy().average(picks=["C4
 # get the ipsilateral evoked response and average
 ipsi_singleton_data = np.mean([left_singleton_epochs.copy().average(picks=["C3"]).get_data(),
                                   right_singleton_epochs.copy().average(picks=["C4"]).get_data()], axis=0)
+
 # now, do the same for the lateral targets
 # Separate epochs based on target location
 left_target_epochs = epochs[[x for x in all_conds if "Target-1-Singleton-2" in x]]
@@ -37,6 +38,7 @@ contra_target_data = np.mean([left_target_epochs.copy().average(picks=["C4"]).ge
 # get the ipsilateral evoked response and average
 ipsi_target_data = np.mean([left_target_epochs.copy().average(picks=["C3"]).get_data(),
                                right_target_epochs.copy().average(picks=["C4"]).get_data()], axis=0)
+
 # get the trial-wise data for targets
 contra_target_epochs_data = np.mean(np.concatenate([left_target_epochs.copy().get_data(picks="C4"),
                                  right_target_epochs.copy().get_data(picks="C3")], axis=1), axis=1)
@@ -47,6 +49,8 @@ contra_singleton_epochs_data = np.mean(np.concatenate([left_singleton_epochs.cop
                                  right_singleton_epochs.copy().get_data(picks="C3")], axis=1), axis=1)
 ipsi_singleton_epochs_data = np.mean(np.concatenate([left_singleton_epochs.copy().get_data(picks="C3"),
                                right_singleton_epochs.copy().get_data(picks="C4")], axis=1), axis=1)
+
+# run ttests
 from scipy.stats import ttest_ind
 result_target = ttest_ind(contra_target_epochs_data, ipsi_target_epochs_data, axis=0)
 result_singleton = ttest_ind(contra_singleton_epochs_data, ipsi_singleton_epochs_data, axis=0)
@@ -85,3 +89,34 @@ ax[1][1].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
 ax[1][1].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[1][1].hlines(y=0, xmin=times[0], xmax=times[-1])
 plt.tight_layout()
+
+# some stats
+observed_target_diff = contra_target_data - ipsi_target_data
+observed_singleton_diff = contra_singleton_data - ipsi_singleton_data
+
+# Initialize a list to save the results of each permutation
+results = list()
+
+pooled = np.concatenate([contra_target_epochs_data, ipsi_target_epochs_data], axis=0)
+len_group = contra_target_epochs_data.shape[0]
+n_permutations = 10000
+# Perform n_permutations permutations
+for _ in range(n_permutations):
+    # Randomly permute the pooled data
+    permuted = np.random.permutation(pooled)
+
+    assigned1 = permuted[:len_group]
+    assigned2 = permuted[len_group:]
+
+    # Calculate the difference in means for this permutation
+    results.append(ttest_ind(a=assigned1, b=assigned2, axis=0)[0])
+
+# Convert results to a numpy array and take absolute values
+results = np.abs(np.array(results))
+
+# Count how many permutations have a difference as extreme as or more extreme than observed_diff
+values_as_or_more_extreme = sum(results >= observed_target_diff[0])
+
+# Calculate the p-value
+num_simulations = results.shape[0]
+p_value = values_as_or_more_extreme / num_simulations
