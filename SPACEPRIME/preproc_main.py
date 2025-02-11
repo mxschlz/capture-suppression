@@ -17,7 +17,6 @@ params = dict(
     add_ref_channel="Fz",
     highpass=1,
     lowpass=40,
-    ica_label_prob=0.9,
     epoch_tmin=-0.2,
     epoch_tmax=1.0
 )
@@ -57,7 +56,7 @@ for subject_id in subject_ids:
     ica = mne.preprocessing.ICA(method="infomax", fit_params=dict(extended=True))
     ica.fit(raw_filt)
     ic_labels = mne_icalabel.label_components(raw_filt, ica, method="iclabel")
-    exclude_idx = [idx for idx, (label, prob) in enumerate(zip(ic_labels["labels"], ic_labels["y_pred_proba"])) if label not in ["brain", "other"] and prob > params["ica_label_prob"]]
+    exclude_idx = [idx for idx, (label, prob) in enumerate(zip(ic_labels["labels"], ic_labels["y_pred_proba"])) if label not in ["brain", "other"]]
     print(f"Excluding these ICA components: {exclude_idx}")
     # ica.plot_properties(raw_filt, picks=exclude_idx)  # inspect the identified IC
     # ica.apply() changes the Raw object in-place, so let's make a copy first:
