@@ -5,6 +5,7 @@ import os
 import glob
 import SPACEPRIME
 from mne.stats import permutation_cluster_test
+from scipy.stats import ttest_ind
 plt.ion()
 
 
@@ -55,7 +56,6 @@ ipsi_singleton_epochs_data = np.mean(np.concatenate([left_singleton_epochs.copy(
 diff_wave_target = contra_target_data - ipsi_target_data
 diff_wave_distractor = contra_singleton_data - ipsi_singleton_data
 # run ttests
-from scipy.stats import ttest_ind
 result_target = ttest_ind(contra_target_epochs_data, ipsi_target_epochs_data, axis=0)
 result_singleton = ttest_ind(contra_singleton_epochs_data, ipsi_singleton_epochs_data, axis=0)
 # plot the data
@@ -65,7 +65,7 @@ fig, ax = plt.subplots(2, 2)
 ax[0][0].plot(times, contra_target_data[0], color="r")
 ax[0][0].plot(times, ipsi_target_data[0], color="b")
 ax[0][0].plot(times, diff_wave_target[0], color="g")
-ax[0][0].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
+ax[0][0].axvspan(0.2, 0.30, color='gray', alpha=0.3)  # Shade the area
 ax[0][0].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[0][0].hlines(y=0, xmin=times[0], xmax=times[-1])
 ax[0][0].legend(["Contra", "Ipsi", "Contra-Ipsi"])
@@ -84,7 +84,7 @@ ax[0][1].set_ylabel("Amplitude [µV]")
 ax[0][1].set_xlabel("Time [s]")
 # third plot
 ax[1][0].plot(times, result_target[0])
-ax[1][0].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
+ax[1][0].axvspan(0.2, 0.3, color='gray', alpha=0.3)  # Shade the area
 ax[1][0].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[1][0].hlines(y=0, xmin=times[0], xmax=times[-1])
 # fourth plot
