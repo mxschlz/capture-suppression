@@ -82,11 +82,13 @@ congruent_power = congruent_epochs.compute_tfr(method=method, freqs=freqs, n_cyc
                                                return_itc=False, average=False)
 incongruent_power = incongruent_epochs.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, decim=decim, n_jobs=-1,
                                                return_itc=False, average=False)
+# apply baseline to the data
+congruent_power.apply_baseline(mode="percent", baseline=(None, 0))
+incongruent_power.apply_baseline(mode="percent", baseline=(None, 0))
+# average
 congruent_power_avrg = congruent_power.average()
 incongruent_power_avrg = incongruent_power.average()
-# apply baseline to the data
-congruent_power_avrg.apply_baseline(mode="percent", baseline=(None, 0))
-incongruent_power_avrg.apply_baseline(mode="percent", baseline=(None, 0))
+# compute contrast
 diff = incongruent_power_avrg - congruent_power_avrg
 diff.plot_topo()
 # pick channel of interest
@@ -99,10 +101,11 @@ incongruent_alpha_data = incongruent_power.get_data(picks=picks, fmin=8, fmax=12
 congruent_alpha_data = congruent_power.get_data(picks=picks, fmin=8, fmax=12).mean(axis=2)
 ttest = ttest_ind(incongruent_alpha_data, congruent_alpha_data, axis=0)
 # plot the stuff
-times = power.times
+times = incongruent_power.times
 fig, ax = plt.subplots(2, 1)
 ax[0].plot(times, incongruent_alpha_data_avrg[0], color="red", label="incongruent alpha")
 ax[0].plot(times, congruent_alpha_data_avrg[0], color="blue", label="congruent alpha")
+ax[0].plot(times, (incongruent_alpha_data_avrg[0] - congruent_alpha_data_avrg[0]), color="green", label="incongruent - congruent")
 ax[1].plot(times, ttest[0][0], color="lightgrey", label="t values")
 ax[0].legend()
 ax[1].legend()
@@ -124,7 +127,7 @@ X = [incongruent_power_data, congruent_power_data]
 t_obs, clusters, cluster_pv, h0 = permutation_cluster_test(X, threshold=threshold,n_permutations=n_permutations,
                                                            n_jobs=n_jobs, out_type="mask")
 # get rid of channel dimension
-t_obs = t_obs.mean(axis=2)
+# t_obs = t_obs.mean(axis=2)
 # plot the results
 times = epochs.times
 fig, (ax, ax2) = plt.subplots(2, 1, figsize=(6, 4), layout="constrained")
