@@ -6,7 +6,7 @@ import autoreject
 import os
 import pandas as pd
 from SPACEPRIME.encoding import *
-from rename_events import add_to_events
+from SPACEPRIME.rename_events import add_to_events
 import glob
 
 
@@ -22,15 +22,15 @@ params = dict(
 )
 settings_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/settings/"
 # get subject id and settings path
-subject_ids = [107]
+subject_ids = [103, 104, 105, 106, 107]
 for subject_id in subject_ids:
-    if subject_id in [101, 102, 103, 104, 105, 106]:  # already processed
+    if subject_id in []:  # already processed
         continue
     data_path = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject_id}/eeg/"
     # read raw fif
     raw_orig = mne.io.read_raw_fif(data_path + f"sub-{subject_id}_task-spaceprime_raw.fif", preload=True)
     # Downsample because the computer crashes if sampled with 1000 Hz :-(
-    raw = raw_orig.resample(params['resampling_freq'])
+    raw = raw_orig.copy().resample(params['resampling_freq'])
     # get events from annotations
     events, event_id = mne.events_from_annotations(raw)
     # add reference channel
@@ -41,8 +41,10 @@ for subject_id in subject_ids:
     # interpolate bad channels
     if subject_id == 101:
         bad_chs = ["TP9"]
-    elif subject_id in [102, 103, 106]:
+    elif subject_id in [103, 104]:
         bad_chs = ["P2"]
+    elif subject_id in [106]:
+        bad_chs = ["P2", "P7"]
     else:
         bad_chs = None
     if bad_chs:

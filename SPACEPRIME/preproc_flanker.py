@@ -37,8 +37,10 @@ for subject_id in subject_ids:
     # interpolate bad channels
     if subject_id == 101:
         bad_chs = ["TP9"]
-    elif subject_id in [102, 103, 106]:
+    elif subject_id in [103, 104]:
         bad_chs = ["P2"]
+    elif subject_id in [106]:
+        bad_chs = ["P2", "P7"]
     else:
         bad_chs = None
     if bad_chs:
