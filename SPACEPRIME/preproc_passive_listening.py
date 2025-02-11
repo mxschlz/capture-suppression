@@ -4,6 +4,7 @@ import mne
 import mne_icalabel
 import autoreject
 import os
+from SPACEPRIME import get_data_path
 from SPACEPRIME.encoding import *
 
 
@@ -11,16 +12,17 @@ mne.set_log_level("INFO")
 params = dict(
     resampling_freq=250,
     add_ref_channel="Fz",
+    ica_reject_threshold=0.9,
     highpass=1,
     lowpass=40,
     epoch_tmin=-0.1,
     epoch_tmax=0.6
 )
-settings_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/settings/"
+settings_path = f"{get_data_path()}settings/"
 # get subject id and settings path
 subject_ids = [103, 105, 106, 107]
 for subject_id in subject_ids:
-    data_path = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject_id}/eeg/"
+    data_path = f"{get_data_path()}sourcedata/raw/sub-{subject_id}/eeg/"
     # read raw fif
     raw_orig = mne.io.read_raw_fif(data_path + f"sub-{subject_id}_task-passive_raw.fif", preload=True)
     # Downsample because the computer crashes if sampled with 1000 Hz :-(
@@ -52,7 +54,7 @@ for subject_id in subject_ids:
     ica = mne.preprocessing.ICA(method="infomax", fit_params=dict(extended=True))
     ica.fit(raw_filt)
     ic_labels = mne_icalabel.label_components(raw_filt, ica, method="iclabel")
-    exclude_idx = [idx for idx, (label, prob) in enumerate(zip(ic_labels["labels"], ic_labels["y_pred_proba"])) if label not in ["brain", "other"]]
+    exclude_idx = [idx for idx, (label, prob) in enumerate(zip(ic_labels["labels"], ic_labels["y_pred_proba"])) if label not in ["brain", "other"] and prob > params["ica_reject_threshold"]]
     print(f"Excluding these ICA components: {exclude_idx}")
     # ica.plot_properties(raw_filt, picks=exclude_idx)  # inspect the identified IC
     # ica.apply() changes the Raw object in-place, so let's make a copy first:
@@ -61,17 +63,17 @@ for subject_id in subject_ids:
     # band pass filter
     reconst_raw_filt = reconst_raw.copy().filter(params["highpass"], params["lowpass"])
     try:
-        os.makedirs(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/eeg/")
+        os.makedirs(f"{get_data_path()}derivatives/preprocessing/sub-{subject_id}/eeg/")
     except FileExistsError:
         print("EEG derivatives preprocessing directory already exists")
     # save the preprocessed raw file
-    reconst_raw_filt.save(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-passive_raw.fif",
+    reconst_raw_filt.save(f"{get_data_path()}derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-passive_raw.fif",
                           overwrite=True)
     # save the ica fit
-    ica.save(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-passive_ica.fif",
+    ica.save(f"{get_data_path()}derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-passive_ica.fif",
              overwrite=True)
     # save the indices that were excluded
-    with open(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-passive_ica_labels.txt", "w") as file:
+    with open(f"{get_data_path()}derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-passive_ica_labels.txt", "w") as file:
         for item in exclude_idx:
             file.write(f"{item}\n")
     if subject_id in [103, 106]:
@@ -87,12 +89,12 @@ for subject_id in subject_ids:
     epochs_ar, log = ar.fit_transform(epochs, return_log=True)
     # save epochs
     try:
-        os.makedirs(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/")
+        os.makedirs(f"{get_data_path()}derivatives/epoching/sub-{subject_id}/eeg/")
     except FileExistsError:
         print("EEG derivatives epoching directory already exists")
-    epochs_ar.save(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-passive-epo.fif",
+    epochs_ar.save(f"{get_data_path()}derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-passive-epo.fif",
                 overwrite=True)
     # save the drop log
-    log.save(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-passive-epo_log.npz",
+    log.save(f"{get_data_path()}derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-passive-epo_log.npz",
              overwrite=True)
     del raw_orig, raw, raw_filt, reconst_raw_filt, reconst_raw, epochs, epochs_ar, log, ar, ica
