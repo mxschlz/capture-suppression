@@ -15,7 +15,7 @@ plt.ion()
 data_root = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/"
 # get all the subject ids
 subjects = os.listdir(data_root)
-df = pd.concat([pd.read_csv(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/{subject}/beh/{subject}_clean*.csv")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106, 107]])
+df = pd.concat([pd.read_csv(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/{subject}/beh/{subject}_clean*.csv")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106, 108, 110]])
 #df = df[df["phase"]==1]
 df_singleton_absent = df[df['SingletonPresent'] == 0]
 df_singleton_present = df[df['SingletonPresent'] == 1]
@@ -35,8 +35,8 @@ df_merged = pd.merge(df_singleton_absent_mean, df_singleton_present_mean, on=['b
 df_merged['iscorrect_diff'] = df_merged['iscorrect_singleton_absent'] - df_merged['iscorrect_singleton_present']
 
 # Add labels and title
-fig, ax = plt.subplots(figsize=(6, 4))
-barplot = sns.barplot(x='block', y='iscorrect_diff', data=df_merged.query("subject_id==105"), errorbar=("se", 1))
+fig, ax = plt.subplots(1, 1)
+barplot = sns.barplot(x='block', y='iscorrect_diff', data=df_merged, errorbar=("se", 1), hue="target_modulation")
 ax.set_ylabel('Proportion correct (Distractor absent - Distractor pesent)')
 ax.set_xlabel('Block')
 # ax.set_ylim(-0.1, 0.1)

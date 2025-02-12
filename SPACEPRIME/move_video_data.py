@@ -1,5 +1,6 @@
 import os
 import shutil
+from SPACEPRIME import get_data_path
 
 def move_files(source_dir, destination_dir, file_types):
     """
@@ -36,8 +37,8 @@ def move_files(source_dir, destination_dir, file_types):
 
 
 subject = input("Enter the subject name (without extension): ")
-source_directory = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject}/eeg/"  # Replace with your source directory
-destination_directory = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject}/headgaze" # Replace with your destination directory
+source_directory = f"{get_data_path()}sourcedata/raw/sub-{subject}/eeg/"  # Replace with your source directory
+destination_directory = f"{get_data_path()}sourcedata/raw/sub-{subject}/headgaze" # Replace with your destination directory
 
 # Moving .txt and .pdf files:
 file_types_to_move = ['.VideoConfig', '.asf']

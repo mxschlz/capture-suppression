@@ -22,7 +22,7 @@ params = dict(
 )
 settings_path = f"{get_data_path()}settings/"
 # get subject id and settings path
-subject_ids = [103, 104, 105, 106, 107]
+subject_ids = [110]
 for subject_id in subject_ids:
     data_path = f"{get_data_path()}sourcedata/raw/sub-{subject_id}/eeg/"
     # read raw fif

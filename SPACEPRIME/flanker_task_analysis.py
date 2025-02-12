@@ -20,7 +20,7 @@ data_root = get_data_path()+ "derivatives/preprocessing/"
 # get all the subject ids
 subjects = os.listdir(data_root)
 # load data from children
-df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}sourcedata/raw/{subject}/beh/flanker_data_{subject.split("-")[1]}*.csv")[0]) for subject in subjects if int(subject.split("-")[1]) in [105, 107]])
+df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}sourcedata/raw/{subject}/beh/flanker_data_{subject.split("-")[1]}*.csv")[0]) for subject in subjects if int(subject.split("-")[1]) in [105, 107, 108, 110]])
 # clean rt data
 df = remove_outliers(df, column_name="rt", threshold=2)
 # plot reaction time distribution
@@ -41,21 +41,21 @@ df["congruency_int"] = df["congruency"].map(mapping)
 anova_correct = AnovaRM(df, depvar='rt', subject='subject_id', within=['congruency'], aggregate_func="mean").fit()
 print(anova_correct.summary())
 # Perform paired t-tests
-t_stat_12, p_value_12 = ttest_rel(df.query("congruency=='neutral'")["rt"], df.query("congruency=='congruent'")["rt"],
+t_stat_1, p_value_1 = ttest_rel(df.query("congruency=='neutral'")["rt"], df.query("congruency=='congruent'")["rt"],
                                   nan_policy="omit")
-t_stat_13, p_value_13 = ttest_rel(df.query("congruency=='neutral'")["rt"], df.query("congruency=='incongruent'")["rt"],
+t_stat_2, p_value_2 = ttest_rel(df.query("congruency=='neutral'")["rt"], df.query("congruency=='incongruent'")["rt"],
                                   nan_policy="omit")
-t_stat_23, p_value_23 = ttest_rel(df.query("congruency=='incongruent'")["rt"], df.query("congruency=='congruent'")["rt"],
+t_stat_3, p_value_3 = ttest_rel(df.query("congruency=='incongruent'")["rt"], df.query("congruency=='congruent'")["rt"],
                                   nan_policy="omit")
 # Combine p-values
-p_values = [p_value_12, p_value_13, p_value_23]
+p_values = [p_value_1, p_value_2, p_value_3]
 # Bonferroni correction
 reject, p_values_corrected, _, _ = multipletests(p_values, alpha=0.05, method='bonferroni')
 print("Corrected p-values (Bonferroni):", p_values_corrected)
 print("Reject null hypothesis:", reject)
 
 # get all the congruent and incongruent epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/{subject}/eeg/{subject}_task-flanker-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [105, 107]])
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/{subject}/eeg/{subject}_task-flanker-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [105, 107, 108]])
 # epochs.average().plot("Oz")
 # compute time frequency bins
 # some params
