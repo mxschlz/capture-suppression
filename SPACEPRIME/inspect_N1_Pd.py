@@ -13,8 +13,9 @@ plt.ion()
 data_root = SPACEPRIME.get_data_path()+"derivatives/preprocessing/"
 # get all the subject ids
 subjects = os.listdir(data_root)
+sub_ids = [103, 104, 105, 106, 108, 110]
 # load epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{SPACEPRIME.get_data_path()}derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106, 108, 110]])
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{SPACEPRIME.get_data_path()}derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in sub_ids])
 #epochs = epochs["select_target==True"]
 # epochs.apply_baseline()
 all_conds = list(epochs.event_id.keys())

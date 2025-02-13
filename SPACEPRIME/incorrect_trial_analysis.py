@@ -4,15 +4,17 @@ import matplotlib.pyplot as plt
 from SPACEPRIME.plotting import plot_individual_lines
 import glob
 import os
+from SPACEPRIME import get_data_path
 plt.ion()
 
 
 # define data root dir
-data_root = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/"
+data_root = f"{get_data_path()}derivatives/preprocessing/"
 # get all the subject ids
 subjects = os.listdir(data_root)
+sub_ids = [103, 104, 105, 106, 108, 110]
 # load data from children
-df = pd.concat([pd.read_csv(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/{subject}/beh/{subject}_clean*.csv")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106, 108, 110]])
+df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/{subject}/beh/{subject}_clean*.csv")[0]) for subject in subjects if int(subject.split("-")[1]) in sub_ids])
 df = df[df["SingletonPresent"] == True]
 # Reshape the data
 df_long = pd.melt(df, id_vars=['block', "subject_id"], value_vars=['select_target', 'select_distractor', 'select_control', 'select_other'])

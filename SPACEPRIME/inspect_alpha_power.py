@@ -11,8 +11,9 @@ plt.ion()
 data_root = SPACEPRIME.get_data_path()+"derivatives/preprocessing/"
 # get all the subject ids
 subjects = os.listdir(data_root)
+sub_ids = [103, 104, 105, 106, 108, 110]
 # load epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{SPACEPRIME.get_data_path()}derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106, 107]])
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{SPACEPRIME.get_data_path()}derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in sub_ids])
 # some params
 freqs = np.arange(1, 31, 1)  # 1 to 30 Hz
 n_cycles = freqs / 2  # different number of cycle per frequency
