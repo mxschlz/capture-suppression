@@ -2,7 +2,7 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pandas as pd
-from scipy.stats import ttest_ind
+from scipy.stats import ttest_ind, f
 import mne
 
 
@@ -88,7 +88,7 @@ def permutation_test_behavior(group1, group2, n_permutations=10000, plot=True, *
         assigned2 = permuted[len_group:].mean()
 
         # Calculate the difference in means for this permutation
-        results.append(ttest_ind(a=assigned1, b=assigned2))
+        results.append(ttest_ind(a=assigned1, b=assigned2)[0])
 
     # Convert results to a numpy array and take absolute values
     results = np.abs(np.array(results))
@@ -173,116 +173,132 @@ def remove_outliers(df, column_name, threshold=2):
     return df_copy
 
 
-def spatem_cluster_test_sensor_data(evokeds, conditions, pval=.05, n_permutations=1000, n_jobs=-1, plot=True):
+def cronbach_alpha(
+    data=None, items=None, scores=None, subject=None, nan_policy="pairwise", ci=0.95
+):
+    """Cronbach's alpha reliability measure.
+
+    Parameters
+    ----------
+    data : :py:class:`pandas.DataFrame`
+        Wide or long-format dataframe.
+    items : str
+        Column in ``data`` with the items names (long-format only).
+    scores : str
+        Column in ``data`` with the scores (long-format only).
+    subject : str
+        Column in ``data`` with the subject identifier (long-format only).
+    nan_policy : bool
+        If `'listwise'`, remove the entire rows that contain missing values
+        (= listwise deletion). If `'pairwise'` (default), only pairwise
+        missing values are removed when computing the covariance matrix.
+        For more details, please refer to the :py:meth:`pandas.DataFrame.cov`
+        method.
+    ci : float
+        Confidence interval (.95 = 95%)
+
+    Returns
+    -------
+    alpha : float
+        Cronbach's alpha
+
+    Notes
+    -----
+    This function works with both wide and long format dataframe. If you pass a
+    long-format dataframe, you must also pass the ``items``, ``scores`` and
+    ``subj`` columns (in which case the data will be converted into wide
+    format using the :py:meth:`pandas.DataFrame.pivot` method).
+
+    Internal consistency is usually measured with Cronbach's alpha [1]_,
+    a statistic calculated from the pairwise correlations between items.
+    Internal consistency ranges between negative infinity and one.
+    Coefficient alpha will be negative whenever there is greater
+    within-subject variability than between-subject variability.
+
+    Cronbach's :math:`\\alpha` is defined as
+
+    .. math::
+
+        \\alpha ={k \\over k-1}\\left(1-{\\sum_{{i=1}}^{k}\\sigma_{{y_{i}}}^{2}
+        \\over\\sigma_{x}^{2}}\\right)
+
+    where :math:`k` refers to the number of items, :math:`\\sigma_{x}^{2}`
+    is the variance of the observed total scores, and
+    :math:`\\sigma_{{y_{i}}}^{2}` the variance of component :math:`i` for
+    the current sample of subjects.
+
+    Another formula for Cronbach's :math:`\\alpha` is
+
+    .. math::
+
+        \\alpha = \\frac{k \\times \\bar c}{\\bar v + (k - 1) \\times \\bar c}
+
+    where :math:`\\bar c` refers to the average of all covariances between
+    items and :math:`\\bar v` to the average variance of each item.
+
+    95% confidence intervals are calculated using Feldt's method [2]_:
+
+    .. math::
+
+        c_L = 1 - (1 - \\alpha) \\cdot F_{(0.025, n-1, (n-1)(k-1))}
+
+        c_U = 1 - (1 - \\alpha) \\cdot F_{(0.975, n-1, (n-1)(k-1))}
+
+    where :math:`n` is the number of subjects and :math:`k` the number of
+    items.
+
+    Results have been tested against the `psych
+    <https://cran.r-project.org/web/packages/psych/psych.pdf>`_ R package.
+
+    References
+    ----------
+    .. [1] http://www.real-statistics.com/reliability/cronbachs-alpha/
+
+    .. [2] Feldt, Leonard S., Woodruff, David J., & Salih, Fathi A. (1987).
+           Statistical inference for coefficient alpha. Applied Psychological
+           Measurement, 11(1):93-103.
+
+    Examples
+    --------
+    Binary wide-format dataframe (with missing values)
+
+    data = pg.read_dataset('cronbach_alpha')
+    pg.cronbach_alpha(data=data, items='Items', scores='Scores', subject='Subj')
+    (0.5917188485995826, array([0.195, 0.84 ]))
     """
-    The permutation test expects the data to be in the shape: observations × time × space. Observations here are epochs
-    for single subjects, or the evoked response from one subject for multi-subject analysis.
-    Approach inspired by
-    doi:10.1016/j.neuroimage.2008.03.061
-    doi:10.1016/j.jneumeth.2007.03.024
-    doi:10.1111/psyp.13335
-    """
-    evokeds_data = dict()
-    for condition in evokeds:
-        evokeds_data[condition] = np.array(
-            [evokeds[condition][e].get_data() for e in range(len(evokeds[list(evokeds.keys())[0]]))])
-        evokeds_data[condition] = evokeds_data[condition].transpose(0, 2, 1)
-    adjacency, _ = mne.channels.find_ch_adjacency(
-        evokeds[list(evokeds.keys())[0]][0].info, None)
-    X = [evokeds_data[conditions[0]], evokeds_data[conditions[1]]]
-    t_obs, clusters, cluster_pv, h0 = mne.stats.spatio_temporal_cluster_test(
-        X, threshold=dict(start=.2, step=.2), adjacency=adjacency, n_permutations=n_permutations, n_jobs=n_jobs)
-    significant_points = cluster_pv.reshape(t_obs.shape).T < pval
-    if plot:
-        cond0 = mne.grand_average(evokeds[conditions[0]])
-        cond1 = mne.grand_average(evokeds[conditions[1]])
-        evoked_diff = mne.combine_evoked(
-            [cond0, cond1], weights=[1, -1])
-        evoked_diff.plot_joint()
-        plt.close()
-        selections = mne.channels.make_1020_channel_selections(evoked_diff.info, midline="z")
-        fig, axes = plt.subplots(nrows=3, figsize=(8, 8))
-        axes = {sel: ax for sel, ax in zip(selections, axes.ravel())}
-        evoked_diff.plot_image(axes=axes, group_by=selections, colorbar=False, show=False,
-                               mask=significant_points, show_names="all", titles=None)
-        plt.colorbar(axes["Left"].images[-1], ax=list(axes.values()), shrink=.3,
-                     label="µV")
-        plt.show()
-    return t_obs, clusters, cluster_pv, h0, significant_points
+    # Safety check
+    assert isinstance(data, pd.DataFrame), "data must be a dataframe."
+    assert nan_policy in ["pairwise", "listwise"]
 
+    if all([v is not None for v in [items, scores, subject]]):
+        # Data in long-format: we first convert to a wide format
+        data = data.pivot(index=subject, values=scores, columns=items)
 
-def permutation_test_sensor_data(data1, data2, n_permutations=1000, tail='both', plot=True):
-    """
-    TODO: NOT WORKING ATM
-    Performs a nonparametric permutation test on EEG data.
+    # From now we assume that data is in wide format
+    n, k = data.shape
+    assert k >= 2, "At least two items are required."
+    assert n >= 2, "At least two raters/subjects are required."
+    err = "All columns must be numeric."
+    assert all([data[c].dtype.kind in "bfiu" for c in data.columns]), err
+    if data.isna().any().any() and nan_policy == "listwise":
+        # In R = psych:alpha(data, use="complete.obs")
+        data = data.dropna(axis=0, how="any")
 
-    Args:
-        data1 (array): EEG data for condition 1 (subjects x electrodes x time/frequency points).
-        data2 (array): EEG data for condition 2 (subjects x electrodes x time/frequency points).
-        n_permutations (int): Number of permutations to perform.
-        tail (str): Type of test ('both', 'left', 'right').
-        plot (bool): Whether to plot the results.
+    # Compute covariance matrix and Cronbach's alpha
+    C = data.cov(numeric_only=True)
+    cronbach = (k / (k - 1)) * (1 - np.trace(C) / C.sum().sum())
+    # which is equivalent to
+    # v = np.diag(C).mean()
+    # c = C.to_numpy()[np.tril_indices_from(C, k=-1)].mean()
+    # cronbach = (k * c) / (v + (k - 1) * c)
 
-    Returns:
-        array: p-values for each electrode/time-frequency point.
-    """
-
-    n_subjects1 = data1.shape[0]
-    n_subjects2 = data2.shape[0]
-    n_obs = data1.shape[1:]
-
-    # Calculate observed t-statistic
-    t_obs, _ = ttest_ind(data1[0, :, :], data2[0, :, :], axis=0)
-
-    # Concatenate data
-    data_concat = np.concatenate((data1, data2), axis=0)
-
-    # Perform permutations
-    t_perm = np.zeros((n_permutations,) + n_obs)
-    for i in range(n_permutations):
-        # Shuffle data
-        perm_indices = np.random.permutation(n_subjects1 + n_subjects2)
-        data_perm1 = data_concat[perm_indices[:n_subjects1]]
-        data_perm2 = data_concat[perm_indices[n_subjects1:]]
-
-        # Calculate t-statistic for permuted data
-        t_perm[i], _ = ttest_ind(data_perm1[0, :, :], data_perm2[0, :, :], axis=0)
-
-    # Calculate p-values
-    if tail == 'both':
-        p_values = np.mean(np.abs(t_perm) >= np.abs(t_obs), axis=0)
-    elif tail == 'left':
-        p_values = np.mean(t_perm <= t_obs, axis=0)
-    elif tail == 'right':
-        p_values = np.mean(t_perm >= t_obs, axis=0)
-    else:
-        raise ValueError("Invalid tail argument. Must be 'both', 'left', or 'right'.")
-
-    if plot:
-        # Plot the results
-        if len(n_obs) == 2:  # Spatio-temporal (ERP) data
-            plt.figure(figsize=(10, 6))
-            plt.imshow(p_values, cmap='viridis', aspect='auto', origin='lower')
-            plt.colorbar(label='p-value')
-            plt.xlabel('Time')
-            plt.ylabel('Electrode')
-            plt.title('Permutation Test Results (Spatio-temporal)')
-            plt.show()
-
-        elif len(n_obs) == 3:  # Spatio-spectro-temporal (time-frequency) data
-            for i in range(data1.shape):
-                plt.figure(figsize=(10, 6))
-                plt.imshow(p_values[:, i,:], cmap='viridis', aspect='auto', origin='lower')
-                plt.colorbar(label='p-value')
-                plt.xlabel('Time')
-                plt.ylabel('Frequency')
-                plt.title(f'Permutation Test Results (Spatio-spectro-temporal) - Electrode {i+1}')
-                plt.show()
-
-        else:
-            raise ValueError("Data must have 2 or 3 dimensions (subjects x electrodes x time/frequency points).")
-
-    return p_values
+    # Confidence intervals
+    alpha = 1 - ci
+    df1 = n - 1
+    df2 = df1 * (k - 1)
+    lower = 1 - (1 - cronbach) * f.isf(alpha / 2, df1, df2)
+    upper = 1 - (1 - cronbach) * f.isf(1 - alpha / 2, df1, df2)
+    return cronbach, np.round([lower, upper], 3)
 
 
 if __name__ == "__main__":
@@ -334,6 +350,3 @@ if __name__ == "__main__":
     ipsi_singleton_epochs_data = np.mean(np.concatenate([left_singleton_epochs.copy().get_data(picks="C3"),
                                                          right_singleton_epochs.copy().get_data(picks="C4")], axis=1),
                                          axis=1)
-    permutation_test_sensor_data(data1=contra_target_epochs_data.reshape((1, 717, 376)),
-                                 data2=ipsi_target_epochs_data.reshape(1, 717, 376),
-                                 n_permutations=100)
