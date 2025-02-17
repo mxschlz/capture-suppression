@@ -20,7 +20,7 @@ params = dict(
 )
 settings_path = f"{get_data_path()}settings/"
 # get subject id and settings path
-subject_ids = [110]
+subject_ids = [116]
 for subject_id in subject_ids:
     data_path = f"{get_data_path()}sourcedata/raw/sub-{subject_id}/eeg/"
     # read raw fif
@@ -41,6 +41,8 @@ for subject_id in subject_ids:
         bad_chs = ["P2"]
     elif subject_id in [106]:
         bad_chs = ["P2", "P7"]
+    elif subject_id in [116]:
+        bad_chs = ["P3", "TP10"]
     else:
         bad_chs = None
     if bad_chs:
