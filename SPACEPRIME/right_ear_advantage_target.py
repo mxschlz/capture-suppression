@@ -1,30 +1,23 @@
-import matplotlib
-matplotlib.use("Qt5Agg")
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from color_palette import get_subpalette
+from SPACEPRIME.plotting import plot_individual_lines
+import glob
+import os
+from SPACEPRIME import get_data_path
 plt.ion()
 
-# insert color palette
-sns.set_palette(list(get_subpalette([14, 84, 44]).values()))
 
-# load up dataframe
-df = pd.read_excel("/home/max/data/behavior/SPACEPRIME/sub-99_clean.xlsx")
+# define data root dir
+data_root = f"{get_data_path()}derivatives/preprocessing/"
+# get all the subject ids
+subjects = os.listdir(data_root)
+sub_ids = [104, 106, 108, 110, 112, 114]
+# load data from children
+df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/{subject}/beh/{subject}_clean*.csv")[0]) for subject in subjects if int(subject.split("-")[1]) in sub_ids])
 # some cleaning
-df = df[(df['event_type'] == 'mouse_click')]
-barplot = sns.barplot(data=df, x="TargetLoc", y="iscorrect")
-df_mean = df.groupby(['subject_id', 'TargetLoc']).mean(numeric_only=True).reset_index()
-bar_positions = [patch.get_x() + patch.get_width() / 2 for patch in barplot.patches]
-# Plot individual subject data as lines
-subjects = df['subject_id'].unique()
-for subject in subjects:
-    subject_data = df_mean[df_mean['subject_id'] == subject]
-    # Aligning subject data with bar positions
-    x_positions = [bar_positions[i] for i, _ in enumerate(subject_data['TargetLoc'])]
-    plt.plot(x_positions, subject_data['iscorrect'], marker='', linestyle='-', color='black', alpha=0.5)
+barplot = sns.barplot(data=df, x="TargetLoc", y="select_target")
+plot_individual_lines(barplot, data=df, x_col="TargetLoc", y_col="select_target")
 plt.xlabel("Target Position")
 plt.ylabel("Proportion correct")
 barplot.set_xticklabels([-90, 0, 90])
-plt.savefig("/home/max/figures/SPACEPRIME/target_iscorrect.svg")
-
