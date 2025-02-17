@@ -12,7 +12,7 @@ plt.ion()
 data_root = f"{get_data_path()}derivatives/preprocessing/"
 # get all the subject ids
 subjects = os.listdir(data_root)
-sub_ids = [103, 104, 105, 106, 108, 110]
+sub_ids = [103, 104, 105, 106, 107, 108, 112, 114]
 # load data from children
 df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/{subject}/beh/{subject}_clean*.csv")[0]) for subject in subjects if int(subject.split("-")[1]) in sub_ids])
 df = df[df["SingletonPresent"] == True]
@@ -30,3 +30,6 @@ incorrects = df[df["select_target"] == False]
 crosstab = pd.crosstab(index=incorrects["response"], columns=incorrects["TargetDigit"])
 heatmap = sns.heatmap(crosstab)
 heatmap.invert_yaxis()
+
+sns.barplot(x='block', y='value', hue="variable", data=df_long.query("subject_id==114"), errorbar=None,
+            palette=['forestgreen', 'red', 'grey', 'purple'])
