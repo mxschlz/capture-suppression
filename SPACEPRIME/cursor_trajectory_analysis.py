@@ -4,6 +4,7 @@ import glob
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
+from SPACEPRIME import get_data_path
 plt.ion()
 
 
@@ -25,11 +26,21 @@ def degrees_va_to_pixels(degrees, screen_pixels, screen_size_cm, viewing_distanc
     return pixels
 
 # define data root dir
-data_root = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/"
+data_root = f"{get_data_path()}derivatives/preprocessing/"
 # get all the subject ids
 subjects = os.listdir(data_root)
+sub_ids = [106, 110, 112, 114, 116]
 # load data from children
-df = pd.concat([pd.read_csv(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/{subject}/beh/{subject}*mouse_data.csv")[0]) for subject in subjects if int(subject.split("-")[1]) in [105, 106, 107]])
+# Load data from children and add subject_id column
+df_list = list()
+for subject in subjects:
+    if int(subject.split("-")[1]) in sub_ids:
+        filepath = glob.glob(f"{get_data_path()}sourcedata/raw/{subject}/beh/{subject}*mouse_data.csv")[0]
+        temp_df = pd.read_csv(filepath)
+        temp_df['subject_id'] = subject.split("-")[1]  # Extract subject ID and add as a column
+        df_list.append(temp_df)# get rows per trial
+df = pd.concat(df_list, ignore_index=True)  # Concatenate all DataFrames
+rows_per_trial = df.groupby(['trial_nr', 'subject_id']).size().reset_index(name='n_rows')
 # define some setup params
 width = 1920
 height = 1080
@@ -47,7 +58,7 @@ _range = [[0, height], [0, width]]
 bins_x, bins_y = width, height
 extent = [0, width, height, 0]
 hist, _, _ = np.histogram2d(canvas[1, :], canvas[0, :], bins=(bins_y, bins_x), range=_range)
-sfreq = 1600
+sfreq = rows_per_trial["n_rows"].mean()/3  # divide by 3 because 1 trial is 3 seconds long
 sigma = 25
 alpha = 1.0
 hist /= sfreq

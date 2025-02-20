@@ -4,15 +4,16 @@ import matplotlib.pyplot as plt
 import os
 import glob
 from scipy.signal import savgol_filter
+from SPACEPRIME import get_data_path
 plt.ion()
 
 
 # define data root dir
-data_root = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/"
+data_root = f"{get_data_path()}derivatives/preprocessing/"
 # get all the subject ids
 subjects = os.listdir(data_root)
-# load epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106, 107]])
+sub_ids = [104, 106, 108, 110, 112, 114, 116]
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in sub_ids])
 #epochs = epochs["select_target==True"]
 epochs.crop(0)  # crop for better visabillity
 all_conds = list(epochs.event_id.keys())

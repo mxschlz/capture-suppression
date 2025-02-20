@@ -93,7 +93,7 @@ for subject_id in subject_ids:
     elif subject_id == 102:
         epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=params["epoch_tmin"]+0.08, tmax=params["epoch_tmax"]+0.08,
                             baseline=None)
-    elif subject_id in [103, 104, 105, 112]:
+    elif subject_id in [103, 104, 105, 112, 116]:
         epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
                             baseline=None)
     elif subject_id not in [106, 107]:
