@@ -1,19 +1,14 @@
 import mne
 import numpy as np
 import matplotlib.pyplot as plt
-import os
 import glob
-import SPACEPRIME
+from SPACEPRIME.subjects import subject_ids
+from SPACEPRIME import get_data_path
 plt.ion()
 
 
-# define data root dir
-data_root = SPACEPRIME.get_data_path()+"derivatives/preprocessing/"
-# get all the subject ids
-subjects = os.listdir(data_root)
-sub_ids = [103, 104, 105, 106, 108, 110]
 # load epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{SPACEPRIME.get_data_path()}derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in sub_ids])
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-flanker-epo.fif")[0]) for subject in subject_ids])
 # some params
 freqs = np.arange(1, 31, 1)  # 1 to 30 Hz
 n_cycles = freqs / 2  # different number of cycle per frequency

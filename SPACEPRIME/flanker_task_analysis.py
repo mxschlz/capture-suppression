@@ -51,7 +51,7 @@ print("Corrected p-values (Bonferroni):", p_values_corrected)
 print("Reject null hypothesis:", reject)
 
 # get all the congruent and incongruent epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-flanker-epo.fif")[0]) for subject in subject_ids[2:]])
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-flanker-epo.fif")[0]) for subject in subject_ids])
 # epochs.average().plot("Oz")
 # compute time frequency bins
 # some params
