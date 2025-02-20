@@ -8,6 +8,7 @@ import pandas as pd
 from SPACEPRIME.encoding import *
 from SPACEPRIME.rename_events import add_to_events
 from SPACEPRIME import get_data_path
+from SPACEPRIME.bad_chs import bad_chs
 import glob
 
 
@@ -24,7 +25,7 @@ params = dict(
 )
 settings_path = f"{get_data_path()}settings/"
 # get subject id and settings path
-subject_ids = [116]
+subject_ids = [120]
 for subject_id in subject_ids:
     if subject_id in []:  # already processed
         continue
@@ -41,18 +42,9 @@ for subject_id in subject_ids:
     montage = mne.channels.read_custom_montage(settings_path + "CACS-64_NO_REF.bvef")
     raw.set_montage(montage)
     # interpolate bad channels
-    if subject_id == 101:
-        bad_chs = ["TP9"]
-    elif subject_id in [103, 104]:
-        bad_chs = ["P2"]
-    elif subject_id in [106]:
-        bad_chs = ["P2", "P7"]
-    elif subject_id in [116]:
-        bad_chs = ["P3", "TP10"]
-    else:
-        bad_chs = None
-    if bad_chs:
-        raw.info["bads"] = bad_chs
+    bads = bad_chs[subject_id]
+    if bads:
+        raw.info["bads"] = bads
         raw.interpolate_bads()
     # average reference
     raw.set_eeg_reference(ref_channels="average")
@@ -93,7 +85,7 @@ for subject_id in subject_ids:
     elif subject_id == 102:
         epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=params["epoch_tmin"]+0.08, tmax=params["epoch_tmax"]+0.08,
                             baseline=None)
-    elif subject_id in [103, 104, 105, 112, 116]:
+    elif subject_id in [103, 104, 105, 112, 116, 118, 120]:
         epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
                             baseline=None)
     elif subject_id not in [106, 107]:

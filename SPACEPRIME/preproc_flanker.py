@@ -8,6 +8,7 @@ import pandas as pd
 from SPACEPRIME.encoding import *
 from SPACEPRIME import get_data_path
 import glob
+from SPACEPRIME.bad_chs import bad_chs
 
 
 mne.set_log_level("INFO")
@@ -22,7 +23,7 @@ params = dict(
 )
 settings_path = f"{get_data_path()}settings/"
 # get subject id and settings path
-subject_ids = [116]
+subject_ids = [118, 120]
 for subject_id in subject_ids:
     data_path = f"{get_data_path()}sourcedata/raw/sub-{subject_id}/eeg/"
     # read raw fif
@@ -37,18 +38,9 @@ for subject_id in subject_ids:
     montage = mne.channels.read_custom_montage(settings_path + "CACS-64_NO_REF.bvef")
     raw.set_montage(montage)
     # interpolate bad channels
-    if subject_id == 101:
-        bad_chs = ["TP9"]
-    elif subject_id in [103, 104]:
-        bad_chs = ["P2"]
-    elif subject_id in [106]:
-        bad_chs = ["P2", "P7"]
-    elif subject_id in [116]:
-        bad_chs = ["P3", "TP10"]
-    else:
-        bad_chs = None
-    if bad_chs:
-        raw.info["bads"] = bad_chs
+    bads = bad_chs[subject_id]
+    if bads:
+        raw.info["bads"] = bads
         raw.interpolate_bads()
     # average reference
     raw.set_eeg_reference(ref_channels="average")
