@@ -3,19 +3,13 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from SPACEPRIME.plotting import plot_individual_lines
 import glob
-import os
 from SPACEPRIME import get_data_path
 from scipy.stats import ttest_ind
+from SPACEPRIME.subjects import subject_ids
 
 
-# define data root dir
-data_root = f"{get_data_path()}derivatives/preprocessing/"
-# get all the subject ids
-subjects = os.listdir(data_root)
-sub_ids = [104, 106, 108, 110, 112, 114, 116]
-# load data from children
-df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/{subject}/beh/{subject}_clean*.csv")[0]) for subject in subjects if int(subject.split("-")[1]) in sub_ids])
-df = df[df["SingletonPresent"] == 1]
+df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/sub-{subject}/beh/sub-{subject}_clean*.csv")[0]) for subject in subject_ids])
+#df = df[df["SingletonPresent"] == 1]
 # plot
 barplot = sns.barplot(data=df, x="Priming", y="rt", errorbar=("se", 1))
 plot_individual_lines(ax=barplot, data=df, y_col="rt")
@@ -23,5 +17,5 @@ plt.xlabel("Priming")
 plt.ylabel("Proportion correct")
 barplot.set_xticklabels(["Negative", "No", "Positive"])
 # ttest
-t, pval = ttest_ind(df.query("Priming==-1")["rt"].astype(int),
-                    df.query("Priming==0")["rt"].astype(int), nan_policy="omit")
+t, pval = ttest_ind(df.query("Priming==-1")["select_target"].astype(int),
+                    df.query("Priming==0")["select_target"].astype(int), nan_policy="omit")

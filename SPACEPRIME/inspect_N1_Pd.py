@@ -1,24 +1,19 @@
 import mne
 import numpy as np
 import matplotlib.pyplot as plt
-import os
 import glob
 from SPACEPRIME import get_data_path
 from mne.stats import permutation_cluster_test
 from scipy.stats import ttest_ind
+from SPACEPRIME.subjects import subject_ids
 plt.ion()
 
 
-# define data root dir
-data_root = get_data_path()+"derivatives/preprocessing/"
-# get all the subject ids
-subjects = os.listdir(data_root)
-sub_ids = [104, 106, 108, 110, 112, 114, 116]
 settings_path = f"{get_data_path()}settings/"
 montage = mne.channels.read_custom_montage(settings_path + "CACS-64_NO_REF.bvef")
 ch_pos = montage.get_positions()["ch_pos"]
 # load epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in sub_ids])
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0]) for subject in subject_ids])
 #epochs = epochs["select_target==True"]
 # epochs.apply_baseline()
 all_conds = list(epochs.event_id.keys())
@@ -198,7 +193,7 @@ info = epochs.info
 # 1. Define Time Range and Step
 start_time = 0  # Example: Start 100ms *before* stimulus onset
 end_time = 0.7   # Example: End 500ms after stimulus onset
-time_step = 0.025  # 50ms step
+time_step = 0.05  # 50ms step
 
 # 2. Create Time Points
 times_to_plot = np.arange(start_time, end_time + time_step, time_step)

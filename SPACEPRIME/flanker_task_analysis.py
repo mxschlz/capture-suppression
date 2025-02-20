@@ -3,7 +3,6 @@ import seaborn as sns
 from scipy.stats import ttest_rel
 from stats import remove_outliers
 import mne
-import os
 import glob
 import numpy as np
 from SPACEPRIME.plotting import plot_individual_lines
@@ -13,15 +12,11 @@ from statsmodels.stats.multitest import multipletests
 from mne.stats import permutation_cluster_test
 from scipy.stats import ttest_ind
 import matplotlib.pyplot as plt
+from SPACEPRIME.subjects import subject_ids
 
 
-# define data root dir
-data_root = get_data_path()+ "derivatives/preprocessing/"
-# get all the subject ids
-subjects = os.listdir(data_root)
-sub_ids = [105, 107, 108, 110]
 # load data from children
-df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}sourcedata/raw/{subject}/beh/flanker_data_{subject.split("-")[1]}*.csv")[0]) for subject in subjects if int(subject.split("-")[1]) in sub_ids])
+df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}sourcedata/raw/sub-{subject}/beh/flanker_data_{subject}*.csv")[0]) for subject in subject_ids])
 # clean rt data
 df = remove_outliers(df, column_name="rt", threshold=2)
 # plot reaction time distribution
@@ -56,7 +51,7 @@ print("Corrected p-values (Bonferroni):", p_values_corrected)
 print("Reject null hypothesis:", reject)
 
 # get all the congruent and incongruent epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/{subject}/eeg/{subject}_task-flanker-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in sub_ids])
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-flanker-epo.fif")[0]) for subject in subject_ids[2:]])
 # epochs.average().plot("Oz")
 # compute time frequency bins
 # some params
