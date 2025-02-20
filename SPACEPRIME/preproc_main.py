@@ -25,7 +25,7 @@ params = dict(
 )
 settings_path = f"{get_data_path()}settings/"
 # get subject id and settings path
-subject_ids = [120]
+subject_ids = [122]
 for subject_id in subject_ids:
     if subject_id in []:  # already processed
         continue
@@ -91,8 +91,11 @@ for subject_id in subject_ids:
     elif subject_id not in [106, 107]:
         epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding_sub_106, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
                             baseline=None)
-        epochs = add_to_events(epochs, new_encoding=encoding)
-    # append behavior to metadata attribute in epochs for later analyses
+        epochs = add_to_events(epochs, new_encoding=encoding, change_by=1)
+    elif subject_id in [122]:
+        epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding_sub_122, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
+                            baseline=None)
+        epochs = add_to_events(epochs, new_encoding=encoding, change_by=-1)    # append behavior to metadata attribute in epochs for later analyses
     beh = pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/sub-{subject_id}/beh/sub-{subject_id}_clean*.csv")[0])
     # append metadata to epochs
     epochs.metadata = beh

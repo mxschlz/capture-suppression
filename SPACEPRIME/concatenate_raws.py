@@ -2,7 +2,7 @@ import mne
 import os
 
 
-subject_id = 103
+subject_id = input("Enter the subject name (without extension): ")
 raws = []
 flanker_raws = []
 passive_raws = []
