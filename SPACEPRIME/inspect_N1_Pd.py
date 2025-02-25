@@ -44,24 +44,22 @@ contra_distractor_epochs_data = np.mean(np.concatenate([left_distractor_epochs.c
 ipsi_distractor_epochs_data = np.mean(np.concatenate([left_distractor_epochs.copy().get_data(picks="C3"),
                                right_distractor_epochs.copy().get_data(picks="C4")], axis=1), axis=1)
 
-contra_distractor_epochs_data_passive, ipsi_distractor_epochs_data_passive, contra_target_epochs_data_passive, ipsi_target_epochs_data_passive, diff_target_passive, diff_distractor_passive = get_passive_listening_ERPs()
-
 # get difference waves
 diff_wave_target = contra_target_epochs_data.mean(axis=0) - ipsi_target_epochs_data.mean(axis=0)
 diff_wave_distractor = contra_distractor_epochs_data.mean(axis=0) - ipsi_distractor_epochs_data.mean(axis=0)
 # run ttests
-result_target = ttest_ind(contra_target_epochs_data-contra_target_epochs_data_passive[0],
-                          ipsi_target_epochs_data-ipsi_target_epochs_data_passive[0], axis=0)
-result_distractor = ttest_ind(contra_distractor_epochs_data-contra_distractor_epochs_data_passive[0],
-                              ipsi_distractor_epochs_data-ipsi_distractor_epochs_data_passive[0], axis=0)
+result_target = ttest_ind(contra_target_epochs_data,
+                          ipsi_target_epochs_data, axis=0)
+result_distractor = ttest_ind(contra_distractor_epochs_data,
+                              ipsi_distractor_epochs_data, axis=0)
 # plot the data
 times = epochs.times
 fig, ax = plt.subplots(2, 2, sharey=False)
 ax[1][1].sharey(ax[1][0])
 # first plot
-ax[0][0].plot(times, contra_target_epochs_data.mean(axis=0)-contra_target_epochs_data_passive.mean(axis=0), color="r")
-ax[0][0].plot(times, ipsi_target_epochs_data.mean(axis=0)-ipsi_target_epochs_data_passive.mean(axis=0), color="b")
-ax[0][0].plot(times, (diff_wave_target-diff_target_passive)[0], color="g")
+ax[0][0].plot(times, contra_target_epochs_data.mean(axis=0), color="r")
+ax[0][0].plot(times, ipsi_target_epochs_data.mean(axis=0), color="b")
+ax[0][0].plot(times, diff_wave_target, color="g")
 ax[0][0].axvspan(0.2, 0.30, color='gray', alpha=0.3)  # Shade the area
 ax[0][0].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[0][0].hlines(y=0, xmin=times[0], xmax=times[-1])
@@ -70,9 +68,9 @@ ax[0][0].set_title("Target lateral")
 ax[0][0].set_ylabel("Amplitude [µV]")
 ax[0][0].set_xlabel("Time [s]")
 # second plot
-ax[0][1].plot(times, contra_distractor_epochs_data.mean(axis=0)-contra_distractor_epochs_data_passive.mean(axis=0), color="r")
-ax[0][1].plot(times, ipsi_distractor_epochs_data.mean(axis=0)-ipsi_distractor_epochs_data_passive.mean(axis=0), color="b")
-ax[0][1].plot(times, (diff_wave_distractor-diff_distractor_passive)[0], color="g")
+ax[0][1].plot(times, contra_distractor_epochs_data.mean(axis=0), color="r")
+ax[0][1].plot(times, ipsi_distractor_epochs_data.mean(axis=0), color="b")
+ax[0][1].plot(times, diff_wave_distractor, color="g")
 ax[0][1].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
 ax[0][1].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[0][1].hlines(y=0, xmin=times[0], xmax=times[-1])
@@ -115,18 +113,20 @@ selected_ch_names = [epochs.info['ch_names'][i] for i in selections["Right"]]
 diff_wave_target_evoked = mne.EvokedArray(data=contra_target_epochs_data_all_chs-ipsi_target_epochs_data_all_chs,
                                           info=mne.create_info(ch_names=28,
                                                                sfreq=250))
-diff_wave_distractor_evoked = mne.EvokedArray(data=contra_distractor_epochs_data_all_chs-ipsi_distractor_epochs_data_all_chs)
+diff_wave_distractor_evoked = mne.EvokedArray(data=contra_distractor_epochs_data_all_chs-ipsi_distractor_epochs_data_all_chs,
+                                              info=mne.create_info(ch_names=28,
+                                                                   sfreq=250))
 # number of permutations
 n_permutations = 10000
 # some stats
 n_jobs = -1
 pval = 0.05
-threshold = dict(start=0, step=0.1)  # the smaller the step and the closer the start to 0, the better the approximation
+threshold = dict(start=0, step=0.2)  # the smaller the step and the closer the start to 0, the better the approximation
 
 # mne.viz.plot_ch_adjacency(epochs.info, adjacency, epochs.info["ch_names"])
 X = [contra_target_epochs_data, ipsi_target_epochs_data]
 t_obs, clusters, cluster_pv, h0 = permutation_cluster_test(X, threshold=threshold, n_permutations=n_permutations,
-                                                           n_jobs=n_jobs, out_type="mask", tail=0)
+                                                           n_jobs=n_jobs, out_type="mask", tail=0, stat_fun=mne.stats.ttest_ind_no_p)
 times = epochs.times
 fig, (ax, ax2) = plt.subplots(2, 1, figsize=(8, 4))
 ax.set_title("Contra minus ipsi")
