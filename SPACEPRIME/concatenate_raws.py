@@ -1,12 +1,13 @@
 import mne
 import os
+from SPACEPRIME import get_data_path
 
 
 subject_id = input("Enter the subject name (without extension): ")
 raws = []
 flanker_raws = []
 passive_raws = []
-data_path = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/sourcedata/raw/sub-{subject_id}/eeg/"
+data_path = f"{get_data_path()}sourcedata/raw/sub-{subject_id}/eeg/"
 raw_filenames = sorted([x for x in os.listdir(data_path) if ".vhdr" in x])
 for filename in raw_filenames:
 	if "passive_listening" in filename:
