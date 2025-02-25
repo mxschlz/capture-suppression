@@ -3,15 +3,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import glob
+from SPACEPRIME import get_data_path
+from SPACEPRIME.subjects import subject_ids
 plt.ion()
 
 
 # define data root dir
-data_root = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/"
+data_root = f"{get_data_path()}derivatives/preprocessing/"
 # get all the subject ids
 subjects = os.listdir(data_root)
 # load epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in [103, 104, 105, 106, 107]])
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[0]) for subject in subjects if int(subject.split("-")[1]) in subject_ids])
 # epochs.apply_baseline()
 all_conds = list(epochs.event_id.keys())
 # Separate epochs based on target location
@@ -28,13 +30,13 @@ ipsi_target_epochs_data = np.mean(np.concatenate([left_target_epochs.copy().pick
                                right_target_epochs.copy().pick("C4").get_data()], axis=1), axis=1)
 # compute power density spectrum for evoked response and look for frequency tagging
 # first, create epochs objects from numpy arrays computed above for ipsi and contra targets
-ipsi_target_epochs = mne.EpochsArray(data=ipsi_target_epochs_data.reshape(len(left_target_epochs), 1, 376),
+ipsi_target_epochs = mne.EpochsArray(data=ipsi_target_epochs_data.reshape(len(left_target_epochs), 1, left_target_epochs.get_data().shape[2]),
                                      info=mne.create_info(ch_names=["Ipsi Target"], sfreq=250, ch_types="eeg"))
-contra_target_epochs = mne.EpochsArray(data=contra_target_epochs_data.reshape(len(left_target_epochs), 1, 376),
+contra_target_epochs = mne.EpochsArray(data=contra_target_epochs_data.reshape(len(left_target_epochs), 1, left_target_epochs.get_data().shape[2]),
                                      info=mne.create_info(ch_names=["Contra Target"], sfreq=250, ch_types="eeg"))
 # now, compute the power spectra for both ipsi and contra targets
 target_diff = mne.EpochsArray(data=(contra_target_epochs.get_data() - ipsi_target_epochs.get_data()),
                               info=mne.create_info(ch_names=["Target: Contra - Ipsi"], sfreq=250, ch_types="eeg"))
 # subtract the ipsi from the contralateral target power
-powerdiff_target = target_diff.compute_psd(method="welch")
+powerdiff_target = target_diff.compute_psd(method="welch", fmin=25, fmax=35)
 powerdiff_target.plot()
