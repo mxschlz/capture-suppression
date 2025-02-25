@@ -15,15 +15,15 @@ df_singleton_absent = df[df['SingletonPresent'] == 0]
 df_singleton_present = df[df['SingletonPresent'] == 1]
 
 # Calculate the mean of iscorrect for each block and subject_id
-df_singleton_absent_mean = (df_singleton_absent.groupby(['sub_block', "subject_id", "target_modulation"])['select_target']
+df_singleton_absent_mean = (df_singleton_absent.groupby(['sub_block', "subject_id"])['select_target']
                        .mean().reset_index(name='iscorrect_singleton_absent'))
 
 # Calculate the mean of iscorrect for each block and subject_id
-df_singleton_present_mean = (df_singleton_present.groupby(['sub_block', "subject_id", "target_modulation"])['select_target']
+df_singleton_present_mean = (df_singleton_present.groupby(['sub_block', "subject_id"])['select_target']
                        .mean().reset_index(name='iscorrect_singleton_present'))
 
 # Merge df_singleton_absent_mean and df_singleton_present_mean on block and subject_id
-df_merged = pd.merge(df_singleton_absent_mean, df_singleton_present_mean, on=['sub_block', 'subject_id', "target_modulation"])
+df_merged = pd.merge(df_singleton_absent_mean, df_singleton_present_mean, on=['sub_block', 'subject_id'])
 
 # Calculate the difference between iscorrect_singleton_absent and iscorrect_singleton_present
 df_merged['iscorrect_diff'] = df_merged['iscorrect_singleton_absent'] - df_merged['iscorrect_singleton_present']
