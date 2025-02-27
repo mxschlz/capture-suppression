@@ -1,15 +1,10 @@
-#import matplotlib
-#matplotlib.use('TkAgg')
 import mne
 import mne_icalabel
-import autoreject
 import os
-import pandas as pd
-from SPACEPRIME.encoding import *
-from SPACEPRIME.rename_events import add_to_events
 from SPACEPRIME import get_data_path
-from SPACEPRIME.bad_chs import bad_chs
-import glob
+import matplotlib.pyplot as plt
+import shutil
+plt.ion()
 
 
 mne.set_log_level("INFO")
@@ -19,17 +14,19 @@ params = dict(
     ica_reject_threshold=0.9,
     highpass=0.1,
     lowpass=30,
-    epoch_tmin=-2.0,
-    epoch_tmax=2.0
-)
+    epoch_tmin=-2,
+    epoch_tmax=2)
 settings_path = f"{get_data_path()}settings/"
-data_path = f"G:\\Meine Ablage\\PhD\\hannah_data\\eeg\\raw"
-sub_ids = os.listdir(data_path)[2:]
-for subject_id in sub_ids:
+data_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/hannah_data/eeg/raw/"
+sub_ids = sorted(os.listdir(data_path))
+for subject_id in sub_ids[45:]:
+    if subject_id in ["SP_EEG_P0020"]:  # weird subjects
+        continue
+    print(f"Preprocessing subject {subject_id} ... ")
     raw_fp = os.path.join(data_path, subject_id)
     raw_filenames = sorted([x for x in os.listdir(raw_fp) if ".vhdr" in x])
     for raw_filename in raw_filenames:
-        raw_brainvision = mne.io.read_raw_brainvision(raw_fp + "\\" + raw_filename, preload=True)
+        raw_brainvision = mne.io.read_raw_brainvision(raw_fp + "/" + raw_filename, preload=True)
     # read raw fif
     raw_orig = raw_brainvision
     # Downsample because the computer crashes if sampled with 1000 Hz :-(
@@ -41,13 +38,16 @@ for subject_id in sub_ids:
     # Add a montage to the data
     montage = mne.channels.read_custom_montage(settings_path + "CACS-64_NO_REF.bvef")
     raw.set_montage(montage)
-    """# interpolate bad channels
-    bads = bad_chs[subject_id]
-    if bads:
-        raw.info["bads"] = bads
-        raw.interpolate_bads()"""
+    # raw.compute_psd().plot(exclude=[params["add_ref_channel"]])
+    # plt.pause(10)
+    # plt.close()
+    # interpolate bad channels
+    # bads = input("Input bad channel: ")
+    # if len(bads) > 1:
+    #     raw.info["bads"] = [bads]
+    #     raw.interpolate_bads()
     # average reference
-    raw.set_eeg_reference(ref_channels="average")
+    raw.set_eeg_reference(ref_channels=["TP9", "TP10"])
     # Filter the data. These values are needed for the CNN to label the ICs effectively
     raw_filt = raw.copy().filter(1, 100)
     # apply ICA
@@ -63,53 +63,56 @@ for subject_id in sub_ids:
     # band pass filter
     reconst_raw_filt = reconst_raw.copy().filter(params["highpass"], params["lowpass"])
     try:
-        os.makedirs(f"{data_path}\\{subject_id}\\derivatives\\preprocessing")
+        os.makedirs(f"{data_path}{subject_id}/derivatives/preprocessing")
     except FileExistsError:
         print("EEG derivatives preprocessing directory already exists")
     # save the preprocessed raw file
-    reconst_raw_filt.save(f"{data_path}\\{subject_id}\\derivatives/preprocessing/{subject_id}_task-supratyp_raw.fif",
+    reconst_raw_filt.save(f"{data_path}{subject_id}/derivatives/preprocessing/{subject_id}_task-supratyp_raw.fif",
                           overwrite=True)
     # save the ica fit
-    ica.save(f"{data_path}\\{subject_id}\\derivatives/preprocessing/{subject_id}_task-supratyp_ica.fif",
+    ica.save(f"{data_path}{subject_id}/derivatives/preprocessing/{subject_id}_task-supratyp_ica.fif",
              overwrite=True)
     # save the indices that were excluded
-    with open(f"{data_path}\\{subject_id}\\derivatives/preprocessing/{subject_id}_task-supratyp_ica_labels.txt", "w") as file:
+    with open(f"{data_path}{subject_id}/derivatives/preprocessing/{subject_id}_task-supratyp_ica_labels.txt", "w") as file:
         for item in exclude_idx:
             file.write(f"{item}\n")
     # cut epochs
-    # flat = dict(eeg=1e-6)
-    # reject=dict(eeg=200e-6)
-    if subject_id == 101:
-        epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding_sub_101, preload=True, tmin=params["epoch_tmin"]+0.3, tmax=params["epoch_tmax"]+0.3,
-                            baseline=None)
-    elif subject_id == 102:
-        epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=params["epoch_tmin"]+0.08, tmax=params["epoch_tmax"]+0.08,
-                            baseline=None)
-    elif subject_id in [103, 104, 105, 112, 116, 118, 120]:
-        epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
-                            baseline=None)
-    elif subject_id not in [106, 107]:
-        epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding_sub_106, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
-                            baseline=None)
-        epochs = add_to_events(epochs, new_encoding=encoding, change_by=1)
-    elif subject_id in [122]:
-        epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding_sub_122, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
-                            baseline=None)
-        epochs = add_to_events(epochs, new_encoding=encoding, change_by=-1)    # append behavior to metadata attribute in epochs for later analyses
-    #beh = pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/{subject_id}_clean*.csv")[0])
-    # append metadata to epochs
-    #epochs.metadata = beh
-    # run AutoReject
-    ar = autoreject.AutoReject(n_jobs=-1)
-    epochs_ar, log = ar.fit_transform(epochs, return_log=True)
-    # save epochs
+    flat = dict(eeg=1e-6)
+    reject=dict(eeg=250e-6)
+    if subject_id in ["SP_EEG_P0054", 'SP_EEG_P0085']:
+        event_id = {'1': 1, '20': 20, '21': 21, '22': 22, '50': 50, '51': 51, '52': 52, '53': 53, '54': 54, '80': 80}
+    else:
+        event_id = {'1': 1, '20': 20, '21': 21, '22': 22, '50': 50, '51': 51, '52': 52, '53': 53, '54': 54, '80': 80,
+                         '81': 81, '82': 82}
+    epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=event_id, preload=True, tmin=params["epoch_tmin"],
+                        tmax=params["epoch_tmax"], baseline=None, event_repeated="merge", reject=reject, flat=flat)
     try:
-        os.makedirs(f"{data_path}\\{subject_id}\\derivatives\\epoching")
+        os.makedirs(f"{data_path}{subject_id}/derivatives/epoching")
     except FileExistsError:
         print("EEG derivatives epoching directory already exists")
-    epochs_ar.save(f"{data_path}\\{subject_id}\\derivatives\\epoching/{subject_id}_task-spaceprime-epo.fif",
+    epochs.save(f"{data_path}{subject_id}/derivatives/epoching/{subject_id}_task-spaceprime-epo.fif",
                 overwrite=True)
-    # save the drop log
-    log.save(f"{data_path}\\{subject_id}\\derivatives\\epoching/{subject_id}_task-spaceprime-epo_log.npz",
-             overwrite=True)
-    del raw_orig, raw, raw_filt, reconst_raw_filt, reconst_raw, epochs, epochs_ar, log, ar, ica
+    del raw_orig, raw, raw_filt, reconst_raw_filt, reconst_raw, epochs, ica
+
+
+def move_data(eeg_dir):
+    try:
+        os.makedirs(f"{eeg_dir}/derivatives")
+    except FileExistsError:
+        print("EEG derivatives directory already exists")
+    raw_dir = os.path.join(eeg_dir, "raw")
+    derivates_dir_target = os.path.join(eeg_dir, "derivatives")
+    subjects = sorted(os.listdir(raw_dir))
+    for sub in subjects:
+        sub_dir = f"{raw_dir}/{sub}"
+        derivates_dir_source = f"{sub_dir}/derivatives"
+        derivatives_dir_source_data = os.listdir(derivates_dir_source)
+        sub_derivatives_dir_target = os.path.join(derivates_dir_target, sub)
+        try:
+            os.makedirs(sub_derivatives_dir_target)
+        except FileExistsError:
+            print("derivatives directory already exists")
+        for d in derivatives_dir_source_data:
+            shutil.move(src=os.path.join(derivates_dir_source, d), dst=os.path.join(sub_derivatives_dir_target, d))
+        os.rmdir(derivates_dir_source)
+move_data(eeg_dir='/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/hannah_data/eeg/')
