@@ -3,16 +3,20 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import glob
 from SPACEPRIME import get_data_path
-import numpy as np
 from SPACEPRIME.subjects import subject_ids
 from statsmodels.stats.anova import AnovaRM
+from stats import remove_outliers
+from stats import cronbach_alpha
 plt.ion()
 
 
 # load df
 df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/sub-{subject}/beh/sub-{subject}_clean*.csv")[0]) for subject in subject_ids])
+df = df[df["phase"]!=2]
+df = remove_outliers(df, column_name="rt", threshold=2)
+
 # divide into subblocks (optional)
-df['sub_block'] = np.floor(df.index / 180)  # choose division arbitrarily
+df['sub_block'] = df.index // 180  # choose division arbitrarily
 df_singleton_absent = df[df['SingletonPresent'] == 0]
 df_singleton_present = df[df['SingletonPresent'] == 1]
 
@@ -31,6 +35,7 @@ df_merged = pd.merge(df_singleton_absent_mean, df_singleton_present_mean, on=['s
 df_merged['rt_diff'] = df_merged['rt_singleton_absent'] - df_merged['rt_singleton_present']
 
 # Add labels and title
+plt.figure()
 sns.boxplot(x='sub_block', y='rt_diff', data=df_merged)
 plt.ylabel('RT (Distractor absent - Distractor pesent)')
 plt.xlabel('Sub-Block / Time Window')
@@ -46,3 +51,36 @@ plt.tight_layout()  # Adjust layout to prevent labels from overlapping
 # stats
 anova_correct = AnovaRM(df_merged, depvar='rt_diff', subject='subject_id', within=['sub_block'], aggregate_func="mean").fit()
 print(anova_correct.summary())
+
+# running average
+window_size = 3
+# Apply running average *per subject*
+df_merged['rt_diff_running_avg'] = df_merged.groupby('subject_id')['rt_diff'].transform(
+    lambda x: x.rolling(window=window_size, min_periods=None, center=True).mean()
+)
+# --- Plotting ---
+plt.figure()
+# Lineplot with running average
+sns.lineplot(x='sub_block', y='rt_diff_running_avg', hue='subject_id', data=df_merged,
+             palette="tab20", legend=True, alpha=0.7)  # Added alpha for better visibility of overlapping lines
+
+# Mean running average across subjects (bold line)
+mean_running_avg = df_merged.groupby('sub_block')['rt_diff_running_avg'].mean()
+plt.plot(mean_running_avg.index, mean_running_avg.values, color='black', linewidth=3, label='Mean Running Avg')
+
+# Baseline at 0
+plt.axhline(y=0, color='black', linestyle='--', linewidth=1)
+
+# Labels and title
+plt.xlabel('Sub-Block')
+plt.ylabel('Reaction Time Difference (Absent - Present)')
+plt.title(f'Reaction Time Difference with Running Average (Window = {window_size})')
+plt.legend("")
+
+# regression plot
+sns.lmplot(data=df_merged, x="sub_block", y="rt_diff_running_avg", hue="subject_id", palette="tab20", scatter=False,
+           ci=None)
+
+# Cronbach Alpha
+df_pivot = df_merged.pivot(index="subject_id", columns="sub_block", values='rt_diff')
+cronbach_alpha(data=df_pivot)
