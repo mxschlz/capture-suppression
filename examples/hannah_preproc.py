@@ -90,7 +90,7 @@ for subject_id in sub_ids[45:]:
         os.makedirs(f"{data_path}{subject_id}/derivatives/epoching")
     except FileExistsError:
         print("EEG derivatives epoching directory already exists")
-    epochs.save(f"{data_path}{subject_id}/derivatives/epoching/{subject_id}_task-spaceprime-epo.fif",
+    epochs.save(f"{data_path}{subject_id}/derivatives/epoching/{subject_id}_task-supratyp-epo.fif",
                 overwrite=True)
     del raw_orig, raw, raw_filt, reconst_raw_filt, reconst_raw, epochs, ica
 
