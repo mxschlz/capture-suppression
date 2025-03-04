@@ -8,7 +8,7 @@ plt.ion()
 
 
 # load epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-flanker-epo.fif")[0]) for subject in subject_ids])
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0]) for subject in subject_ids])
 # some params
 freqs = np.arange(1, 31, 1)  # 1 to 30 Hz
 n_cycles = freqs / 2  # different number of cycle per frequency
@@ -58,25 +58,7 @@ powerdiff = li_selection - li_suppression
 powerdiff_array = mne.time_frequency.AverageTFRArray(data=powerdiff, method=method, freqs=alpha_freqs, info=power.info,
                                                     times=power.times)
 powerdiff_array.plot_topo(tmin=0, tmax=1)
-# Define time points for topographic maps
-time_points = np.arange(0, 1.5, 0.5)  # 50 ms steps
-for tp in time_points:
-    fig = epochs.average().plot_topomap(times=tp, ch_type='eeg',
-                                        time_unit='s', show=False)
 # now, look at contra vs ipsi electrode powers to enhance the alpha lateralization
-# get the contralateral evoked response and average
-contra_singleton_data = np.mean([left_singleton_epochs.copy().average(picks=["C4"]).get_data(),
-                                    right_singleton_epochs.copy().average(picks=["C3"]).get_data()], axis=0)
-# get the ipsilateral evoked response and average
-ipsi_singleton_data = np.mean([left_singleton_epochs.copy().average(picks=["C3"]).get_data(),
-                                  right_singleton_epochs.copy().average(picks=["C4"]).get_data()], axis=0)
-# now, do the same for the lateral targets
-# get the contralateral evoked response and average
-contra_target_data = np.mean([left_target_epochs.copy().average(picks=["C4"]).get_data(),
-                                 right_target_epochs.copy().average(picks=["C3"]).get_data()], axis=0)
-# get the ipsilateral evoked response and average
-ipsi_target_data = np.mean([left_target_epochs.copy().average(picks=["C3"]).get_data(),
-                               right_target_epochs.copy().average(picks=["C4"]).get_data()], axis=0)
 # get the trial-wise data for targets
 contra_target_epochs_data = np.mean(np.concatenate([left_target_epochs.copy().get_data(picks="C4"),
                                  right_target_epochs.copy().get_data(picks="C3")], axis=1), axis=1)
@@ -88,39 +70,13 @@ contra_singleton_epochs_data = np.mean(np.concatenate([left_singleton_epochs.cop
 ipsi_singleton_epochs_data = np.mean(np.concatenate([left_singleton_epochs.copy().get_data(picks="C3"),
                                right_singleton_epochs.copy().get_data(picks="C4")], axis=1), axis=1)
 # make epochs from data
-ipsi_target_epochs = mne.EpochsArray(data=ipsi_target_epochs_data.reshape(155, 1, 501),
+ipsi_target_epochs = mne.EpochsArray(data=ipsi_target_epochs_data.reshape(1850, 1, 301),
                                      info=mne.create_info(ch_names=["Ipsi Target"], sfreq=250, ch_types="eeg"))
-contra_target_epochs = mne.EpochsArray(data=contra_target_epochs_data.reshape(155, 1, 501),
+contra_target_epochs = mne.EpochsArray(data=contra_target_epochs_data.reshape(1850, 1, 301),
                                      info=mne.create_info(ch_names=["Contra Target"], sfreq=250, ch_types="eeg"))
 # do the same for singleton epochs
-ipsi_singleton_epochs = mne.EpochsArray(data=ipsi_singleton_epochs_data.reshape(146, 1, 501),
+ipsi_singleton_epochs = mne.EpochsArray(data=ipsi_singleton_epochs_data.reshape(1850, 1, 301),
                                      info=mne.create_info(ch_names=["Ipsi Singleton"], sfreq=250, ch_types="eeg"))
-contra_singleton_epochs = mne.EpochsArray(data=contra_singleton_epochs_data.reshape(146, 1, 501),
+contra_singleton_epochs = mne.EpochsArray(data=contra_singleton_epochs_data.reshape(1850, 1, 301),
                                      info=mne.create_info(ch_names=["Contra Singleton"], sfreq=250, ch_types="eeg"))
-# now, calculate single-trial alpha power lateralization indices for targets and singletons
 # only use alpha frequency for the lateralization index analysis
-alpha_freqs = np.arange(1, 31, 1)
-n_cycles_alpha = alpha_freqs / 2
-# Create an info object
-info = mne.create_info(ch_names=["Cz"], sfreq=250, ch_types="eeg")
-# Set the standard montage
-montage = mne.channels.make_standard_montage('standard_1020')
-info.set_montage(montage)
-power_select_contra = contra_target_epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles_alpha, decim=decim,
-                                                       n_jobs=-1, return_itc=False, average=True).get_data()
-power_select_ipsi = ipsi_target_epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles_alpha, decim=decim,
-                                                         n_jobs=-1, return_itc=False, average=True).get_data()
-li_selection = (power_select_contra - power_select_ipsi) / (power_select_contra + power_select_ipsi)
-power_selection = mne.time_frequency.AverageTFRArray(data=li_selection, method=method, freqs=alpha_freqs,
-                                                    info=info, times=epochs.times)
-# same for suppression
-power_suppress_contra = contra_singleton_epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles_alpha, decim=decim,
-                                                       n_jobs=-1, return_itc=False, average=True).get_data()
-power_suppress_ipsi = ipsi_singleton_epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles_alpha, decim=decim,
-                                                         n_jobs=-1, return_itc=False, average=True).get_data()
-li_suppression = (power_suppress_contra - power_suppress_ipsi) / (power_suppress_contra + power_suppress_ipsi)
-power_suppression = mne.time_frequency.AverageTFRArray(data=li_suppression, method=method, freqs=alpha_freqs,
-                                                    info=info, times=epochs.times)
-powerdiff = li_selection - li_suppression
-powerdiff_array = mne.time_frequency.AverageTFRArray(data=powerdiff, method=method, freqs=alpha_freqs, info=info,
-                                                    times=epochs.times)
