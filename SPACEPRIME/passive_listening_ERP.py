@@ -10,6 +10,7 @@ plt.ion()
 def get_passive_listening_ERPs():
     # load epochs
     epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-passive-epo.fif")[0]) for subject in subject_ids[2:]])
+    # epochs.apply_baseline((None, 0))
     # get all conditions
     # all_conds = list(epochs.event_id.keys())
     # get target, distractor and control epochs
@@ -54,14 +55,50 @@ def get_passive_listening_ERPs():
                                    right_singleton_epochs.copy().get_data(picks="C4")], axis=1), axis=1)
     diff_singleton = contra_singleton_data - ipsi_singleton_data
     diff_target = contra_target_data - ipsi_target_data
-    return contra_singleton_epochs_data, ipsi_singleton_epochs_data, contra_target_epochs_data, ipsi_target_epochs_data, diff_target, diff_singleton
+    return (epochs, contra_singleton_epochs_data, ipsi_singleton_epochs_data, contra_target_epochs_data,
+            ipsi_target_epochs_data, diff_target, diff_singleton)
 
-#contra_singleton_epochs_data, ipsi_singleton_epochs_data, contra_target_epochs_data, ipsi_target_epochs_data, diff_target, diff_singleton = get_passive_listening_ERPs()
+epochs, contra_singleton_epochs_data, ipsi_singleton_epochs_data, contra_target_epochs_data, ipsi_target_epochs_data, diff_target, diff_singleton = get_passive_listening_ERPs()
 
-"""# get time points from epochs
-times =  mne.concatenate_epochs([mne.read_epochs(
-    glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-passive-epo.fif")[0]) for
-                                 subject in subject_ids[2:]]).times
+import pandas as pd
+
+
+all_evokeds = dict()
+evks_avrgd = dict()
+
+for subject in subject_ids[2:]:
+    epochs_single_sub = mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-passive-epo.fif")[0])
+    n_epochs = epochs_single_sub.events.__len__()
+    metadata = pd.DataFrame({"subject": [subject] * n_epochs})
+    epochs_single_sub.metadata = metadata
+    evoked = epochs_single_sub.average(by_event_type=True)
+    for cond in evoked:
+        if cond.comment not in all_evokeds.keys():
+            all_evokeds[cond.comment] = [cond]
+        else:
+            all_evokeds[cond.comment].append(cond)
+    for key in all_evokeds:
+        evks_avrgd[key] = mne.grand_average(all_evokeds[key])
+
+left_target_evks = list()
+right_target_evks = list()
+left_distractor_evks = list()
+right_distractor_evks = list()
+
+for k, v in evks_avrgd.items():
+    if "target-location-1" in k:
+        contra_target_data = v.pick("C4")
+        ipsi_target_data = v.pick("C3")
+        left_target_evks.append(v)
+    elif "target-location-3" in k:
+        right_target_evks.append(v)
+    elif "distractor-location-1" in k:
+        left_distractor_evks.append(v)
+    elif "distractor-location-3" in k:
+        right_distractor_evks.append(v)
+
+# get time points from epochs
+times =  epochs.times
 
 from scipy.stats import ttest_ind
 result_target = ttest_ind(contra_target_epochs_data, ipsi_target_epochs_data, axis=0)
@@ -100,4 +137,3 @@ ax[1][1].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
 ax[1][1].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[1][1].hlines(y=0, xmin=times[0], xmax=times[-1])
 plt.tight_layout()
-"""
