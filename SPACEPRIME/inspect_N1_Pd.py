@@ -7,7 +7,6 @@ from mne.stats import permutation_cluster_test
 from scipy.stats import ttest_ind
 from SPACEPRIME.subjects import subject_ids
 from SPACEPRIME.plotting import difference_topos
-from SPACEPRIME.passive_listening_ERP import get_passive_listening_ERPs
 plt.ion()
 
 
@@ -16,7 +15,7 @@ montage = mne.channels.read_custom_montage(settings_path + "CACS-64_NO_REF.bvef"
 ch_pos = montage.get_positions()["ch_pos"]
 # load epochs
 epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0]) for subject in subject_ids[2:]])
-epochs.crop(-0.1, 0.6)
+epochs = epochs.crop(-0.1, 0.6)
 #epochs = epochs["select_target==True"]
 # epochs.apply_baseline()
 all_conds = list(epochs.event_id.keys())
@@ -107,15 +106,8 @@ contra_distractor_epochs_data_all_chs = np.mean(np.concatenate([left_distractor_
 ipsi_distractor_epochs_data_all_chs = np.mean(np.concatenate([left_distractor_epochs.copy().get_data(picks=selections["Left"]),
                                                              right_distractor_epochs.copy().get_data(picks=selections["Right"])], axis=0),
                                              axis=0)
-# create diff evoked objects to plot nice topographies
-# Get the channel names corresponding to those indices
-selected_ch_names = [epochs.info['ch_names'][i] for i in selections["Right"]]
-diff_wave_target_evoked = mne.EvokedArray(data=contra_target_epochs_data_all_chs-ipsi_target_epochs_data_all_chs,
-                                          info=mne.create_info(ch_names=28,
-                                                               sfreq=250))
-diff_wave_distractor_evoked = mne.EvokedArray(data=contra_distractor_epochs_data_all_chs-ipsi_distractor_epochs_data_all_chs,
-                                              info=mne.create_info(ch_names=28,
-                                                                   sfreq=250))
+
+# --- STATISTICS ---
 # number of permutations
 n_permutations = 10000
 # some stats
@@ -151,6 +143,7 @@ ax2.legend((h,), ("cluster p-value < 0.05",))
 ax2.set_xlabel("time (ms)")
 ax2.set_ylabel("statistic value")  # which statistic?
 
+# --- TOPOGRAPHIES ---
 # calculate difference waves
 diff_waves_target, diff_waves_distractor = difference_topos(epochs=epochs, montage=montage)
 
