@@ -127,49 +127,61 @@ def permutation_test_behavior(group1, group2, n_permutations=10000, plot=True, *
     return p_value
 
 
-def remove_outliers(df, column_name, threshold=2):
+def remove_outliers(df, column_name, subject_id_column='subject_id', threshold=2):
     """
-    Marks outliers in a DataFrame column as NaN based on standard deviation.
+    Marks outliers in a DataFrame column as NaN, per subject, based on standard deviation.
 
     Args:
         df: The input DataFrame.
-        column_name: The name of the column to check for outliers.
+        column_name: The name of the column to check for outliers (e.g., 'reaction_time').
+        subject_id_column: The name of the column identifying subjects (e.g., 'subject_id').
         threshold: The number of standard deviations to use as a threshold.
 
     Returns:
         A new DataFrame with outliers marked as NaN, or the original DataFrame if no outliers are found
-        or if the column is not numeric. Returns None if the column does not exist.
+        or if the column is not numeric. Returns None if required columns are missing.
     """
+
     if column_name not in df.columns:
         print(f"Column '{column_name}' not found in DataFrame.")
+        return None
+
+    if subject_id_column not in df.columns:
+        print(f"Subject ID column '{subject_id_column}' not found in DataFrame.")
         return None
 
     if not pd.api.types.is_numeric_dtype(df[column_name]):
         print(f"Column '{column_name}' is not numeric. Outlier marking not possible.")
         return df
 
-    mean = df[column_name].mean()
-    std = df[column_name].std()
+    df_copy = df.copy()  # Work on a copy
 
-    if std == 0:
-        print(f"Standard deviation of column '{column_name}' is zero. No outliers marked.")
-        return df
+    def _remove_outliers_single_subject(subject_df, col_name, thresh):
+        """Helper function to remove outliers for a single subject."""
+        mean = subject_df[col_name].mean()
+        std = subject_df[col_name].std()
 
-    upper_bound = mean + threshold * std
-    lower_bound = mean - threshold * std
+        if std == 0:  # Handle cases where all RTs are identical for a subject
+            print(
+                f"Standard deviation of column '{col_name}' is zero for subject {subject_df[subject_id_column].iloc[0]}. No outliers marked.")
+            return subject_df
 
-    df_copy = df.copy()  # Operate on a copy to avoid modifying the original DataFrame
+        upper_bound = mean + thresh * std
+        lower_bound = mean - thresh * std
 
-    outlier_mask = (df_copy[column_name] < lower_bound) | (df_copy[column_name] > upper_bound)
-    num_outliers = outlier_mask.sum()
+        outlier_mask = (subject_df[col_name] < lower_bound) | (subject_df[col_name] > upper_bound)
+        subject_df.loc[outlier_mask, col_name] = np.nan
+        num_outliers = outlier_mask.sum()
 
-    df_copy.loc[outlier_mask, column_name] = np.nan
+        if num_outliers > 0:
+            print(f"Subject: {subject_df[subject_id_column].iloc[0]}, {num_outliers} outliers marked")
 
-    if num_outliers > 0:
-        print(f"{num_outliers} outliers marked as NaN in column '{column_name}'.")
-    else:
-        print(f"No outliers found in column '{column_name}'.")
+        return subject_df
 
+    # Group by subject ID and apply the outlier removal function to each subject's data
+    df_copy = df_copy.groupby(subject_id_column, group_keys=False).apply(
+        _remove_outliers_single_subject, col_name=column_name, thresh=threshold
+    )
     return df_copy
 
 
