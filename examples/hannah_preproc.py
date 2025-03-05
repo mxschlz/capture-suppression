@@ -4,7 +4,6 @@ import os
 from SPACEPRIME import get_data_path
 import matplotlib.pyplot as plt
 import shutil
-
 plt.ion()
 
 
@@ -87,7 +86,6 @@ for subject_id in sub_ids:
                          '81': 81, '82': 82}
     epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=event_id, preload=True, tmin=params["epoch_tmin"],
                         tmax=params["epoch_tmax"], baseline=None, event_repeated="merge")
-    epochs.metadata = pd.read_csv("sub01.csv")
     try:
         os.makedirs(f"{data_path}{subject_id}/derivatives/epoching")
     except FileExistsError:
