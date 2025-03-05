@@ -4,6 +4,7 @@ import os
 from SPACEPRIME import get_data_path
 import matplotlib.pyplot as plt
 import shutil
+
 plt.ion()
 
 
@@ -19,7 +20,7 @@ params = dict(
 settings_path = f"{get_data_path()}settings/"
 data_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/hannah_data/eeg/raw/"
 sub_ids = sorted(os.listdir(data_path))
-for subject_id in sub_ids[45:]:
+for subject_id in sub_ids:
     if subject_id in ["SP_EEG_P0020"]:  # weird subjects
         continue
     print(f"Preprocessing subject {subject_id} ... ")
@@ -85,7 +86,8 @@ for subject_id in sub_ids[45:]:
         event_id = {'1': 1, '20': 20, '21': 21, '22': 22, '50': 50, '51': 51, '52': 52, '53': 53, '54': 54, '80': 80,
                          '81': 81, '82': 82}
     epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=event_id, preload=True, tmin=params["epoch_tmin"],
-                        tmax=params["epoch_tmax"], baseline=None, event_repeated="merge", reject=reject, flat=flat)
+                        tmax=params["epoch_tmax"], baseline=None, event_repeated="merge")
+    epochs.metadata = pd.read_csv("sub01.csv")
     try:
         os.makedirs(f"{data_path}{subject_id}/derivatives/epoching")
     except FileExistsError:
@@ -115,4 +117,5 @@ def move_data(eeg_dir):
         for d in derivatives_dir_source_data:
             shutil.move(src=os.path.join(derivates_dir_source, d), dst=os.path.join(sub_derivatives_dir_target, d))
         os.rmdir(derivates_dir_source)
+
 move_data(eeg_dir='/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/hannah_data/eeg/')
