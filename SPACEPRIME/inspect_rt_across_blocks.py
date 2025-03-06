@@ -5,6 +5,7 @@ import glob
 from SPACEPRIME import get_data_path
 from SPACEPRIME.subjects import subject_ids
 from statsmodels.stats.anova import AnovaRM
+import statsmodels.formula.api as smf
 from stats import remove_outliers
 from stats import cronbach_alpha
 plt.ion()
@@ -80,7 +81,15 @@ plt.legend("")
 # regression plot
 sns.lmplot(data=df_merged, x="sub_block", y="rt_diff_running_avg", hue="subject_id", palette="tab20", scatter=False,
            ci=None)
+# run linear mixed model
+df["trial_nr_abs"] = list(range(len(df)))
+df.drop("duration", axis=1, inplace=True)  # drop duration because it is always NaN
+df.dropna(subset="rt", inplace=True)  # drop NaN in reaction time
+model = smf.mixedlm("rt_diff ~ sub_block", data=df_merged, groups="subject_id", re_formula="~sub_block")
+result = model.fit()
+print(result.summary())
 
 # Cronbach Alpha
+df['is_even_trial'] = (df['trial_nr_abs'] % 2 == 0)  # divide trials into even and uneven
 df_pivot = df_merged.pivot(index="subject_id", columns="sub_block", values='rt_diff')
 cronbach_alpha(data=df_pivot)
