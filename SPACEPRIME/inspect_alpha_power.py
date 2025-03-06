@@ -14,7 +14,7 @@ freqs = np.arange(1, 31, 1)  # 1 to 30 Hz
 n_cycles = freqs / 2  # different number of cycle per frequency
 method = "morlet"  # wavelet
 decim = 5  # keep all the samples along the time axis
-#epochs = epochs["phase==1"]
+epochs = epochs["select_target==True & Priming==0"]
 all_conds = list(epochs.event_id.keys())
 # Separate epochs based on distractor location
 left_singleton_epochs = epochs[[x for x in all_conds if "Target-2-Singleton-1" in x]]
