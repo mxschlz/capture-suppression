@@ -76,7 +76,7 @@ def permutation_test_behavior(group1, group2, n_permutations=10000, plot=True, *
     len_group = len(group1)
 
     # Calculate the observed difference in means between the two groups
-    observed_diff = group1.mean() - group2.mean()
+    observed_diff = ttest_ind(group1.mean() - group2.mean())
 
     # Perform n_permutations permutations
     for _ in range(n_permutations):
@@ -313,52 +313,62 @@ def cronbach_alpha(
     return cronbach, np.round([lower, upper], 3)
 
 
+def split_dataframe_by_blocks_balanced_subjects(df, block_col, subject_col, seed=None):
+    """
+    Splits a DataFrame into two halves based on blocks, ensuring that
+    subjects are distributed as evenly as possible across the two halves.
+
+    Args:
+        df: The Pandas DataFrame to split.
+        block_col: Name of the column containing the block number.
+        subject_col: Name of the column containing the subject ID.
+        seed: Optional integer seed for reproducibility.
+
+    Returns:
+        A tuple containing two DataFrames: (df1, df2), the two split halves.
+    """
+
+    if seed is not None:
+        np.random.seed(seed)
+
+    unique_blocks = df[block_col].unique()
+    unique_subjects = df[subject_col].unique()
+    num_blocks = len(unique_blocks)
+    half_blocks = num_blocks // 2
+
+    # --- Step 1:  Assign blocks to splits, balancing subjects ---
+
+    # Shuffle the blocks to ensure randomness in block assignment
+    shuffled_blocks = np.random.permutation(unique_blocks)
+
+    split1_blocks = []
+    split2_blocks = []
+    split1_subjects = set()
+    split2_subjects = set()
+
+    for block in shuffled_blocks:
+        # Get subjects participating in the current block
+        block_subjects = set(df[df[block_col] == block][subject_col])
+
+        # Check if adding the block to split1 would cause a subject imbalance
+        potential_split1_subjects = split1_subjects.union(block_subjects)
+        potential_split2_subjects = split2_subjects.union(block_subjects)  # Check the contrary as well.
+
+        # Preferentially add the block to the split with fewer subjects *currently*.  This is the key balancing step.
+        if (len(split1_blocks) < half_blocks and len(split1_subjects) <= len(split2_subjects)) or len(
+                split2_blocks) >= half_blocks:
+            split1_blocks.append(block)
+            split1_subjects.update(block_subjects)
+        else:
+            split2_blocks.append(block)
+            split2_subjects.update(block_subjects)
+
+    # --- Step 2: Create the DataFrames based on the block assignments ---
+    df1 = df[df[block_col].isin(split1_blocks)]
+    df2 = df[df[block_col].isin(split2_blocks)]
+
+    return df1, df2
+
+
 if __name__ == "__main__":
-    import os
-    import glob
-
-    # define data root dir
-    data_root = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/preprocessing/"
-    # get all the subject ids
-    subjects = os.listdir(data_root)
-    # load epochs
-    epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(
-        f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACEPRIME/derivatives/epoching/{subject}/eeg/{subject}_task-spaceprime-epo.fif")[
-                                                         0]) for subject in subjects if
-                                     int(subject.split("-")[1]) in [103, 104, 105, 106, 107]])
-    all_conds = list(epochs.event_id.keys())
-    # Separate epochs based on distractor location
-    left_singleton_epochs = epochs[[x for x in all_conds if "Target-2-Singleton-1" in x]]
-    right_singleton_epochs = epochs[[x for x in all_conds if "Target-2-Singleton-3" in x]]
-    mne.epochs.equalize_epoch_counts([left_singleton_epochs, right_singleton_epochs], method="random")
-    # get the contralateral evoked response and average
-    contra_singleton_data = np.mean([left_singleton_epochs.copy().average(picks=["C4"]).get_data(),
-                                     right_singleton_epochs.copy().average(picks=["C3"]).get_data()], axis=0)
-    # get the ipsilateral evoked response and average
-    ipsi_singleton_data = np.mean([left_singleton_epochs.copy().average(picks=["C3"]).get_data(),
-                                   right_singleton_epochs.copy().average(picks=["C4"]).get_data()], axis=0)
-    # now, do the same for the lateral targets
-    # Separate epochs based on target location
-    left_target_epochs = epochs[[x for x in all_conds if "Target-1-Singleton-2" in x]]
-    right_target_epochs = epochs[[x for x in all_conds if "Target-3-Singleton-2" in x]]
-    mne.epochs.equalize_epoch_counts([left_target_epochs, right_target_epochs], method="random")
-    # get the contralateral evoked response and average
-    contra_target_data = np.mean([left_target_epochs.copy().average(picks=["C4"]).get_data(),
-                                  right_target_epochs.copy().average(picks=["C3"]).get_data()], axis=0)
-    # get the ipsilateral evoked response and average
-    ipsi_target_data = np.mean([left_target_epochs.copy().average(picks=["C3"]).get_data(),
-                                right_target_epochs.copy().average(picks=["C4"]).get_data()], axis=0)
-
-    # get the trial-wise data for targets
-    contra_target_epochs_data = np.mean(np.concatenate([left_target_epochs.copy().get_data(picks="C4"),
-                                                        right_target_epochs.copy().get_data(picks="C3")], axis=1),
-                                        axis=1)
-    ipsi_target_epochs_data = np.mean(np.concatenate([left_target_epochs.copy().get_data(picks="C3"),
-                                                      right_target_epochs.copy().get_data(picks="C4")], axis=1), axis=1)
-    # get the trial-wise data for singletons
-    contra_singleton_epochs_data = np.mean(np.concatenate([left_singleton_epochs.copy().get_data(picks="C4"),
-                                                           right_singleton_epochs.copy().get_data(picks="C3")], axis=1),
-                                           axis=1)
-    ipsi_singleton_epochs_data = np.mean(np.concatenate([left_singleton_epochs.copy().get_data(picks="C3"),
-                                                         right_singleton_epochs.copy().get_data(picks="C4")], axis=1),
-                                         axis=1)
+    pass
