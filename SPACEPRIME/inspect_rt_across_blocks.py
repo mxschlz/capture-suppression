@@ -35,6 +35,12 @@ df_merged = pd.merge(df_singleton_absent_mean, df_singleton_present_mean, on=['s
 # Calculate the difference between iscorrect_singleton_absent and iscorrect_singleton_present
 df_merged['rt_diff'] = df_merged['rt_singleton_absent'] - df_merged['rt_singleton_present']
 
+# running average
+window_size = 3
+# Apply running average *per subject*
+df_merged['rt_diff_running_avg'] = df_merged.groupby('subject_id')['rt_diff'].transform(
+    lambda x: x.rolling(window=window_size, min_periods=None, center=True).mean())
+
 # Add labels and title
 plt.figure()
 sns.boxplot(x='sub_block', y='rt_diff', data=df_merged)
@@ -53,12 +59,6 @@ plt.tight_layout()  # Adjust layout to prevent labels from overlapping
 anova_correct = AnovaRM(df_merged, depvar='rt_diff', subject='subject_id', within=['sub_block'], aggregate_func="mean").fit()
 print(anova_correct.summary())
 
-# running average
-window_size = 3
-# Apply running average *per subject*
-df_merged['rt_diff_running_avg'] = df_merged.groupby('subject_id')['rt_diff'].transform(
-    lambda x: x.rolling(window=window_size, min_periods=None, center=True).mean()
-)
 # --- Plotting ---
 plt.figure()
 # Lineplot with running average
@@ -90,6 +90,5 @@ result = model.fit()
 print(result.summary())
 
 # Cronbach Alpha
-df['is_even_trial'] = (df['trial_nr_abs'] % 2 == 0)  # divide trials into even and uneven
 df_pivot = df_merged.pivot(index="subject_id", columns="sub_block", values='rt_diff')
 cronbach_alpha(data=df_pivot)
