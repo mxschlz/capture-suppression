@@ -9,7 +9,7 @@ plt.ion()
 
 
 def append_behavior(subject, epochs, bad_subjects=None):
-    if subject_id not in bad_subjects:
+    if not bad_subjects:
         # get behavioral data visual
         mat_data_path_vis = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/hannah_data/eeg/behav/P{subject}_vis_sorted_file.mat"
         mat_data_vis = scipy.io.loadmat(mat_data_path_vis)
@@ -98,6 +98,10 @@ def append_behavior(subject, epochs, bad_subjects=None):
         print(metadata.shape)
 
         metadata["subject_id"] = subject
+        if int(subject) < 51:
+            metadata["is_hc"] = True
+        else:
+            metadata["is_hc"] = False
         epochs.metadata = metadata
     elif subject_id in bad_subjects:
         # get behavioral data visual
@@ -151,11 +155,6 @@ def append_behavior(subject, epochs, bad_subjects=None):
             if col in metadata.columns:  # added check
                 metadata.loc[visual_event_indices, col] = df_vis[col].values[:len(visual_event_indices)]
 
-        # --- Display and Check ---
-        print(metadata)
-        print(metadata.info())
-        print(metadata.shape)
-
         metadata["subject_id"] = subject
         epochs.metadata = metadata
     else:
@@ -164,14 +163,7 @@ def append_behavior(subject, epochs, bad_subjects=None):
     return epochs
 
 mne.set_log_level("INFO")
-params = dict(
-    resampling_freq=250,
-    add_ref_channel="TP9",
-    ica_reject_threshold=0.9,
-    highpass=0.1,
-    lowpass=30,
-    epoch_tmin=-2,
-    epoch_tmax=2)
+params = dict(epoch_tmin=-2, epoch_tmax=2)
 
 settings_path = f"{get_data_path()}settings/"
 data_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/hannah_data/eeg/derivatives"
@@ -194,18 +186,18 @@ for subject_id in sub_ids:
         # cut epochs
         flat = dict(eeg=1e-6)
         reject=dict(eeg=250e-6)
-        #if subject_id in ["SP_EEG_P0054", 'SP_EEG_P0085']:
-            #event_id = {'1': 1, '20': 20, '21': 21, '22': 22, '50': 50, '51': 51, '52': 52, '53': 53, '54': 54, '80': 80}
-        #else:
-            #event_id = {'1': 1, '20': 20, '21': 21, '22': 22, '50': 50, '51': 51, '52': 52, '53': 53, '54': 54, '80': 80,
-                             #'81': 81, '82': 82}
-        #epochs_appended.event_id = event_id
+        if subject_id in ["SP_EEG_P0054", 'SP_EEG_P0085']:
+            event_id = {'1': 1, '20': 20, '21': 21, '22': 22, '50': 50, '51': 51, '52': 52, '53': 53, '54': 54, '80': 80}
+        else:
+            event_id = {'1': 1, '20': 20, '21': 21, '22': 22, '50': 50, '51': 51, '52': 52, '53': 53, '54': 54, '80': 80,
+                             '81': 81, '82': 82}
+        epochs_appended.event_id = event_id
         epochs_final = epochs_appended.copy().drop_bad(reject=reject, flat=flat)
         try:
-            os.makedirs(f"{data_path}{subject_id}/epoching/")
+            os.makedirs(f"{data_path}/{subject_id}/epoching/")
         except FileExistsError:
             print("EEG derivatives epoching directory already exists")
-        epochs.save(f"{data_path}{subject_id}\\epoching\\{subject_id}_task-supratyp-epo.fif",
+        epochs_final.save(f"{data_path}/{subject_id}/epoching/{subject_id}_task-supratyp-epo.fif",
                     overwrite=True)
         del raw, epochs, epochs_appended, epochs_final
     except:
@@ -226,7 +218,7 @@ except FileNotFoundError:
 # handle bad subjects
 very_bads = ["SP_EEG_P0051", "SP_EEG_P0053", "SP_EEG_P0058", "SP_EEG_P0061", "SP_EEG_P0062", "SP_EEG_P0065", "SP_EEG_P0066", "SP_EEG_P0077",
              "SP_EEG_P0085", "SP_EEG_P0087"]
-for subject_id in bad_subjects[0:1]:
+for subject_id in bad_subjects:
     components = subject_id.split("_")[2]
     if components[-2] == "0":
         subject = components[-1]
@@ -241,12 +233,12 @@ for subject_id in bad_subjects[0:1]:
     # cut epochs
     flat = dict(eeg=1e-6)
     reject = dict(eeg=250e-6)
-    # if subject_id in ["SP_EEG_P0054", 'SP_EEG_P0085']:
-    # event_id = {'1': 1, '20': 20, '21': 21, '22': 22, '50': 50, '51': 51, '52': 52, '53': 53, '54': 54, '80': 80}
-    # else:
-    # event_id = {'1': 1, '20': 20, '21': 21, '22': 22, '50': 50, '51': 51, '52': 52, '53': 53, '54': 54, '80': 80,
-    # '81': 81, '82': 82}
-    # epochs_appended.event_id = event_id
+    if subject_id in ["SP_EEG_P0054", 'SP_EEG_P0085']:
+        event_id = {'1': 1, '20': 20, '21': 21, '22': 22, '50': 50, '51': 51, '52': 52, '53': 53, '54': 54, '80': 80}
+    else:
+        event_id = {'1': 1, '20': 20, '21': 21, '22': 22, '50': 50, '51': 51, '52': 52, '53': 53, '54': 54, '80': 80,
+                    '81': 81, '82': 82}
+    epochs_appended.event_id = event_id
     epochs_final = epochs_appended.copy().drop_bad(reject=reject, flat=flat)
     try:
         os.makedirs(f"{data_path}/{subject_id}/epoching/")
