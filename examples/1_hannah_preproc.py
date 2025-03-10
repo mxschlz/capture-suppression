@@ -4,6 +4,7 @@ import os
 from SPACEPRIME import get_data_path
 import matplotlib.pyplot as plt
 import shutil
+from examples.bad_chs import bads
 plt.ion()
 
 
@@ -17,11 +18,11 @@ params = dict(
     epoch_tmin=-2,
     epoch_tmax=2)
 settings_path = f"{get_data_path()}settings/"
-data_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/hannah_data/eeg/raw/"
+data_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/hannah_data/eeg/sourcedata/raw/"
 sub_ids = sorted(os.listdir(data_path))
 for subject_id in sub_ids:
-    if subject_id in ["SP_EEG_P0020"]:  # weird subjects
-        continue
+    #if subject_id in ["SP_EEG_P0020"]:  # weird subjects
+        #continue
     print(f"Preprocessing subject {subject_id} ... ")
     raw_fp = os.path.join(data_path, subject_id)
     raw_filenames = sorted([x for x in os.listdir(raw_fp) if ".vhdr" in x])
@@ -38,16 +39,16 @@ for subject_id in sub_ids:
     # Add a montage to the data
     montage = mne.channels.read_custom_montage(settings_path + "CACS-64_NO_REF.bvef")
     raw.set_montage(montage)
-    # raw.compute_psd().plot(exclude=[params["add_ref_channel"]])
-    # plt.pause(10)
-    # plt.close()
     # interpolate bad channels
-    # bads = input("Input bad channel: ")
-    # if len(bads) > 1:
-    #     raw.info["bads"] = [bads]
-    #     raw.interpolate_bads()
-    # average reference
-    raw.set_eeg_reference(ref_channels=["TP9", "TP10"])
+    try:
+        bad = bads[subject_id]
+    except KeyError:
+        bad = None
+    if bad:
+        raw.info["bads"] = bad
+        raw.interpolate_bads()
+    # set average reference
+    raw.set_eeg_reference("average")
     # Filter the data. These values are needed for the CNN to label the ICs effectively
     raw_filt = raw.copy().filter(1, 100)
     # apply ICA
@@ -77,13 +78,6 @@ for subject_id in sub_ids:
         for item in exclude_idx:
             file.write(f"{item}\n")
     # cut epochs
-    flat = dict(eeg=1e-6)
-    reject=dict(eeg=250e-6)
-    if subject_id in ["SP_EEG_P0054", 'SP_EEG_P0085']:
-        event_id = {'1': 1, '20': 20, '21': 21, '22': 22, '50': 50, '51': 51, '52': 52, '53': 53, '54': 54, '80': 80}
-    else:
-        event_id = {'1': 1, '20': 20, '21': 21, '22': 22, '50': 50, '51': 51, '52': 52, '53': 53, '54': 54, '80': 80,
-                         '81': 81, '82': 82}
     epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=event_id, preload=True, tmin=params["epoch_tmin"],
                         tmax=params["epoch_tmax"], baseline=None, event_repeated="merge")
     try:
@@ -101,7 +95,7 @@ def move_data(eeg_dir):
     except FileExistsError:
         print("EEG derivatives directory already exists")
     raw_dir = os.path.join(eeg_dir, "raw")
-    derivates_dir_target = os.path.join(eeg_dir, "derivatives")
+    derivates_dir_target = os.path.join(raw_dir, "derivatives")
     subjects = sorted(os.listdir(raw_dir))
     for sub in subjects:
         sub_dir = f"{raw_dir}/{sub}"
@@ -116,4 +110,4 @@ def move_data(eeg_dir):
             shutil.move(src=os.path.join(derivates_dir_source, d), dst=os.path.join(sub_derivatives_dir_target, d))
         os.rmdir(derivates_dir_source)
 
-move_data(eeg_dir='/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/hannah_data/eeg/')
+move_data(eeg_dir='/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/hannah_data/eeg/sourcedata')
