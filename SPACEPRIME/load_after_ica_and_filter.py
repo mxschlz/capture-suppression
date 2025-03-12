@@ -1,14 +1,12 @@
 #import matplotlib
 #matplotlib.use('TkAgg')
 import mne
-import mne_icalabel
 import autoreject
 import os
 import pandas as pd
 from SPACEPRIME.encoding import *
 from SPACEPRIME.rename_events import add_to_events
 from SPACEPRIME import get_data_path
-from SPACEPRIME.bad_chs import bad_chs
 from SPACEPRIME.subjects import subject_ids
 import glob
 
@@ -26,8 +24,8 @@ params = dict(
 )
 settings_path = f"{get_data_path()}settings/"
 # get subject id and settings path
-subject_ids = subject_ids
-for subject_id in subject_ids[4:]:
+subject_ids = subject_ids[1:]
+for subject_id in subject_ids:
     if subject_id in []:  # already processed
         continue
     raw = mne.io.read_raw_fif(f"{get_data_path()}derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime_raw.fif",
@@ -55,7 +53,7 @@ for subject_id in subject_ids[4:]:
     # append metadata to epochs
     epochs.metadata = beh
     # run AutoReject
-    ar = autoreject.AutoReject(n_jobs=-1, n_interpolate=[1], cv=5, random_state=42)
+    ar = autoreject.AutoReject(n_jobs=-1, random_state=42)
     epochs_ar, log = ar.fit_transform(epochs, return_log=True)
     # save epochs
     try:
