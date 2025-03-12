@@ -30,6 +30,7 @@ power = epochs.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, decim=
                            average=False)
 power.average().plot(baseline=(None, 0), combine="mean", mode="logratio")
 power.average().plot_topo(baseline=(None, 0), mode="logratio")
+power.average().plot_topomap(baseline=(None, 0), mode="logratio")
 # now, calculate single-trial alpha power lateralization indices for targets and singletons
 # only use alpha frequency for the lateralization index analysis
 alpha_freqs = np.arange(1, 31, 1)
