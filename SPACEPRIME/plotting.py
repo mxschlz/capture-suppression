@@ -20,7 +20,7 @@ def plot_individual_lines(ax, data, x_col="Priming", y_col="select_target"):
     plt.legend()
 
 
-def difference_topos(epochs, montage, plot=True):
+def difference_topos(epochs, montage):
     ch_pos = montage.get_positions()["ch_pos"]
 
     # --- Difference Wave Calculation ---

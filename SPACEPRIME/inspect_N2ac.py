@@ -13,6 +13,7 @@ epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}de
 #epochs.apply_baseline((None, 0))
 # epochs = epochs["select_target==True"]
 epochs.crop(0, 0.7)  # crop for better comparability with Mandal et al. (2024)
+# epochs = epochs["Priming==0"]
 all_conds = list(epochs.event_id.keys())
 # get all channels from epochs
 all_chs = epochs.ch_names
