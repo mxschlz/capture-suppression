@@ -7,7 +7,7 @@ from mne.stats import permutation_cluster_test
 from scipy.stats import ttest_ind
 from SPACEPRIME.subjects import subject_ids
 from SPACEPRIME.plotting import difference_topos
-from SPACEPRIME.passive_listening_ERP import get_passive_listening_ERPs
+from utils import get_passive_listening_ERPs
 plt.ion()
 
 
@@ -15,7 +15,7 @@ settings_path = f"{get_data_path()}settings/"
 montage = mne.channels.read_custom_montage(settings_path + "CACS-64_NO_REF.bvef")
 ch_pos = montage.get_positions()["ch_pos"]
 # load epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0]) for subject in subject_ids[2:]])
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=False) for subject in subject_ids[2:]])
 epochs.crop(-0.1, 0.6)
 #epochs = epochs["select_target==True"]
 # epochs.apply_baseline()
@@ -44,7 +44,7 @@ contra_distractor_epochs_data = np.mean(np.concatenate([left_distractor_epochs.c
 ipsi_distractor_epochs_data = np.mean(np.concatenate([left_distractor_epochs.copy().get_data(picks="C3"),
                                right_distractor_epochs.copy().get_data(picks="C4")], axis=1), axis=1)
 
-contra_distractor_epochs_data_passive, ipsi_distractor_epochs_data_passive, contra_target_epochs_data_passive, ipsi_target_epochs_data_passive, diff_target_passive, diff_distractor_passive = get_passive_listening_ERPs()
+epochs, contra_distractor_epochs_data_passive, ipsi_distractor_epochs_data_passive, contra_target_epochs_data_passive, ipsi_target_epochs_data_passive, diff_target_passive, diff_distractor_passive = get_passive_listening_ERPs()
 
 # get difference waves
 diff_wave_target = contra_target_epochs_data.mean(axis=0) - ipsi_target_epochs_data.mean(axis=0)
