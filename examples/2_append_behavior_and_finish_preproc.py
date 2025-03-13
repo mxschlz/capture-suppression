@@ -13,6 +13,7 @@ settings_path = f"{get_data_path()}settings/"
 data_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/hannah_data/eeg/derivatives"
 sub_ids = sorted(os.listdir(data_path))
 bad_subjects = []
+event_id = {"20": 20}  # TODO: THIS IS THE FIX
 # iterate over every subject
 for subject_id in sub_ids:
     try:
@@ -23,10 +24,10 @@ for subject_id in sub_ids:
             subject = components[-2:]
         raw = mne.io.read_raw_fif(f"{data_path}/{subject_id}/preprocessing/{subject_id}_task-supratyp_raw.fif",
                                   preload=True)
-        events, event_id = mne.events_from_annotations(raw)
+        events, _ = mne.events_from_annotations(raw)
         epochs = mne.Epochs(raw, events=events, event_id=event_id, preload=True, tmin=params["epoch_tmin"],
                             tmax=params["epoch_tmax"], baseline=None, event_repeated="drop")
-        epochs = epochs["Stimulus/S 20"]
+        # epochs = epochs["Stimulus/S 20"]
         # get behavioral data visual
         mat_data_path_vis = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/hannah_data/eeg/behav/P{subject}_vis_sorted_file.mat"
         mat_data_vis = scipy.io.loadmat(mat_data_path_vis)
@@ -81,10 +82,10 @@ for subject_id in bad_subjects:
         subject = components[-2:]
     raw = mne.io.read_raw_fif(f"{data_path}/{subject_id}/preprocessing/{subject_id}_task-supratyp_raw.fif",
                               preload=True)
-    events, event_id = mne.events_from_annotations(raw)
+    events, _ = mne.events_from_annotations(raw)
     epochs = mne.Epochs(raw, events=events, event_id=event_id, preload=True, tmin=params["epoch_tmin"],
                         tmax=params["epoch_tmax"], baseline=None, event_repeated="drop")
-    epochs = epochs["Stimulus/S 20"]
+    # epochs = epochs["Stimulus/S 20"]
     # get behavioral data visual
     mat_data_path_vis = f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/hannah_data/eeg/behav/P{subject}_vis_sorted_file.mat"
     mat_data_vis = scipy.io.loadmat(mat_data_path_vis)

@@ -4,7 +4,7 @@ import numpy as np
 
 
 # define root data path
-data_path = "G:\\Meine Ablage\\PhD\\hannah_data\\eeg\\derivatives"
+data_path = "/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/hannah_data/eeg/derivatives/"
 # retrieve subjects from data path structure
 subjects = sorted(os.listdir(data_path))
 # instantiate epoch list to store single subject epochs in
@@ -21,13 +21,11 @@ for subject in subjects:
     subject_data = os.path.join(data_path, subject, "epoching")
     # try reading epochs (cropped)
     try:
-        epochs = mne.read_epochs(os.path.join(subject_data, os.listdir(subject_data)[0]), preload=True).crop(-0.6, 0)
+        epochs = mne.read_epochs(os.path.join(subject_data, os.listdir(subject_data)[0]), preload=True).crop(-1, 1)
         # append to all epochs list
         all_epochs.append(epochs)
-        # get visual events only
-        vis_epochs = epochs["Stimulus/S 20"]
         # compute alpha power
-        alpha_power = vis_epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles, decim=decim, n_jobs=-1, return_itc=False,
+        alpha_power = epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles, decim=decim, n_jobs=-1, return_itc=False,
                                    average=False)  # no average to compute absolute alpha power (not evoked)
         # average over epochs
         absolute_alpha = alpha_power.average()
@@ -42,6 +40,8 @@ for subject in subjects:
 all_epochs = list()
 # iterate over subjects
 for subject in subjects:
+    if subject in ["SP_EEG_P0015", "SP_EEG_P0020", "SP_EEG_P0058"]:
+        continue
     subject_data = os.path.join(data_path, subject, "epoching")
     # try reading epochs (cropped)
     try:
@@ -52,13 +52,13 @@ for subject in subjects:
         weird_subjects.append(subject)
 
 # compare alpha power between schizo and hc
-epochs = mne.concatenate_epochs(all_epochs, on_mismatch="ignore").crop(-0.6, 0.6)
+epochs = mne.concatenate_epochs(all_epochs, on_mismatch="ignore").crop(-0.6, 0)
 epochs_vis = epochs["Stimulus/S 20"]
 epochs_aud = epochs["Stimulus/S 80"]
 epochs.metadata['is_hc'] = epochs.metadata["subject_id"].astype(int) < 51
 
-epochs_hc_vis = epochs["is_hc==True"]["Stimulus/S 20"]
-epochs_sc_vis = epochs["is_hc==False"]["Stimulus/S 20"]
+epochs_hc_vis = epochs["is_hc==True"]
+epochs_sc_vis = epochs["is_hc==False"]
 # get alpha for hc and sc
 alpha_hc = epochs_hc_vis.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles, decim=decim, n_jobs=-1, return_itc=False,
                                    average=False)  # no average to compute absolute alpha power (not evoked)
