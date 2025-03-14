@@ -9,13 +9,12 @@ plt.ion()
 
 # --- ALPHA POWER IN PRIMING CONDITIONS ---
 # We first retrieve our epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=True) for subject in subject_ids])
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=False) for subject in subject_ids])
 # Now, we devide the epochs into our respective priming conditions. In order to do so, we make use of the metadata
 # which was appended to the epochs of every subject during preprocessing. We can access the metadata the same way as
 # we would by calling the event_ids in the experiment.
-no_p = epochs["Priming==0"]
-pp = epochs["Priming==1"]
-np = epochs["Priming==-1"]
+corrects = epochs["select_target==True"]
+incorrects = epochs["select_target==False"]
 # Now, we need to define some parameters for time-frequency analysis. This is pretty standard, we use morlet wavelet
 # convolution (sine wave multiplied by a gaussian distribution to flatten the edges of the filter), we define a number
 # of cycles of this wavelet that changes according to the frequency (smaller frequencies get smaller cycles, whereas
@@ -30,6 +29,9 @@ decim = 1  # keep all the samples along the time axis
 alpha_lateralization_scores = dict(selection_no_p=[],
                                    selection_pp=[],
                                    selection_np=[])
+alpha_corrects = corrects.compute_tfr(method=method, decim=decim, freqs=freqs, n_cycles=n_cycles)
+alpha_incorrects = incorrects.compute_tfr(method=method, decim=decim, freqs=freqs, n_cycles=n_cycles)
+
 # We want to quantify lateralization effects in terms of lateralization indices. Ultimately, we want to look at pre-stimulus
 # alpha lateralization
 # define contra- and ipsilateral electrode picks to calculate alpha lateralization scores
@@ -49,7 +51,6 @@ for subject in subject_ids:
     # positive priming
     power_pp = pp[f"subject_id=={subject}"].compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, decim=decim, n_jobs=-1, return_itc=False,
                            average=False)
-    # power_pp.apply_baseline((None, 0), mode="logratio", verbose=False)
     power_avg_pp = power_pp.average()
     alpha_freqs_times_pp = power_avg_pp.get_data(fmin=7, fmax=14).mean(axis=0)  # get alpha power frequencies over all channels
     subjects_alpha["pp"].append(alpha_freqs_times_pp.mean(axis=0))  # average over all frequencies
@@ -57,7 +58,6 @@ for subject in subject_ids:
     # negative priming
     power_np = np[f"subject_id=={subject}"].compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, decim=decim, n_jobs=-1, return_itc=False,
                            average=False)
-    # power_np.apply_baseline((None, 0), mode="logratio", verbose=False)
     power_avg_np = power_np.average()
     alpha_freqs_times_np = power_avg_np.get_data(fmin=7, fmax=14).mean(axis=0)  # get alpha power frequencies over all channels
     subjects_alpha["np"].append(alpha_freqs_times_np.mean(axis=0))  # average over all frequencies
