@@ -1,5 +1,6 @@
 bads = {
     "SP_EEG_P0006": ["AF8"], # 73 trials
+    "SP_EEG_P0021": ["T7", "AF8"],
     "SP_EEG_P0023": ["T7"], # 94 trials
     "SP_EEG_P0033": ["AF8"], # 181 trials
     "SP_EEG_P0051": ["TP10"], # 91 trials
