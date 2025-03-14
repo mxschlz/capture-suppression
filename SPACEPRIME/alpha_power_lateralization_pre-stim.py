@@ -6,22 +6,19 @@ from SPACEPRIME import get_data_path
 import numpy
 import seaborn as sns
 import pandas as pd
+import numpy as np
 plt.ion()
 
 
-# --- ALPHA POWER IN PRIMING CONDITIONS ---
+# --- ALPHA POWER PRE-STIMULUS ---
 # We first retrieve our epochs
 epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=False) for subject in subject_ids])
-epochs.resample(100)
+# crop to reduce runtime
+epochs.crop(None, 0.2)
 # First, define ROI electrode picks to reduce computation time.
 left_roi = ["TP9", "TP7", "CP5", "CP3", "CP1", "P7", "P5", "P3", "P1", "PO7", "PO3", "O1"]
 right_roi = ["TP10", "TP8", "CP6", "CP4", "CP2", "P8", "P6", "P4", "P2", "PO8", "PO4", "O2"]
 epochs = epochs.pick(picks=left_roi+right_roi)
-# Now, we devide the epochs into our respective priming conditions. In order to do so, we make use of the metadata
-# which was appended to the epochs of every subject during preprocessing. We can access the metadata the same way as
-# we would by calling the event_ids in the experiment.
-corrects = epochs["select_target==True"]
-incorrects = epochs["select_target==False"]
 # Now, we need to define some parameters for time-frequency analysis. This is pretty standard, we use morlet wavelet
 # convolution (sine wave multiplied by a gaussian distribution to flatten the edges of the filter), we define a number
 # of cycles of this wavelet that changes according to the frequency (smaller frequencies get smaller cycles, whereas
@@ -31,31 +28,33 @@ freqs = numpy.arange(1, 31, 1)  # 1 to 30 Hz
 #window_length = 0.5  # window lengths as in Wöstmann et al. (2019)
 n_cycles = freqs / 2  # different number of cycle per frequency
 method = "morlet"  # wavelet
-decim = 10  # keep all the samples along the time axis
+decim = 1  # keep all the samples along the time axis
 mode = "zscore"  # z-score normalization
-baseline = (-1.0, -0.5)  # baseline from 1000 to 500 ms pre-stimulus
-n_jobs = -1  # number of parallel jobs. -1 uses all cores
+baseline = (-0.9, -0.5)  # baseline from 1000 to 500 ms pre-stimulus
+n_jobs = 20  # number of parallel jobs. -1 uses all cores
 average = False  # get total oscillatory power, opposed to evoked oscillatory power (get power from ERP)
-# Look at difference spectrogram on a group-level
-spec_correct = corrects.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, average=average, n_jobs=n_jobs, decim=decim)
-spec_incorrect = incorrects.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, average=average, n_jobs=n_jobs, decim=decim)
+spec = epochs.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, average=average, n_jobs=n_jobs, decim=decim)
+# Now, we devide the epochs into our respective priming conditions. In order to do so, we make use of the metadata
+# which was appended to the epochs of every subject during preprocessing. We can access the metadata the same way as
+# we would by calling the event_ids in the experiment.
+spec_corrects = spec["select_target==True"]
+spec_incorrects = spec["select_target==False"]
 # apply baseline
-spec_correct.apply_baseline(baseline=baseline, mode=mode)
-spec_incorrect.apply_baseline(baseline=baseline, mode=mode)
+spec_corrects.apply_baseline(baseline=baseline, mode=mode)
+spec_incorrects.apply_baseline(baseline=baseline, mode=mode)
 # calculate difference spectrum
-spec_diff = spec_correct.average() - spec_incorrect.average()
-spec_diff_roi = spec_diff
-spec_diff_roi.plot(combine="mean")
+spec_diff = spec_corrects.average() - spec_incorrects.average()
+spec_diff.plot(combine="mean")
 
 # Store subject-level results
 subject_results = {}
 for subject in subject_ids:
     print(f"Processing subject: {subject}")
     # Load epochs for the current subject
-    epochs = epochs[f"subject_id=={subject}"]
+    epochs_sub = epochs[f"subject_id=={subject}"]
     # Divide epochs into correct and incorrect trials
-    corrects = epochs["select_target==True"]
-    incorrects = epochs["select_target==False"]
+    corrects = epochs_sub["select_target==True"]
+    incorrects = epochs_sub["select_target==False"]
     # Compute time-frequency analysis
     spectrum_corrects = corrects.compute_tfr(method=method, decim=decim, freqs=freqs, n_cycles=n_cycles, n_jobs=n_jobs, average=average)
     spectrum_corrects.apply_baseline(mode=mode, baseline=baseline)
@@ -96,9 +95,27 @@ plt.title("Subject-Level Alpha Power (7-14 Hz)")
 plt.ylabel("Alpha Power z-score")
 plt.xticks(rotation=45, ha='right')
 plt.tight_layout()
-# Okay, so now that we have computed the
-
-
+# Okay, so now that we have computed the overall alpha power time courses and made a simple comparison between correct
+# and incorrect trials, we can further divide the alpha power into ipsi- and contralateral ROIs. This might be more
+# sensitive than looking at overall alpha power.
+all_conds = list(epochs.event_id.keys())
+# Split into left and right lateral targets
+left_target_epochs = epochs[[x for x in epochs.event_id if "Target-1-Singleton-2" in x]]
+right_target_epochs = epochs[[x for x in epochs.event_id if "Target-3-Singleton-2" in x]]
+# Now, divide into correct and incorrect trials
+left_target_epochs_correct = left_target_epochs["select_target==True"]
+right_target_epochs_correct = right_target_epochs["select_target==True"]
+left_target_epochs_incorrect = left_target_epochs["select_target==False"]
+right_target_epochs_incorrect = right_target_epochs["select_target==False"]
+# equalize epoch count in all conditions
+mne.epochs.equalize_epoch_counts([left_target_epochs_correct, right_target_epochs_correct,
+                                  left_target_epochs_incorrect, right_target_epochs_incorrect], method="random")
+# Now, divide all epochs into contra and ipsi
+# get the trial-wise data for targets
+contra_target_epochs_correct_data = np.concatenate([left_target_epochs_correct.copy().get_data(picks=right_roi),
+                                 right_target_epochs_correct.copy().get_data(picks=left_roi)], axis=0).mean(axis=0)
+ipsi_target_epochs_correct_data = np.concatenate([left_target_epochs_correct.copy().get_data(picks=left_roi),
+                               right_target_epochs_correct.copy().get_data(picks=right_roi)], axis=0).mean(axis=0)
 
 
 
