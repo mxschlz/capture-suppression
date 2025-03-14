@@ -4,12 +4,19 @@ import glob
 from SPACEPRIME.subjects import subject_ids
 from SPACEPRIME import get_data_path
 import numpy
+import seaborn as sns
+import pandas as pd
 plt.ion()
 
 
 # --- ALPHA POWER IN PRIMING CONDITIONS ---
 # We first retrieve our epochs
 epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=False) for subject in subject_ids])
+epochs.resample(100)
+# First, define ROI electrode picks to reduce computation time.
+left_roi = ["TP9", "TP7", "CP5", "CP3", "CP1", "P7", "P5", "P3", "P1", "PO7", "PO3", "O1"]
+right_roi = ["TP10", "TP8", "CP6", "CP4", "CP2", "P8", "P6", "P4", "P2", "PO8", "PO4", "O2"]
+epochs = epochs.pick(picks=left_roi+right_roi)
 # Now, we devide the epochs into our respective priming conditions. In order to do so, we make use of the metadata
 # which was appended to the epochs of every subject during preprocessing. We can access the metadata the same way as
 # we would by calling the event_ids in the experiment.
@@ -24,28 +31,97 @@ freqs = numpy.arange(1, 31, 1)  # 1 to 30 Hz
 #window_length = 0.5  # window lengths as in Wöstmann et al. (2019)
 n_cycles = freqs / 2  # different number of cycle per frequency
 method = "morlet"  # wavelet
-decim = 1  # keep all the samples along the time axis
+decim = 10  # keep all the samples along the time axis
 mode = "zscore"  # z-score normalization
-baseline = (None, -0.5)  # baseline from 1000 to 500 ms pre-stimulus
-n_jobs = 20  # number of parallel jobs. -1 uses all cores
+baseline = (-1.0, -0.5)  # baseline from 1000 to 500 ms pre-stimulus
+n_jobs = -1  # number of parallel jobs. -1 uses all cores
 average = False  # get total oscillatory power, opposed to evoked oscillatory power (get power from ERP)
-# store all the lateralization indices for selection and suppression, respectively
-alpha_lateralization_scores = dict(selection_no_p=[],
-                                   selection_pp=[],
-                                   selection_np=[])
-# For all correct and incorrect trials, compute the absolute oscillatory power in a broad range
-spectrum_corrects = corrects.compute_tfr(method=method, decim=decim, freqs=freqs, n_cycles=n_cycles, n_jobs=n_jobs,
-                                         average=average)
-spectrum_corrects.apply_baseline(mode=mode, baseline=baseline)
-spectrum_incorrects = incorrects.compute_tfr(method=method, decim=decim, freqs=freqs, n_cycles=n_cycles, n_jobs=n_jobs,
-                                             average=average)
-spectrum_incorrects.apply_baseline(mode=mode, baseline=baseline)
+# Look at difference spectrogram on a group-level
+spec_correct = corrects.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, average=average, n_jobs=n_jobs, decim=decim)
+spec_incorrect = incorrects.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, average=average, n_jobs=n_jobs, decim=decim)
+# apply baseline
+spec_correct.apply_baseline(baseline=baseline, mode=mode)
+spec_incorrect.apply_baseline(baseline=baseline, mode=mode)
+# calculate difference spectrum
+spec_diff = spec_correct.average() - spec_incorrect.average()
+spec_diff_roi = spec_diff
+spec_diff_roi.plot(combine="mean")
 
-# We want to quantify lateralization effects in terms of lateralization indices. Ultimately, we want to look at pre-stimulus
-# alpha lateralization
-# define contra- and ipsilateral electrode picks to calculate alpha lateralization scores
-left_elecs = ["TP9", "TP7", "CP5", "CP3", "CP1", "P7", "P5", "P3", "P1", "PO7", "PO3", "O1"]
-right_elecs = ["TP10", "TP8", "CP6", "CP4", "CP2", "P8", "P6", "P4", "P2", "PO8", "PO3", "O2"]
+# Store subject-level results
+subject_results = {}
+for subject in subject_ids:
+    print(f"Processing subject: {subject}")
+    # Load epochs for the current subject
+    epochs = epochs[f"subject_id=={subject}"]
+    # Divide epochs into correct and incorrect trials
+    corrects = epochs["select_target==True"]
+    incorrects = epochs["select_target==False"]
+    # Compute time-frequency analysis
+    spectrum_corrects = corrects.compute_tfr(method=method, decim=decim, freqs=freqs, n_cycles=n_cycles, n_jobs=n_jobs, average=average)
+    spectrum_corrects.apply_baseline(mode=mode, baseline=baseline)
+    spectrum_incorrects = incorrects.compute_tfr(method=method, decim=decim, freqs=freqs, n_cycles=n_cycles, n_jobs=n_jobs, average=average)
+    spectrum_incorrects.apply_baseline(mode=mode, baseline=baseline)
+    # Extract alpha power from ROI
+    roi_corrects = spectrum_corrects.pick(picks=left_roi + right_roi)
+    roi_incorrects = spectrum_incorrects.pick(picks=left_roi + right_roi)
+    # Average alpha power (7-14 Hz)
+    alpha_roi_corrects = roi_corrects.get_data(fmin=7, fmax=14).mean(axis=2).mean(axis=1).mean(axis=1)
+    alpha_roi_incorrects = roi_incorrects.get_data(fmin=7, fmax=14).mean(axis=2).mean(axis=1).mean(axis=1)
+    # Store results
+    subject_results[subject] = {
+        "alpha_corrects": alpha_roi_corrects.mean(),
+        "alpha_incorrects": alpha_roi_incorrects.mean()}
+
+# We store the mean alpha power value for every subject in a dataframe, so that every subject has one alpha value.
+alpha_data = []
+subjects = []
+conditions = []
+# iterate over subjects and append data
+for subject, values in subject_results.items():
+    alpha_data.append(values["alpha_corrects"])
+    alpha_data.append(values["alpha_incorrects"])  # Append incorrect data too
+    subjects.append(subject)
+    subjects.append(subject) # Append the subject twice, once for each condition.
+    conditions.append("Correct")
+    conditions.append("Incorrect")
+# store everything in a pandas dataframe for further plotting
+df = pd.DataFrame({
+    "subject": subjects,
+    "alpha": alpha_data, # combine the correct and incorrect data into one column.
+    "condition": conditions,
+})
+# plot the stuff
+sns.boxplot(x="condition", y="alpha", data=df)
+plt.title("Subject-Level Alpha Power (7-14 Hz)")
+plt.ylabel("Alpha Power z-score")
+plt.xticks(rotation=45, ha='right')
+plt.tight_layout()
+# Okay, so now that we have computed the
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # iterate over subjects
 # --- DO ALPHA POWER LATERALIZATION CALCULATION FOR ALL PRIMING CONDITIONS AND SUBJECTS ---
 for subject in subject_ids:
