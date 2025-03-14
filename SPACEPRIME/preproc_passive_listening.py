@@ -44,7 +44,7 @@ for subject_id in subject_ids:
     # Filter the data. These values are needed for the CNN to label the ICs effectively
     raw_filt = raw.copy().filter(1, 100)
     # apply ICA
-    ica = mne.preprocessing.ICA(method="infomax", fit_params=dict(extended=True))
+    ica = mne.preprocessing.ICA(method="infomax", fit_params=dict(extended=True), random_state=42)
     ica.fit(raw_filt)
     ic_labels = mne_icalabel.label_components(raw_filt, ica, method="iclabel")
     exclude_idx = [idx for idx, (label, prob) in enumerate(zip(ic_labels["labels"], ic_labels["y_pred_proba"])) if label not in ["brain", "other"] and prob > params["ica_reject_threshold"]]
@@ -78,7 +78,7 @@ for subject_id in subject_ids:
                             tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
                             baseline=None)
     # run AutoReject
-    ar = autoreject.AutoReject(n_jobs=-1)
+    ar = autoreject.AutoReject(n_jobs=-1, random_state=42)
     epochs_ar, log = ar.fit_transform(epochs, return_log=True)
     # save epochs
     try:

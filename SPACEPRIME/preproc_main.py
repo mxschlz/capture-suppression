@@ -26,7 +26,7 @@ params = dict(
 )
 settings_path = f"{get_data_path()}settings/"
 # get subject id and settings path
-subject_ids = subject_ids
+subject_ids = subject_ids[-2:]
 for subject_id in subject_ids:
     if subject_id in []:  # already processed
         continue
@@ -52,7 +52,7 @@ for subject_id in subject_ids:
     # Filter the data. These values are needed for the CNN to label the ICs effectively
     raw_filt = raw.copy().filter(1, 100)
     # apply ICA
-    ica = mne.preprocessing.ICA(method="infomax", fit_params=dict(extended=True))
+    ica = mne.preprocessing.ICA(method="infomax", fit_params=dict(extended=True), random_state=42)
     ica.fit(raw_filt)
     ic_labels = mne_icalabel.label_components(raw_filt, ica, method="iclabel")
     exclude_idx = [idx for idx, (label, prob) in enumerate(zip(ic_labels["labels"], ic_labels["y_pred_proba"])) if label not in ["brain", "other"] and prob > params["ica_reject_threshold"]]
@@ -89,7 +89,7 @@ for subject_id in subject_ids:
     elif subject_id in [103, 104, 105, 112, 116, 118, 120]:
         epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
                             baseline=None)
-    elif subject_id in [106, 107, 108, 110, 114, 124, 126, 128, 130, 132]:
+    elif subject_id in [106, 107, 108, 110, 114, 124, 126, 128, 130, 132, 136, 138]:
         epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding_sub_106, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
                             baseline=None)
         epochs = add_to_events(epochs, new_encoding=encoding, change_by=1)
@@ -101,7 +101,7 @@ for subject_id in subject_ids:
     # append metadata to epochs
     epochs.metadata = beh
     # run AutoReject
-    ar = autoreject.AutoReject(n_jobs=-1)
+    ar = autoreject.AutoReject(n_jobs=-1, random_state=42)
     epochs_ar, log = ar.fit_transform(epochs, return_log=True)
     # save epochs
     try:
