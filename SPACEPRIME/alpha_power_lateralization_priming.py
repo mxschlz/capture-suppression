@@ -20,17 +20,26 @@ incorrects = epochs["select_target==False"]
 # of cycles of this wavelet that changes according to the frequency (smaller frequencies get smaller cycles, whereas
 # larger frequencies have larger cycles, but all have a cycle of half the frequency value). We also set decim = 1 to
 # keep the full amount of data
-freqs = numpy.arange(7, 14, 1)  # 7 to 14 Hertz (alpha range)
+freqs = numpy.arange(1, 31, 1)  # 1 to 30 Hz
 #window_length = 0.5  # window lengths as in Wöstmann et al. (2019)
 n_cycles = freqs / 2  # different number of cycle per frequency
 method = "morlet"  # wavelet
 decim = 1  # keep all the samples along the time axis
+mode = "zscore"  # z-score normalization
+baseline = (None, -0.5)  # baseline from 1000 to 500 ms pre-stimulus
+n_jobs = 20  # number of parallel jobs. -1 uses all cores
+average = False  # get total oscillatory power, opposed to evoked oscillatory power (get power from ERP)
 # store all the lateralization indices for selection and suppression, respectively
 alpha_lateralization_scores = dict(selection_no_p=[],
                                    selection_pp=[],
                                    selection_np=[])
-alpha_corrects = corrects.compute_tfr(method=method, decim=decim, freqs=freqs, n_cycles=n_cycles)
-alpha_incorrects = incorrects.compute_tfr(method=method, decim=decim, freqs=freqs, n_cycles=n_cycles)
+# For all correct and incorrect trials, compute the absolute oscillatory power in a broad range
+spectrum_corrects = corrects.compute_tfr(method=method, decim=decim, freqs=freqs, n_cycles=n_cycles, n_jobs=n_jobs,
+                                         average=average)
+spectrum_corrects.apply_baseline(mode=mode, baseline=baseline)
+spectrum_incorrects = incorrects.compute_tfr(method=method, decim=decim, freqs=freqs, n_cycles=n_cycles, n_jobs=n_jobs,
+                                             average=average)
+spectrum_incorrects.apply_baseline(mode=mode, baseline=baseline)
 
 # We want to quantify lateralization effects in terms of lateralization indices. Ultimately, we want to look at pre-stimulus
 # alpha lateralization
