@@ -17,7 +17,7 @@ data_root = f"{get_data_path()}derivatives/preprocessing/"
 # get all the subject ids
 subjects = os.listdir(data_root)
 # load epochs. Important consideration, only select the interval of stimuluis presentation (0 - 0.25 seconds).
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=False) for subject in subject_ids]).crop(-0.2, 0.3)
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=False) for subject in subject_ids]).crop(0, 0.5)
 # For maximum target entrainment, we want to exclusively look at epochs where the target has been identified correctly
 # and where a salient distractor is absent.
 # get the sampling frequency from epochs info
@@ -33,10 +33,10 @@ mne.epochs.equalize_epoch_counts([left_target_epochs, right_target_epochs], meth
 #left_channels = mne.channels.make_1020_channel_selections(epochs.info, midline='z', return_ch_names=True)['Left']
 #right_channels = mne.channels.make_1020_channel_selections(epochs.info, midline='z', return_ch_names=True)['Right']
 # get the trial-wise data for targets
-contra_target_epochs_data = np.mean(np.concatenate([left_target_epochs.copy().pick("C6").get_data(),
-                                 right_target_epochs.copy().pick("C5").get_data()], axis=1), axis=1)
-ipsi_target_epochs_data = np.mean(np.concatenate([left_target_epochs.copy().pick("C5").get_data(),
-                               right_target_epochs.copy().pick("C6").get_data()], axis=1), axis=1)
+contra_target_epochs_data = np.mean(np.concatenate([left_target_epochs.copy().pick("C4").get_data(),
+                                 right_target_epochs.copy().pick("C3").get_data()], axis=1), axis=1)
+ipsi_target_epochs_data = np.mean(np.concatenate([left_target_epochs.copy().pick("C3").get_data(),
+                               right_target_epochs.copy().pick("C4").get_data()], axis=1), axis=1)
 # compute power density spectrum for evoked response and look for frequency tagging
 # first, create epochs objects from numpy arrays computed above for ipsi and contra targets
 ipsi_target_epochs = mne.EpochsArray(data=ipsi_target_epochs_data.reshape(len(left_target_epochs), 1, left_target_epochs.get_data().shape[2]),
@@ -50,7 +50,16 @@ target_diff = mne.EpochsArray(data=(contra_target_epochs.get_data() - ipsi_targe
 powerdiff_target = target_diff.compute_psd(method="welch", fmin=25, fmax=35, n_jobs=-1)
 powerdiff_target.plot()
 
+# a Different approach on the ERP instead of epochs
+erp_ipsi = ipsi_target_epochs_data.mean(axis=0)
+erp_contra = contra_target_epochs_data.mean(axis=0)
+erp_diff = mne.EvokedArray(data=(erp_contra - erp_ipsi).reshape(1, epochs.times.__len__()),
+                           info=mne.create_info(ch_names=["Target: Contra - Ipsi"], sfreq=sfreq, ch_types="eeg"))
+erp_diff_spec = erp_diff.compute_psd(method="multitaper")
+erp_diff_spec.plot()
+one_over_f_fit = len(erp_diff_spec.get_data()[0])/erp_diff_spec.get_data()[0]
 
+# Now, follow an MNE example
 tmin = epochs.tmin
 tmax = epochs.tmax
 fmin = 1.0
@@ -58,7 +67,7 @@ fmax = 40
 spectrum = epochs.compute_psd()
 psds, freqs = spectrum.get_data(return_freqs=True)
 
-
+# Define convolution function
 def snr_spectrum(psd, noise_n_neighbor_freqs=1, noise_skip_neighbor_freqs=1):
     """Compute SNR spectrum from PSD spectrum using convolution.
 
@@ -136,3 +145,25 @@ axes[1].set(
     ylim=[-2, 30],
     xlim=[fmin, fmax],
 )
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+#Example power spectrum
+freqs = np.arange(1, 101)
+power = 100 / freqs + np.random.normal(0, 5, 100) #1/f + noise
+
+#Conceptual 1/f fit (replace with a proper fit)
+one_over_f_fit = 100 / freqs
+
+corrected_power = power - one_over_f_fit
+
+plt.figure()
+plt.plot(freqs, power, label = "original power")
+plt.plot(freqs, one_over_f_fit, label = "1/f fit")
+plt.plot(freqs, corrected_power, label = "corrected power")
+plt.xlabel("Frequency (Hz)")
+plt.ylabel("Power")
+plt.legend()
+plt.show()
