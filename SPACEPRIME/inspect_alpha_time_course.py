@@ -18,6 +18,9 @@ n_cycles = alpha_freqs / 2  # different number of cycle per frequency
 method = "morlet"  # wavelet
 decim = 1  # keep all the samples along the time axis
 
+# compute the absolute oscillatory power for all subjects
+power = epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles,
+                           decim=decim, n_jobs=-1, return_itc=False, average=False)
 # store the within-subject alpha power
 subjects_alpha = dict()
 
@@ -25,10 +28,9 @@ subjects_alpha = dict()
 # --- DO OVERALL ALPHA POWER FOR ALL SUBJECTS ---
 for subject in subject_ids:
     # get TFR from single subject
-    power = epochs[f"subject_id=={subject}"].compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles,
-                                                         decim=decim, n_jobs=-1, return_itc=False, average=False)
+    power_sub = power[f"subject_id=={subject}"]
     # power.apply_baseline((-0.5, 0), mode="logratio", verbose=False)
-    power_avg = power.average()
+    power_avg = power_sub.average()
     alpha_freqs_times = power_avg.get_data().mean(axis=0)  # get alpha power frequencies over all channels
     subjects_alpha[f"{subject}"] = alpha_freqs_times.mean(axis=0)  # average over all frequencies
 
@@ -53,7 +55,4 @@ plt.title("Alpha Time Course")
 plt.legend()
 
 # plot topography of alpha
-total_alpha = epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles, decim=10, average=False,
-                                 n_jobs=-1, return_itc=False)
-total_alpha_avrg = total_alpha.average()
-total_alpha_avrg.plot_topomap(tmin=0, tmax=0.75)
+power.average().plot_topomap(tmin=0, tmax=0.75)
