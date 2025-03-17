@@ -34,14 +34,13 @@ baseline = (-0.9, -0.5)  # baseline from 1000 to 500 ms pre-stimulus
 n_jobs = 20  # number of parallel jobs. -1 uses all cores
 average = False  # get total oscillatory power, opposed to evoked oscillatory power (get power from ERP)
 spec = epochs.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, average=average, n_jobs=n_jobs, decim=decim)
+# apply baseline
+spec.apply_baseline(baseline=baseline, mode=mode)
 # Now, we devide the epochs into our respective priming conditions. In order to do so, we make use of the metadata
 # which was appended to the epochs of every subject during preprocessing. We can access the metadata the same way as
 # we would by calling the event_ids in the experiment.
 spec_corrects = spec["select_target==True"]
 spec_incorrects = spec["select_target==False"]
-# apply baseline
-spec_corrects.apply_baseline(baseline=baseline, mode=mode)
-spec_incorrects.apply_baseline(baseline=baseline, mode=mode)
 # calculate difference spectrum
 spec_diff = spec_corrects.average() - spec_incorrects.average()
 spec_diff.plot(combine="mean")
