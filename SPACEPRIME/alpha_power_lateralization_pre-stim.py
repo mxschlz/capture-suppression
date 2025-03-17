@@ -51,25 +51,22 @@ subject_results = {}
 for subject in subject_ids:
     print(f"Processing subject: {subject}")
     # Load epochs for the current subject
-    epochs_sub = epochs[f"subject_id=={subject}"]
+    spec_sub = spec[f"subject_id=={subject}"]
+    # Crop the epochs into narrower interval preceding stimulus onset
+    # epochs_sub.crop(-0.4, 0.0)
     # Divide epochs into correct and incorrect trials
-    corrects = epochs_sub["select_target==True"]
-    incorrects = epochs_sub["select_target==False"]
+    spectrum_corrects = spec_sub["select_target==True"]
+    spectrum_incorrects = spec_sub["select_target==False"]
     # Compute time-frequency analysis
-    spectrum_corrects = corrects.compute_tfr(method=method, decim=decim, freqs=freqs, n_cycles=n_cycles, n_jobs=n_jobs, average=average)
     spectrum_corrects.apply_baseline(mode=mode, baseline=baseline)
-    spectrum_incorrects = incorrects.compute_tfr(method=method, decim=decim, freqs=freqs, n_cycles=n_cycles, n_jobs=n_jobs, average=average)
     spectrum_incorrects.apply_baseline(mode=mode, baseline=baseline)
-    # Extract alpha power from ROI
-    roi_corrects = spectrum_corrects.pick(picks=left_roi + right_roi)
-    roi_incorrects = spectrum_incorrects.pick(picks=left_roi + right_roi)
-    # Average alpha power (7-14 Hz)
-    alpha_roi_corrects = roi_corrects.get_data(fmin=7, fmax=14).mean(axis=2).mean(axis=1).mean(axis=1)
-    alpha_roi_incorrects = roi_incorrects.get_data(fmin=7, fmax=14).mean(axis=2).mean(axis=1).mean(axis=1)
+    # Average alpha power (7-14 Hz) over all dimensions (epochs, channels, frequencies and time) to get one value per subject
+    alpha_roi_corrects = spectrum_corrects.get_data(fmin=7, fmax=14, tmin=-0.2, tmax=0).mean(axis=(0, 1, 2, 3))
+    alpha_roi_incorrects = spectrum_incorrects.get_data(fmin=7, fmax=14, tmin=-0.2, tmax=0).mean(axis=(0, 1, 2, 3))
     # Store results
     subject_results[subject] = {
-        "alpha_corrects": alpha_roi_corrects.mean(),
-        "alpha_incorrects": alpha_roi_incorrects.mean()}
+        "alpha_corrects": alpha_roi_corrects,
+        "alpha_incorrects": alpha_roi_incorrects}
 
 # We store the mean alpha power value for every subject in a dataframe, so that every subject has one alpha value.
 alpha_data = []
@@ -110,7 +107,7 @@ right_target_epochs_incorrect = right_target_epochs["select_target==False"]
 # equalize epoch count in all conditions
 mne.epochs.equalize_epoch_counts([left_target_epochs_correct, right_target_epochs_correct,
                                   left_target_epochs_incorrect, right_target_epochs_incorrect], method="random")
-# Now, divide all epochs into contra and ipsi
+# Now, divide all epochs into contra and ipsi target presentation
 # get the trial-wise data for targets
 contra_target_epochs_correct_data = np.concatenate([left_target_epochs_correct.copy().get_data(picks=right_roi),
                                  right_target_epochs_correct.copy().get_data(picks=left_roi)], axis=0).mean(axis=0)
