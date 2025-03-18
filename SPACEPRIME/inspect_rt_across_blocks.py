@@ -85,7 +85,7 @@ sns.lmplot(data=df_merged, x="sub_block", y="rt_diff_running_avg", hue="subject_
 df["trial_nr_abs"] = list(range(len(df)))
 df.drop("duration", axis=1, inplace=True)  # drop duration because it is always NaN
 df.dropna(subset="rt", inplace=True)  # drop NaN in reaction time
-model = smf.mixedlm("rt_diff ~ sub_block", data=df_merged, groups="subject_id", re_formula="~sub_block")
+model = smf.mixedlm("rt_diff ~ sub_block", data=df_merged.dropna(), groups="subject_id", re_formula="~sub_block")
 result = model.fit()
 print(result.summary())
 
