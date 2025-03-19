@@ -7,12 +7,16 @@ import numpy
 import seaborn as sns
 import pandas as pd
 import numpy as np
+from scipy import stats
+from SPACEPRIME.plotting import plot_individual_lines
 plt.ion()
 
 
 # --- ALPHA POWER PRE-STIMULUS ---
 # We first retrieve our epochs
 epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=False) for subject in subject_ids])
+# Control for priming
+# epochs = epochs["Priming==0"]
 # crop to reduce runtime
 epochs.crop(None, 0.2)
 # First, define ROI electrode picks to reduce computation time.
@@ -32,36 +36,41 @@ n_cycles = freqs / 2  # different number of cycle per frequency
 method = "morlet"  # wavelet
 decim = 7  # keep only every fifth of the samples along the time axis
 mode = "zscore"  # z-score normalization
-# baseline = None  # baseline from 1000 to 500 ms pre-stimulus
+baseline = (-0.9, -0.5)  # baseline from 1000 to 500 ms pre-stimulus
 n_jobs = -1  # number of parallel jobs. -1 uses all cores
 average = False  # get total oscillatory power, opposed to evoked oscillatory power (get power from ERP)
 # Compute time-frequency analysis
 power = epochs.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, average=average, n_jobs=n_jobs, decim=decim)
 # apply baseline
-# power.apply_baseline(baseline=baseline, mode=mode)
+power.apply_baseline(baseline=baseline, mode=mode)
 # Now, we devide the epochs into our respective priming conditions. In order to do so, we make use of the metadata
 # which was appended to the epochs of every subject during preprocessing. We can access the metadata the same way as
 # we would by calling the event_ids in the experiment.
+# Crop the epochs into narrower interval preceding stimulus onset
+power.crop(-0.6, 0.1)
 power_corrects = power["select_target==True"]
 power_incorrects = power["select_target==False"]
 # calculate difference spectrum
 power_diff = power_corrects.average() - power_incorrects.average()
 power_diff.plot(combine="mean")
 
+# define some params for the upcoming analysis
+alpha_fmin = 8
+alpha_fmax = 12
+alpha_tmin = -0.3
+alpha_tmax = 0.0
 # Store subject-level results
 subject_results = {}
 for subject in subject_ids:
     print(f"Processing subject: {subject}")
     # Load epochs for the current subject
     power_sub = power[f"subject_id=={subject}"]
-    # Crop the epochs into narrower interval preceding stimulus onset
-    # epochs_sub.crop(-0.4, 0.0)
     # Divide epochs into correct and incorrect trials
     power_corrects = power_sub["select_target==True"]
     power_incorrects = power_sub["select_target==False"]
     # Average alpha power (7-14 Hz) over all dimensions (epochs, channels, frequencies and time) to get one value per subject
-    alpha_roi_corrects = power_corrects.get_data(fmin=7, fmax=14, tmin=-0.2, tmax=0).mean(axis=(0, 1, 2, 3))
-    alpha_roi_incorrects = power_incorrects.get_data(fmin=7, fmax=14, tmin=-0.2, tmax=0).mean(axis=(0, 1, 2, 3))
+    alpha_roi_corrects = power_corrects.get_data(fmin=alpha_fmin, fmax=alpha_fmax, tmin=alpha_tmin, tmax=alpha_tmax).mean(axis=(0, 1, 2, 3))
+    alpha_roi_incorrects = power_incorrects.get_data(fmin=alpha_fmin, fmax=alpha_fmax, tmin=alpha_tmin, tmax=alpha_tmax).mean(axis=(0, 1, 2, 3))
     # Store results
     subject_results[subject] = {
         "alpha_corrects": alpha_roi_corrects,
@@ -81,62 +90,195 @@ for subject, values in subject_results.items():
     conditions.append("Incorrect")
 # store everything in a pandas dataframe for further plotting
 df = pd.DataFrame({
-    "subject": subjects,
+    "subject_id": subjects,
     "alpha": alpha_data, # combine the correct and incorrect data into one column.
     "condition": conditions,
 })
 # plot the stuff
-plt.figure()
-sns.boxplot(x="condition", y="alpha", data=df)
+plot = sns.barplot(x="condition", y="alpha", data=df)
+plot_individual_lines(plot, data=df, x_col="condition", y_col="alpha")
 plt.title("Subject-Level Alpha Power (7-14 Hz)")
 plt.ylabel("Alpha Power z-score")
 plt.xticks(rotation=45, ha='right')
 plt.hlines(y=0, xmin=plt.xlim()[0], xmax=plt.xlim()[1], linestyles="dashed", color="black")
 plt.tight_layout()
 # Subtract correct from incorrect alpha
-diff = df.query("condition=='Correct'")["alpha"].values - df.query("condition=='Incorrect'")["alpha"].values
+diff = df.query("condition=='Correct'")["alpha"].reset_index(drop=True) - df.query("condition=='Incorrect'")["alpha"].reset_index(drop=True)
+# Compute t test
+t, p = stats.ttest_1samp(diff, popmean=0)
 
 # Okay, so now that we have computed the overall alpha power time courses and made a simple comparison between correct
 # and incorrect trials, we can further divide the alpha power into ipsi- and contralateral ROIs. This might be more
 # sensitive than looking at overall alpha power.
-all_conds = list(epochs.event_id.keys())
-# Split into left and right lateral targets
-left_target_epochs = epochs[[x for x in epochs.event_id if "Target-1-Singleton-2" in x]]
-right_target_epochs = epochs[[x for x in epochs.event_id if "Target-3-Singleton-2" in x]]
-# Now, divide into correct and incorrect trials
-left_target_epochs_correct = left_target_epochs["select_target==True"]
-right_target_epochs_correct = right_target_epochs["select_target==True"]
-left_target_epochs_incorrect = left_target_epochs["select_target==False"]
-right_target_epochs_incorrect = right_target_epochs["select_target==False"]
+all_conds = list(power.event_id.keys())
 # equalize epoch count in all conditions
-mne.epochs.equalize_epoch_counts([left_target_epochs_correct, right_target_epochs_correct,
-                                  left_target_epochs_incorrect, right_target_epochs_incorrect], method="random")
-# Now, divide all epochs into contra and ipsi target presentation
+#mne.epochs.equalize_epoch_counts([left_target_epochs_correct, right_target_epochs_correct,
+                                  #left_target_epochs_incorrect, right_target_epochs_incorrect], method="random")
+# Store the computed data in a dataframe
+alpha_lateralization_subjects_mean = dict(subject_id=[],
+                                          correct_ipsi=[],
+                                          incorrect_ipsi=[],
+                                          correct_contra=[],
+                                          incorrect_contra=[])
+# Iterate over subjects and get all the ipsi and contra alpha power values
+for subject in subject_ids:
+    print(f"Processing subject: {subject}")
+    sub_power = power[f"subject_id=={subject}"]
+    # Split into left and right lateral targets
+    left_target_power = sub_power[[x for x in sub_power.event_id if "Target-1-Singleton-2" in x]]
+    right_target_power = sub_power[[x for x in sub_power.event_id if "Target-3-Singleton-2" in x]]
+    # Now, divide into correct and incorrect trials
+    left_target_power_correct = left_target_power["select_target==True"]
+    right_target_power_correct = right_target_power["select_target==True"]
+    left_target_power_incorrect = left_target_power["select_target==False"]
+    right_target_power_incorrect = right_target_power["select_target==False"]
+    # Now, divide all power spectra into contra and ipsi target presentation
+    # get the trial-wise data for targets contra and ipsilateral to the stimulus, concatenate and average over stimulus.
+    # Also, define the alpha frequency range in the get_data() method.
+    contra_target_power_correct_data = np.concatenate([left_target_power_correct.copy().get_data(picks=right_roi,
+                                                                                                 fmin=alpha_fmin,
+                                                                                                 fmax=alpha_fmax,
+                                                                                                 tmin=alpha_tmin,
+                                                                                                 tmax=alpha_tmax),
+                                                        right_target_power_correct.copy().get_data(picks=left_roi,
+                                                                                                   fmin=alpha_fmin,
+                                                                                                   fmax=alpha_fmax,
+                                                                                                   tmin=alpha_tmin,
+                                                                                                   tmax=alpha_tmax)],
+                                                       axis=0).mean(axis=(0, 1, 2, 3))
+    ipsi_target_power_correct_data = np.concatenate([left_target_power_correct.copy().get_data(picks=left_roi,
+                                                                                               fmin=alpha_fmin,
+                                                                                               fmax=alpha_fmax,
+                                                                                               tmin=alpha_tmin,
+                                                                                               tmax=alpha_tmax),
+                                                      right_target_power_correct.copy().get_data(picks=right_roi,
+                                                                                                 fmin=alpha_fmin,
+                                                                                                 fmax=alpha_fmax,
+                                                                                                 tmin=alpha_tmin,
+                                                                                                 tmax=alpha_tmax)],
+                                                     axis=0).mean(axis=(0, 1, 2, 3))
+    # Do the same for incorrect trials
+    contra_target_power_incorrect_data = np.concatenate([left_target_power_incorrect.copy().get_data(picks=right_roi,
+                                                                                                      fmin=alpha_fmin,
+                                                                                                     fmax=alpha_fmax,
+                                                                                                     tmin=alpha_tmin,
+                                                                                                     tmax=alpha_tmax),
+                                                          right_target_power_incorrect.copy().get_data(picks=left_roi,
+                                                                                                       fmin=alpha_fmin,
+                                                                                                       fmax=alpha_fmax,
+                                                                                                       tmin=alpha_tmin,
+                                                                                                       tmax=alpha_tmax)],
+                                                         axis=0).mean(axis=(0, 1, 2, 3))
+    ipsi_target_power_incorrect_data = np.concatenate([left_target_power_incorrect.copy().get_data(picks=left_roi,
+                                                                                                   fmin=alpha_fmin,
+                                                                                                   fmax=alpha_fmax,
+                                                                                                   tmin=alpha_tmin,
+                                                                                                   tmax=alpha_tmax),
+                                                        right_target_power_incorrect.copy().get_data(picks=right_roi,
+                                                                                                     fmin=alpha_fmin,
+                                                                                                     fmax=alpha_fmax,
+                                                                                                     tmin=alpha_tmin,
+                                                                                                     tmax=alpha_tmax)],
+                                                       axis=0).mean(axis=(0, 1, 2, 3))
+    # store all the computed data in a dataframe
+    alpha_lateralization_subjects_mean["subject_id"].append(subject)
+    alpha_lateralization_subjects_mean["incorrect_ipsi"].append(ipsi_target_power_incorrect_data)
+    alpha_lateralization_subjects_mean["correct_ipsi"].append(ipsi_target_power_correct_data)
+    alpha_lateralization_subjects_mean["incorrect_contra"].append(contra_target_power_incorrect_data)
+    alpha_lateralization_subjects_mean["correct_contra"].append(contra_target_power_correct_data)
+
+# Transform into dataframe
+df_alpha_lateralization_mean = pd.DataFrame(alpha_lateralization_subjects_mean)
+# Melt the DataFrame into a long format
+df_melted = df_alpha_lateralization_mean.melt(id_vars='subject_id',
+                                              value_vars=['correct_ipsi', 'incorrect_ipsi', 'correct_contra', 'incorrect_contra'],
+                                              var_name='condition_side',
+                                              value_name='value')
+
+# Split the 'condition_side' column into 'condition' and 'side'
+df_melted[['condition', 'side']] = df_melted['condition_side'].str.split('_', expand=True)
+# Create the boxplots
+plt.figure(figsize=(10, 6))
+sns.boxplot(x='condition', y='value', hue='side', data=df_melted)
+plt.title('Boxplots by Condition and Side')
+plt.xlabel('Condition')
+plt.ylabel('Value')
+
+# Calculate difference in ipsi- versus contralateral correct and incorrect responses
+# ATTENTION: here, we calculate the difference as ipsi - contra (usually, I do contra - ipsi for everything)
+diff_correct = df_melted.query("condition=='correct'&side=='ipsi'")["value"].reset_index(drop=True) - df_melted.query("condition=='correct'&side=='contra'")["value"].reset_index(drop=True)
+diff_incorrect = df_melted.query("condition=='incorrect'&side=='ipsi'")["value"].reset_index(drop=True) - df_melted.query("condition=='incorrect'&side=='contra'")["value"].reset_index(drop=True)
+concat_df = pd.concat([diff_correct, diff_incorrect], axis=1, keys=["correct", "incorrect"])
+# Melt the DataFrame into long format
+df_melted_diff = pd.melt(df, var_name='condition', value_name='value')
+# Create the boxplot
+plt.figure(figsize=(8, 6))
+sns.boxplot(x='condition', y='value', data=df_melted)
+plt.title('Boxplot of Correct vs. Incorrect')
+plt.xlabel('Condition')
+plt.ylabel('Value')
+# Do dependent t-test
+t, p = stats.ttest_rel(diff_correct, diff_incorrect)
+
+# Now, we basically run the same analysis, with the difference of not averaging over time, so that we get a time course
+# for our pre-stimulus alpha power. Sounds good, right! Let's do it.
+# Store the computed data in a dataframe
+alpha_lateralization_subjects = dict()
+# Split into left and right lateral targets
+left_target_power = power[[x for x in power.event_id if "Target-1-Singleton-2" in x]]
+right_target_power = power[[x for x in power.event_id if "Target-3-Singleton-2" in x]]
+# Now, divide into correct and incorrect trials
+left_target_power_correct = left_target_power["select_target==True"]
+right_target_power_correct = right_target_power["select_target==True"]
+left_target_power_incorrect = left_target_power["select_target==False"]
+right_target_power_incorrect = right_target_power["select_target==False"]
+# Now, divide all power spectra into contra and ipsi target presentation
 # get the trial-wise data for targets contra and ipsilateral to the stimulus, concatenate and average over stimulus.
-contra_target_epochs_correct_data = np.concatenate([left_target_epochs_correct.copy().get_data(picks=right_roi),
-                                 right_target_epochs_correct.copy().get_data(picks=left_roi)], axis=0)
-ipsi_target_epochs_correct_data = np.concatenate([left_target_epochs_correct.copy().get_data(picks=left_roi),
-                               right_target_epochs_correct.copy().get_data(picks=right_roi)], axis=0)
+# Also, define the alpha frequency range in the get_data() method.
+contra_target_power_correct_data = np.concatenate([left_target_power_correct.copy().get_data(picks=right_roi,
+                                                                                             fmin=alpha_fmin,
+                                                                                             fmax=alpha_fmax),
+                                                    right_target_power_correct.copy().get_data(picks=left_roi,
+                                                                                               fmin=alpha_fmin,
+                                                                                               fmax=alpha_fmax)],
+                                                   axis=0).mean(axis=(0, 1, 2))
+ipsi_target_power_correct_data = np.concatenate([left_target_power_correct.copy().get_data(picks=left_roi,
+                                                                                           fmin=alpha_fmin,
+                                                                                           fmax=alpha_fmax),
+                                                  right_target_power_correct.copy().get_data(picks=right_roi,
+                                                                                             fmin=alpha_fmin,
+                                                                                             fmax=alpha_fmax)],
+                                                 axis=0).mean(axis=(0, 1, 2))
 # Do the same for incorrect trials
-contra_target_epochs_incorrect_data = np.concatenate([left_target_epochs_incorrect.copy().get_data(picks=right_roi),
-                                 right_target_epochs_incorrect.copy().get_data(picks=left_roi)], axis=0)
-ipsi_target_epochs_incorrect_data = np.concatenate([left_target_epochs_incorrect.copy().get_data(picks=left_roi),
-                               right_target_epochs_incorrect.copy().get_data(picks=right_roi)], axis=0)
-# In order to compute a TFR analysis on the ipsi- and contralateral data, we must transform the numpy arrays into epochs
-# objects.
-# put the computed data into an AverageTFRArray object
-contra_epochs_correct = mne.EpochsArray(data=contra_target_epochs_correct_data, info=mne.create_info(ch_names=["Contra"],
-                                                                                                     sfreq=sfreq))
-ipsi_epochs_correct = mne.EpochsArray(data=ipsi_target_epochs_correct_data, info=mne.create_info(ch_names=["Ipsi"],
-                                                                                                     sfreq=sfreq))
-# Now, do the same thing for incorrect data
-contra_epochs_incorrect = mne.EpochsArray(data=contra_target_epochs_incorrect_data, info=mne.create_info(ch_names=["Contra"],
-                                                                                                     sfreq=sfreq))
-ipsi_epochs_incorrect = mne.EpochsArray(data=ipsi_target_epochs_incorrect_data, info=mne.create_info(ch_names=["Ipsi"],
-                                                                                                     sfreq=sfreq))
+contra_target_power_incorrect_data = np.concatenate([left_target_power_incorrect.copy().get_data(picks=right_roi,
+                                                                                                  fmin=alpha_fmin,
+                                                                                                 fmax=alpha_fmax),
+                                                      right_target_power_incorrect.copy().get_data(picks=left_roi,
+                                                                                                   fmin=alpha_fmin,
+                                                                                                   fmax=alpha_fmax)],
+                                                     axis=0).mean(axis=(0, 1, 2))
+ipsi_target_power_incorrect_data = np.concatenate([left_target_power_incorrect.copy().get_data(picks=left_roi,
+                                                                                               fmin=alpha_fmin,
+                                                                                               fmax=alpha_fmax),
+                                                    right_target_power_incorrect.copy().get_data(picks=right_roi,
+                                                                                                 fmin=alpha_fmin,
+                                                                                                 fmax=alpha_fmax)],
+                                                   axis=0).mean(axis=(0, 1, 2))
+# store all the computed data in a dataframe
+alpha_lateralization_subjects["incorrect_ipsi"] = ipsi_target_power_incorrect_data
+alpha_lateralization_subjects["correct_ipsi"] = ipsi_target_power_correct_data
+alpha_lateralization_subjects["incorrect_contra"] = contra_target_power_incorrect_data
+alpha_lateralization_subjects["correct_contra"] = contra_target_power_correct_data
 
-
-
+# Plot single subject and grand average data
+times = power.times
+incorrect_diff_sub = alpha_lateralization_subjects["incorrect_contra"] - alpha_lateralization_subjects["incorrect_ipsi"]
+correct_diff_sub = alpha_lateralization_subjects["correct_contra"] - alpha_lateralization_subjects["correct_ipsi"]
+plt.plot(times, incorrect_diff_sub,
+         label=f"Incorrect Average", color="red")
+plt.plot(times, correct_diff_sub,
+         label=f"Correct Average", color="green")
+plt.legend()
 
 
 
