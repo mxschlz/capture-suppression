@@ -9,8 +9,8 @@ from SPACEPRIME.plotting import difference_topos
 plt.ion()
 
 
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0]) for subject in subject_ids])
-#epochs.apply_baseline((None, 0))
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=False) for subject in subject_ids[:-5]])
+epochs.apply_baseline((-0.3, 0))
 # epochs = epochs["select_target==True"]
 epochs.crop(0, 0.7)  # crop for better comparability with Mandal et al. (2024)
 # epochs = epochs["Priming==0"]
@@ -40,7 +40,7 @@ right_target_epochs = epochs[[x for x in all_conds if "Target-3-Singleton-2" in 
 mne.epochs.equalize_epoch_counts([left_target_epochs, right_target_epochs], method="random")
 # get the contralateral evoked response and average
 contra_target_data = np.mean([left_target_epochs.copy().average(picks="FC6").get_data(),
-                                 right_target_epochs.copy().average(picks=["FC5"]).get_data()], axis=0)
+                                 right_target_epochs.copy().average(picks="FC5").get_data()], axis=0)
 # get the ipsilateral evoked response and average
 ipsi_target_data = np.mean([left_target_epochs.copy().average(picks="FC5").get_data(),
                                right_target_epochs.copy().average(picks="FC6").get_data()], axis=0)
