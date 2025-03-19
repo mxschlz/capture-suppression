@@ -17,7 +17,7 @@ plt.xlabel("Singleton Distractor")
 plt.ylabel("Proportion Correct")
 
 
-from scipy.stats import ttest_ind
-x = df.rt[df.SingletonPresent==1]
-y = df.rt[df.SingletonPresent==0]
-ttest_ind(x, y)
+from scipy.stats import ttest_rel
+x = df.query("SingletonPresent==0").groupby(["subject_id"])["select_target"].mean().astype(float)
+y = df.query("SingletonPresent==1").groupby(["subject_id"])["select_target"].mean().astype(float)
+ttest_rel(x, y)
