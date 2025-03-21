@@ -42,14 +42,25 @@ average = False  # get total oscillatory power, opposed to evoked oscillatory po
 # Compute time-frequency analysis
 power = epochs.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, average=average, n_jobs=n_jobs, decim=decim)
 # apply baseline
-power.apply_baseline(baseline=baseline, mode=mode)
+# power.apply_baseline(baseline=baseline, mode=mode)
+# Furthermore, since we are interested in the induced alpha power only, we get the evoked alpha by averagring epochs and
+# then conducting TFR analysis. We subtract the evoked power from the total power to get induced oscillatory power.
+power_evoked = epochs.average().compute_tfr(method=method, freqs=freqs, decim=decim, n_cycles=n_cycles, n_jobs=n_jobs)
+# apply baseline
+# power_evoked.apply_baseline(baseline=baseline, mode=mode)
+# Subtract the evoked power, trial by trial.
+power_induced = power.copy()
+for trial in range(len(power)):
+    power_induced.data[trial] = power.data[trial] - power_evoked.data[0]
+# apply baseline
+# power_induced.apply_baseline(baseline, mode=mode)
 # Now, we devide the epochs into our respective priming conditions. In order to do so, we make use of the metadata
 # which was appended to the epochs of every subject during preprocessing. We can access the metadata the same way as
 # we would by calling the event_ids in the experiment.
 # Crop the epochs into narrower interval preceding stimulus onset
-power.crop(-0.6, 0.1)
-power_corrects = power["select_target==True"]
-power_incorrects = power["select_target==False"]
+# power.crop(-0.6, 0.1)
+power_corrects = power_induced["select_target==True"]
+power_incorrects = power_induced["select_target==False"]
 # calculate difference spectrum
 power_diff = power_corrects.average() - power_incorrects.average()
 power_diff.plot(combine="mean")
@@ -64,7 +75,7 @@ subject_results = {}
 for subject in subject_ids:
     print(f"Processing subject: {subject}")
     # Load epochs for the current subject
-    power_sub = power[f"subject_id=={subject}"]
+    power_sub = power_induced[f"subject_id=={subject}"]
     # Divide epochs into correct and incorrect trials
     power_corrects = power_sub["select_target==True"]
     power_incorrects = power_sub["select_target==False"]
@@ -100,7 +111,6 @@ plot_individual_lines(plot, data=df, x_col="condition", y_col="alpha")
 plt.title("Subject-Level Alpha Power (7-14 Hz)")
 plt.ylabel("Alpha Power z-score")
 plt.xticks(rotation=45, ha='right')
-plt.hlines(y=0, xmin=plt.xlim()[0], xmax=plt.xlim()[1], linestyles="dashed", color="black")
 plt.tight_layout()
 # Subtract correct from incorrect alpha
 diff = df.query("condition=='Correct'")["alpha"].reset_index(drop=True) - df.query("condition=='Incorrect'")["alpha"].reset_index(drop=True)
@@ -123,7 +133,7 @@ alpha_lateralization_subjects_mean = dict(subject_id=[],
 # Iterate over subjects and get all the ipsi and contra alpha power values
 for subject in subject_ids:
     print(f"Processing subject: {subject}")
-    sub_power = power[f"subject_id=={subject}"]
+    sub_power = power_induced[f"subject_id=={subject}"]
     # Split into left and right lateral targets
     left_target_power = sub_power[[x for x in sub_power.event_id if "Target-1-Singleton-2" in x]]
     right_target_power = sub_power[[x for x in sub_power.event_id if "Target-3-Singleton-2" in x]]
@@ -198,23 +208,24 @@ df_melted = df_alpha_lateralization_mean.melt(id_vars='subject_id',
 # Split the 'condition_side' column into 'condition' and 'side'
 df_melted[['condition', 'side']] = df_melted['condition_side'].str.split('_', expand=True)
 # Create the boxplots
-plt.figure(figsize=(10, 6))
+plt.figure()
 sns.boxplot(x='condition', y='value', hue='side', data=df_melted)
+plt.hlines(y=0, xmin=plt.xlim()[0], xmax=plt.xlim()[1], linestyles="dashed", color="black")
 plt.title('Boxplots by Condition and Side')
 plt.xlabel('Condition')
 plt.ylabel('Value')
 
 # Calculate difference in ipsi- versus contralateral correct and incorrect responses
 # ATTENTION: here, we calculate the difference as ipsi - contra (usually, I do contra - ipsi for everything)
-diff_correct = df_melted.query("condition=='correct'&side=='ipsi'")["value"].reset_index(drop=True) - df_melted.query("condition=='correct'&side=='contra'")["value"].reset_index(drop=True)
-diff_incorrect = df_melted.query("condition=='incorrect'&side=='ipsi'")["value"].reset_index(drop=True) - df_melted.query("condition=='incorrect'&side=='contra'")["value"].reset_index(drop=True)
+diff_correct = df_melted.query("condition=='correct'&side=='contra'")["value"].reset_index(drop=True) - df_melted.query("condition=='correct'&side=='ipsi'")["value"].reset_index(drop=True)
+diff_incorrect = df_melted.query("condition=='incorrect'&side=='contra'")["value"].reset_index(drop=True) - df_melted.query("condition=='incorrect'&side=='ipsi'")["value"].reset_index(drop=True)
 concat_df = pd.concat([diff_correct, diff_incorrect], axis=1, keys=["correct", "incorrect"])
 # Melt the DataFrame into long format
 df_melted_diff = pd.melt(df, var_name='condition', value_name='value')
 # Create the boxplot
 plt.figure(figsize=(8, 6))
 sns.boxplot(x='condition', y='value', data=df_melted)
-plt.title('Boxplot of Correct vs. Incorrect')
+plt.title('Alpha lateralization of Correct vs. Incorrect')
 plt.xlabel('Condition')
 plt.ylabel('Value')
 # Do dependent t-test
@@ -225,8 +236,8 @@ t, p = stats.ttest_rel(diff_correct, diff_incorrect)
 # Store the computed data in a dataframe
 alpha_lateralization_subjects = dict()
 # Split into left and right lateral targets
-left_target_power = power[[x for x in power.event_id if "Target-1-Singleton-2" in x]]
-right_target_power = power[[x for x in power.event_id if "Target-3-Singleton-2" in x]]
+left_target_power = power_induced[[x for x in power.event_id if "Target-1-Singleton-2" in x]]
+right_target_power = power_induced[[x for x in power.event_id if "Target-3-Singleton-2" in x]]
 # Now, divide into correct and incorrect trials
 left_target_power_correct = left_target_power["select_target==True"]
 right_target_power_correct = right_target_power["select_target==True"]
@@ -278,6 +289,8 @@ plt.plot(times, incorrect_diff_sub,
          label=f"Incorrect Average", color="red")
 plt.plot(times, correct_diff_sub,
          label=f"Correct Average", color="green")
+plt.plot(times, (correct_diff_sub-incorrect_diff_sub), color="black",
+         label=f"Total alpha lateralization")
 plt.legend()
 
 
