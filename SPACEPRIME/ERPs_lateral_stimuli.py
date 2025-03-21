@@ -5,6 +5,7 @@ import glob
 from SPACEPRIME import get_data_path
 from mne.stats import permutation_cluster_test
 from scipy.stats import ttest_ind
+from scipy.stats import t
 from SPACEPRIME.subjects import subject_ids
 from SPACEPRIME.plotting import difference_topos
 plt.ion()
@@ -14,8 +15,8 @@ settings_path = f"{get_data_path()}settings/"
 montage = mne.channels.read_custom_montage(settings_path + "CACS-64_NO_REF.bvef")
 ch_pos = montage.get_positions()["ch_pos"]
 # load epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0]) for subject in subject_ids[2:]])
-epochs = epochs.crop(-0.1, 0.6)
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=True) for subject in subject_ids])
+epochs = epochs.crop(0, 0.7)
 #epochs = epochs["select_target==True"]
 # epochs.apply_baseline()
 all_conds = list(epochs.event_id.keys())
@@ -88,45 +89,37 @@ ax[1][1].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[1][1].hlines(y=0, xmin=times[0], xmax=times[-1])
 plt.tight_layout()
 
-# extract all channel data to plot topographies
-# get left and right channels
-# Create ROIs by checking channel labels
-selections = mne.channels.make_1020_channel_selections(epochs.info, midline="z")
-# get the trial-wise data for targets
-contra_target_epochs_data_all_chs = np.mean(np.concatenate([left_target_epochs.copy().get_data(picks=selections["Right"]),
-                                                            right_target_epochs.copy().get_data(picks=selections["Left"])], axis=0),
-                                            axis=0)
-ipsi_target_epochs_data_all_chs = np.mean(np.concatenate([left_target_epochs.copy().get_data(picks=selections["Left"]),
-                                                          right_target_epochs.copy().get_data(picks=selections["Right"])], axis=0),
-                                          axis=0)
-# get the trial-wise data for distractors
-contra_distractor_epochs_data_all_chs = np.mean(np.concatenate([left_distractor_epochs.copy().get_data(picks=selections["Right"]),
-                                                               right_distractor_epochs.copy().get_data(picks=selections["Left"])], axis=0),
-                                               axis=0)
-ipsi_distractor_epochs_data_all_chs = np.mean(np.concatenate([left_distractor_epochs.copy().get_data(picks=selections["Left"]),
-                                                             right_distractor_epochs.copy().get_data(picks=selections["Right"])], axis=0),
-                                             axis=0)
-
 # --- STATISTICS ---
-# number of permutations
-n_permutations = 10000
+run_on = "Distractor"  # can be Target or Distractor
+n_permutations = 10000  # number of permutations
 # some stats
 n_jobs = -1
 pval = 0.05
-threshold = dict(start=0, step=0.2)  # the smaller the step and the closer the start to 0, the better the approximation
+tail = 0
+# Now we need to set the threshold parameter. For this time-series data (1 electrode pair over time) which is NOT SUITED
+# FOR SPATIAL COMPARISON BUT TEMPORAL COMPARISON, we should use a single t-value. A reasonable starting point would be
+# a t-value corresponding to an uncorrected p-value of 0.05 for a single comparison. We can calculate this using
+# scipy.stats.f.ppf.
+n1 = contra_target_epochs_data.shape[0] if run_on == "Target" else contra_distractor_epochs_data.shape[0]
+n2 = ipsi_target_epochs_data.shape[0] if run_on == "Target" else contra_distractor_epochs_data.shape[0]
+df = n1 + n2 - 2
+if tail == 0:
+    threshold = t.ppf(1 - pval / 2, df)  # Two-tailed
+else:  # tail == -1 or tail == 1
+    threshold = t.ppf(pval, df) if tail == -1 else t.ppf(1 - pval, df)
+print(f"Using threshold: {threshold}")
 
 # mne.viz.plot_ch_adjacency(epochs.info, adjacency, epochs.info["ch_names"])
-X = [contra_target_epochs_data, ipsi_target_epochs_data]
+X = [contra_target_epochs_data, ipsi_target_epochs_data] if run_on == "Target" else [contra_distractor_epochs_data, ipsi_distractor_epochs_data]
 t_obs, clusters, cluster_pv, h0 = permutation_cluster_test(X, threshold=threshold, n_permutations=n_permutations,
-                                                           n_jobs=n_jobs, out_type="mask", tail=0, stat_fun=mne.stats.ttest_ind_no_p)
+                                                           n_jobs=n_jobs, out_type="mask", tail=tail, stat_fun=mne.stats.ttest_ind_no_p)
 times = epochs.times
 fig, (ax, ax2) = plt.subplots(2, 1, figsize=(8, 4))
 ax.set_title("Contra minus ipsi")
 ax.plot(
     times,
-    contra_target_epochs_data.mean(axis=0) - ipsi_target_epochs_data.mean(axis=0),
-    label="ERP Contrast (Contra minus ipsi)",
-)
+    diff_wave_target*10e5 if run_on=="Target" else diff_wave_distractor*10e5,
+    label="ERP Contrast (Contra minus ipsi)")
 ax.set_ylabel("EEG (µV)")
 ax.legend()
 
@@ -151,7 +144,7 @@ diff_waves_target, diff_waves_distractor = difference_topos(epochs=epochs, monta
 info = epochs.info
 # 1. Define Time Range and Step
 start_time = 0  # Example: Start 100ms *before* stimulus onset
-end_time = 0.6  # Example: End 500ms after stimulus onset
+end_time = 0.7  # Example: End 500ms after stimulus onset
 time_step = 0.05  # 50ms step
 
 # 2. Create Time Points
