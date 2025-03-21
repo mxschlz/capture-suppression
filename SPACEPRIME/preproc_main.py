@@ -13,20 +13,20 @@ from SPACEPRIME.subjects import subject_ids
 import glob
 
 
-
+n_jobs = -1  # number of parallel processes. On my laptop, 12 is max.
 mne.set_log_level("INFO")
 params = dict(
     resampling_freq=250,
     add_ref_channel="Fz",
     ica_reject_threshold=0.9,
-    highpass=0.1,
+    highpass=1,
     lowpass=40,
     epoch_tmin=-1.0,
     epoch_tmax=1.0
 )
 settings_path = f"{get_data_path()}settings/"
 # get subject id and settings path
-subject_ids = subject_ids[-2:]
+subject_ids = subject_ids
 for subject_id in subject_ids:
     if subject_id in []:  # already processed
         continue
@@ -73,6 +73,7 @@ for subject_id in subject_ids:
     # save the ica fit
     ica.save(f"{get_data_path()}derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime_ica.fif",
              overwrite=True)
+    del ica, raw, reconst_raw, raw_filt  # delete as an interim step prior to autoreject (that is quite RAM intensive)
     # save the indices that were excluded
     with open(f"{get_data_path()}derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime_ica_labels.txt", "w") as file:
         for item in exclude_idx:
@@ -89,7 +90,7 @@ for subject_id in subject_ids:
     elif subject_id in [103, 104, 105, 112, 116, 118, 120]:
         epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
                             baseline=None)
-    elif subject_id in [106, 107, 108, 110, 114, 124, 126, 128, 130, 132, 136, 138]:
+    elif subject_id in [106, 107, 108, 110, 114, 124, 126, 128, 130, 132, 134, 136, 138, 140, 142, 144]:
         epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding_sub_106, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
                             baseline=None)
         epochs = add_to_events(epochs, new_encoding=encoding, change_by=1)
@@ -97,11 +98,12 @@ for subject_id in subject_ids:
         epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=encoding_sub_122, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
                             baseline=None)
         epochs = add_to_events(epochs, new_encoding=encoding, change_by=-1)    # append behavior to metadata attribute in epochs for later analyses
+    del reconst_raw_filt
     beh = pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/sub-{subject_id}/beh/sub-{subject_id}_clean*.csv")[0])
     # append metadata to epochs
     epochs.metadata = beh
     # run AutoReject
-    ar = autoreject.AutoReject(n_jobs=-1, random_state=42)
+    ar = autoreject.AutoReject(n_jobs=n_jobs, random_state=42)
     epochs_ar, log = ar.fit_transform(epochs, return_log=True)
     # save epochs
     try:
@@ -113,4 +115,4 @@ for subject_id in subject_ids:
     # save the drop log
     log.save(f"{get_data_path()}derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo_log.npz",
              overwrite=True)
-    del raw_orig, raw, raw_filt, reconst_raw_filt, reconst_raw, epochs, epochs_ar, log, beh, ar, ica
+    del raw_orig, epochs, epochs_ar, log, beh, ar
