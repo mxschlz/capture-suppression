@@ -47,7 +47,7 @@ def difference_topos(epochs, montage):
                 contra_target_epochs = epochs[[x for x in all_conds if "Target-1-Singleton-2" in x]]
                 ipsi_target_epochs = epochs[[x for x in all_conds if "Target-3-Singleton-2" in x]]
 
-            mne.epochs.equalize_epoch_counts([contra_target_epochs, ipsi_target_epochs], method="random")
+            # mne.epochs.equalize_epoch_counts([contra_target_epochs, ipsi_target_epochs], method="random")
 
             contra_target_data = contra_target_epochs.get_data(picks=ch_name).mean(axis=0)  # Average trials
             ipsi_target_data = ipsi_target_epochs.get_data(picks=ch_name).mean(axis=0)
@@ -61,7 +61,7 @@ def difference_topos(epochs, montage):
                 contra_distractor_epochs = epochs[[x for x in all_conds if "Target-2-Singleton-1" in x]]
                 ipsi_distractor_epochs = epochs[[x for x in all_conds if "Target-2-Singleton-3" in x]]
 
-            mne.epochs.equalize_epoch_counts([contra_distractor_epochs, ipsi_distractor_epochs], method="random")
+            # mne.epochs.equalize_epoch_counts([contra_distractor_epochs, ipsi_distractor_epochs], method="random")
 
             contra_distractor_data = contra_distractor_epochs.get_data(picks=ch_name).mean(axis=0)
             ipsi_distractor_data = ipsi_distractor_epochs.get_data(picks=ch_name).mean(axis=0)
