@@ -9,6 +9,7 @@ from SPACEPRIME.encoding import *
 from SPACEPRIME import get_data_path
 import glob
 from SPACEPRIME.bad_chs import bad_chs
+from SPACEPRIME.subjects import subject_ids
 
 
 mne.set_log_level("INFO")
@@ -23,7 +24,7 @@ params = dict(
 )
 settings_path = f"{get_data_path()}settings/"
 # get subject id and settings path
-subject_ids = [118, 120]
+subject_ids = subject_ids
 for subject_id in subject_ids:
     data_path = f"{get_data_path()}sourcedata/raw/sub-{subject_id}/eeg/"
     # read raw fif
@@ -68,6 +69,7 @@ for subject_id in subject_ids:
     # save the ica fit
     ica.save(f"{get_data_path()}derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-flanker_ica.fif",
              overwrite=True)
+    del ica, raw, raw_orig, reconst_raw, raw_filt  # delete as an interim step prior to autoreject (that is quite RAM intensive)
     # save the indices that were excluded
     with open(f"{get_data_path()}derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-flanker_ica_labels.txt", "w") as file:
         for item in exclude_idx:
@@ -97,4 +99,4 @@ for subject_id in subject_ids:
     # save the drop log
     log.save(f"{get_data_path()}derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-flanker-epo_log.npz",
              overwrite=True)
-    del raw_orig, raw, raw_filt, reconst_raw_filt, reconst_raw, epochs, epochs_ar, log, beh, ar, ica
+    del reconst_raw_filt, epochs, epochs_ar, log, beh, ar

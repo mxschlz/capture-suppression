@@ -73,7 +73,7 @@ for subject_id in subject_ids:
     # save the ica fit
     ica.save(f"{get_data_path()}derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime_ica.fif",
              overwrite=True)
-    del ica, raw, reconst_raw, raw_filt  # delete as an interim step prior to autoreject (that is quite RAM intensive)
+    del ica, raw, raw_orig, reconst_raw, raw_filt  # delete as an interim step prior to autoreject (that is quite RAM intensive)
     # save the indices that were excluded
     with open(f"{get_data_path()}derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime_ica_labels.txt", "w") as file:
         for item in exclude_idx:
@@ -115,4 +115,4 @@ for subject_id in subject_ids:
     # save the drop log
     log.save(f"{get_data_path()}derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo_log.npz",
              overwrite=True)
-    del raw_orig, epochs, epochs_ar, log, beh, ar
+    del epochs, epochs_ar, log, beh, ar
