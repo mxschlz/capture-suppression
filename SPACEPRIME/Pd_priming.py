@@ -81,6 +81,6 @@ plt.plot(times, savgol_filter(diff_wave_distractor_c[0]*10e5, window_length=wind
          color="grey", label="no priming")
 plt.hlines(y=0, xmin=times[0], xmax=times[-1], color="black")
 plt.legend()
-plt.title("Diff wave (contra-ipsi) priming for lateral targets on electrodes FC5/6")
+plt.title("Diff wave (contra-ipsi) priming for lateral distractors on electrodes C3/4")
 plt.ylabel("Amplitude [µV]")
 plt.xlabel("Time [s]")
