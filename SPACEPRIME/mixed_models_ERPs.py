@@ -76,7 +76,19 @@ for i, trial in merged_diff_wave_df.iterrows():
 # Now that we have all the variables we need, we can do some statistical modeling.
 # First, we clean up the dataframe
 df.drop("duration", axis=1, inplace=True)  # drop duration because it is always NaN
-formula = "Pd_mean_amplitude ~ TargetLoc"
-model = smf.mixedlm(formula=formula, data=df, groups="subject_id")
+formula = "Pd_mean_amplitude ~ SingletonLoc"
+# some formatting
+pd_df = df[["Pd_mean_amplitude", "SingletonLoc", "subject_id"]].dropna(subset=["Pd_mean_amplitude", "SingletonLoc"],
+                                                                       ignore_index=True).astype(float)
+model = smf.mixedlm(formula=formula, data=pd_df, groups="subject_id")
+result = model.fit()
+result.summary()
+sns.lmplot(data=pd_df, x="SingletonLoc", y="Pd_mean_amplitude", hue="subject_id")
+# Modeling N2ac
+formula = "N2ac_mean_amplitude ~ TargetLoc"
+# some formatting
+n2ac_df = df[["N2ac_mean_amplitude", "TargetLoc", "subject_id"]].dropna(subset=["N2ac_mean_amplitude", "TargetLoc"],
+                                                                       ignore_index=True).astype(float)
+model = smf.mixedlm(formula=formula, data=n2ac_df, groups="subject_id")
 result = model.fit()
 result.summary()
