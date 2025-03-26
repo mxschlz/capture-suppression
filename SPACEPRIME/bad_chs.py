@@ -24,5 +24,6 @@ bad_chs = {
 	138: ["Oz", "Fp1", "AF8"],
 	140: ["AF7", "AF8", "Fp1"],
 	142: None,
-	144: None
+	144: None,
+	146: None
 }
