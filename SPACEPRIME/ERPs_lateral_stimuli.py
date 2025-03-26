@@ -60,8 +60,6 @@ ax[1][1].sharey(ax[1][0])
 ax[0][0].plot(times, contra_target_epochs_data.mean(axis=0), color="r")
 ax[0][0].plot(times, ipsi_target_epochs_data.mean(axis=0), color="b")
 ax[0][0].plot(times, diff_wave_target, color="g")
-ax[0][0].axvspan(0.2, 0.30, color='gray', alpha=0.3)  # Shade the area
-ax[0][0].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[0][0].hlines(y=0, xmin=times[0], xmax=times[-1])
 ax[0][0].legend(["Contra", "Ipsi", "Contra-Ipsi"])
 ax[0][0].set_title("Target lateral")
@@ -71,21 +69,15 @@ ax[0][0].set_xlabel("Time [s]")
 ax[0][1].plot(times, contra_distractor_epochs_data.mean(axis=0), color="r")
 ax[0][1].plot(times, ipsi_distractor_epochs_data.mean(axis=0), color="b")
 ax[0][1].plot(times, diff_wave_distractor, color="g")
-ax[0][1].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
-ax[0][1].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[0][1].hlines(y=0, xmin=times[0], xmax=times[-1])
 ax[0][1].set_title("Distractor lateral")
 ax[0][1].set_ylabel("Amplitude [µV]")
 ax[0][1].set_xlabel("Time [s]")
 # third plot
 ax[1][0].plot(times, result_target[0])
-ax[1][0].axvspan(0.2, 0.3, color='gray', alpha=0.3)  # Shade the area
-ax[1][0].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[1][0].hlines(y=0, xmin=times[0], xmax=times[-1])
 # fourth plot
 ax[1][1].plot(times, result_distractor[0])
-ax[1][1].axvspan(0.25, 0.50, color='gray', alpha=0.3)  # Shade the area
-ax[1][1].axvspan(0.05, 0.15, color='gray', alpha=0.3)  # Shade the area
 ax[1][1].hlines(y=0, xmin=times[0], xmax=times[-1])
 plt.tight_layout()
 
