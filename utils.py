@@ -29,6 +29,7 @@ def get_passive_listening_ERPs():
     # get the ipsilateral evoked response and average
     ipsi_singleton_data = np.mean([left_singleton_epochs.copy().average(picks=["C3"]).get_data(),
                                       right_singleton_epochs.copy().average(picks=["C4"]).get_data()], axis=0)
+
     # now, do the same for the lateral targets
     # Separate epochs based on target location
     left_target_epochs = epochs[[x for x in all_conds if "target-location-1" in x]]
@@ -40,6 +41,20 @@ def get_passive_listening_ERPs():
     # get the ipsilateral evoked response and average
     ipsi_target_data = np.mean([left_target_epochs.copy().average(picks=["C3"]).get_data(),
                                    right_target_epochs.copy().average(picks=["C4"]).get_data()], axis=0)
+
+    # now, do the same for the lateral controls
+    # Separate epochs based on controls location
+    left_control_epochs = epochs[[x for x in all_conds if "control-location-1" in x]]
+    right_control_epochs = epochs[[x for x in all_conds if "control-location-3" in x]]
+    mne.epochs.equalize_epoch_counts([left_control_epochs, right_control_epochs], method="random")
+    # get the contralateral evoked response and average
+    contra_control_data = np.mean([left_control_epochs.copy().average(picks=["C4"]).get_data(),
+                                     right_control_epochs.copy().average(picks=["C3"]).get_data()], axis=0)
+    # get the ipsilateral evoked response and average
+    ipsi_control_data = np.mean([left_control_epochs.copy().average(picks=["C3"]).get_data(),
+                                   right_control_epochs.copy().average(picks=["C4"]).get_data()], axis=0)
+
+
     # get the trial-wise data for targets
     contra_target_epochs_data = np.mean(np.concatenate([left_target_epochs.copy().get_data(picks="C4"),
                                      right_target_epochs.copy().get_data(picks="C3")], axis=1), axis=1)
@@ -50,7 +65,15 @@ def get_passive_listening_ERPs():
                                      right_singleton_epochs.copy().get_data(picks="C3")], axis=1), axis=1)
     ipsi_singleton_epochs_data = np.mean(np.concatenate([left_singleton_epochs.copy().get_data(picks="C3"),
                                    right_singleton_epochs.copy().get_data(picks="C4")], axis=1), axis=1)
+    # get the trial-wise data for controls
+    contra_control_epochs_data = np.mean(np.concatenate([left_control_epochs.copy().get_data(picks="C4"),
+                                     right_control_epochs.copy().get_data(picks="C3")], axis=1), axis=1)
+    ipsi_control_epochs_data = np.mean(np.concatenate([left_control_epochs.copy().get_data(picks="C3"),
+                                   right_control_epochs.copy().get_data(picks="C4")], axis=1), axis=1)
     diff_singleton = contra_singleton_data - ipsi_singleton_data
     diff_target = contra_target_data - ipsi_target_data
+    diff_control = contra_control_data - ipsi_control_data
+
     return (epochs, contra_singleton_epochs_data, ipsi_singleton_epochs_data, contra_target_epochs_data,
-            ipsi_target_epochs_data, diff_target, diff_singleton)
+            ipsi_target_epochs_data, contra_control_epochs_data, ipsi_control_epochs_data, diff_target, diff_singleton,
+            diff_control)
