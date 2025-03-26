@@ -8,7 +8,7 @@ plt.ion()
 
 
 # load df
-subject_id = 144
+subject_id = 146
 df = pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/sub-{subject_id}/beh/sub-{subject_id}_clean*.csv")[0])
 df = df[df["phase"]!=2]
 df = remove_outliers(df, column_name="rt", threshold=2)
@@ -47,6 +47,7 @@ plt.legend(title='Subject ID', bbox_to_anchor=(1.05, 1), loc='upper left')  # Pl
 plt.tight_layout()  # Adjust layout to prevent labels from overlapping
 
 # incorrect trials
+plt.figure()
 df_long = pd.melt(df, id_vars=['block', "subject_id"], value_vars=['select_target', 'select_distractor', 'select_control', 'select_other'])
 sns.barplot(x='block', y='value', hue="variable", data=df_long, errorbar=("se", 1),
             palette=['forestgreen', 'red', 'grey', 'purple'])
