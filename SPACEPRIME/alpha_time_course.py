@@ -60,3 +60,6 @@ plt.title("Alpha Time Course")
 
 # plot topography of alpha
 alpha_power.average().plot_topomap(tmin=0, tmax=0.75)
+
+# plot spectrogram of alpha
+alpha_power.average().plot(combine="mean")
