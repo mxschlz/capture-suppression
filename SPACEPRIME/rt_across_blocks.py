@@ -8,6 +8,7 @@ from statsmodels.stats.anova import AnovaRM
 import statsmodels.formula.api as smf
 from stats import remove_outliers
 from stats import cronbach_alpha
+from statannotations.Annotator import Annotator
 plt.ion()
 
 
@@ -42,41 +43,47 @@ df_merged['rt_diff_running_avg'] = df_merged.groupby('subject_id')['rt_diff'].tr
     lambda x: x.rolling(window=window_size, min_periods=None, center=True).mean())
 
 # Add labels and title
-plt.figure()
+fig, ax = plt.subplots()
 sns.boxplot(x='sub_block', y='rt_diff', data=df_merged)
-plt.ylabel('RT (Distractor absent - Distractor pesent)')
-plt.xlabel('Sub-Block / Time Window')
-# lineplot
-sns.lineplot(x='sub_block', y='rt_diff', hue='subject_id', data=df_merged,
-             palette="tab20")
-plt.xlabel('Sub-Block / Time Window')
-plt.ylabel('Reaction time (Distractor absent - Distractor present)')
-plt.hlines(y=0, xmin=plt.xlim()[0], xmax=plt.xlim()[1], linestyles='solid', color="black")
-plt.legend(title='Subject ID', bbox_to_anchor=(1.05, 1), loc='upper left')  # Place legend outside the plot
+ax.set_xlabel('Block')
+ax.set_ylabel('Reaction time (distractor absent - distractor present)')
+ax.set_title("")
+ax.hlines(y=0, xmin=plt.xlim()[0], xmax=plt.xlim()[1], linestyles='--', color="black")
+ax.legend("")  # Place legend outside the plot
+ax.set_title("Transition from distractor attentional capture to suppression")
 plt.tight_layout()  # Adjust layout to prevent labels from overlapping
+# make stats annotations
+pairs = []
+for i in range(0, 10):
+    for j in range(i + 1, 10):  # Start j from i+1 to avoid duplicates and self-pairs
+        pairs.append([i, j])# annotate ax1 --> accuracy
+annotator1 = Annotator(ax=ax, plot="boxplot", pairs=pairs, data=df_merged, x="sub_block", y="rt_diff")
+annotator1.configure(test="t-test_paired", text_format="star", hide_non_significant=True)
+annotator1.apply_and_annotate()
 
 # stats
 anova_correct = AnovaRM(df_merged, depvar='rt_diff', subject='subject_id', within=['sub_block'], aggregate_func="mean").fit()
 print(anova_correct.summary())
 
 # --- Plotting ---
-plt.figure()
+plt, ax = plt.subplots()
 # Lineplot with running average
 sns.lineplot(x='sub_block', y='rt_diff_running_avg', hue='subject_id', data=df_merged,
-             palette="tab20", legend=True, alpha=0.7)  # Added alpha for better visibility of overlapping lines
+                    palette="tab20", legend=True, alpha=0.7, ax=ax)  # Added alpha for better visibility of overlapping lines
 
 # Mean running average across subjects (bold line)
 mean_running_avg = df_merged.groupby('sub_block')['rt_diff_running_avg'].mean()
-plt.plot(mean_running_avg.index, mean_running_avg.values, color='black', linewidth=3, label='Mean Running Avg')
+ax.plot(mean_running_avg.index, mean_running_avg.values, color='black', linewidth=3, label='Mean Running Avg')
 
 # Baseline at 0
-plt.axhline(y=0, color='black', linestyle='--', linewidth=1)
+ax.axhline(y=0, color='black', linestyle='--', linewidth=1)
 
 # Labels and title
-plt.xlabel('Sub-Block')
-plt.ylabel('Reaction Time Difference (Absent - Present)')
-plt.title(f'Reaction Time Difference with Running Average (Window = {window_size})')
-plt.legend("")
+ax.set_xlabel('Sub-Block')
+ax.set_ylabel('Reaction Time Difference (Absent - Present)')
+ax.set_title(f'Reaction Time Difference with Running Average (Window = {window_size})')
+ax.legend("")
+plt.tight_layout()
 
 # regression plot
 sns.lmplot(data=df_merged, x="sub_block", y="rt_diff_running_avg", hue="subject_id", palette="tab20", scatter=False,
