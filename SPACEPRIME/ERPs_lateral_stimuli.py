@@ -54,35 +54,37 @@ result_distractor = ttest_ind(contra_distractor_epochs_data,
                               ipsi_distractor_epochs_data, axis=0)
 # plot the data
 times = epochs.times
-fig, ax = plt.subplots(2, 2, sharey=False)
-ax[1][1].sharey(ax[1][0])
+fig, ax = plt.subplots(1, 2, figsize=(12, 6), sharey=True)
+ax = ax.flatten()
 # first plot
-ax[0][0].plot(times, contra_target_epochs_data.mean(axis=0), color="r")
-ax[0][0].plot(times, ipsi_target_epochs_data.mean(axis=0), color="b")
-ax[0][0].plot(times, diff_wave_target, color="g")
-ax[0][0].hlines(y=0, xmin=times[0], xmax=times[-1])
-ax[0][0].legend(["Contra", "Ipsi", "Contra-Ipsi"])
-ax[0][0].set_title("Target lateral")
-ax[0][0].set_ylabel("Amplitude [µV]")
-ax[0][0].set_xlabel("Time [s]")
+ax[0].plot(times, contra_target_epochs_data.mean(axis=0)*10e5, color="r")
+ax[0].plot(times, ipsi_target_epochs_data.mean(axis=0)*10e5, color="b")
+ax[0].plot(times, diff_wave_target*10e5, color="g")
+ax[0].hlines(y=0, xmin=times[0], xmax=times[-1])
+ax[0].legend(["Contra", "Ipsi", "Contra-Ipsi"])
+ax[0].set_title("Target lateral")
+ax[0].set_ylabel("Amplitude [µV]")
+ax[0].set_xlabel("Time [s]")
 # second plot
-ax[0][1].plot(times, contra_distractor_epochs_data.mean(axis=0), color="r")
-ax[0][1].plot(times, ipsi_distractor_epochs_data.mean(axis=0), color="b")
-ax[0][1].plot(times, diff_wave_distractor, color="g")
-ax[0][1].hlines(y=0, xmin=times[0], xmax=times[-1])
-ax[0][1].set_title("Distractor lateral")
-ax[0][1].set_ylabel("Amplitude [µV]")
-ax[0][1].set_xlabel("Time [s]")
-# third plot
-ax[1][0].plot(times, result_target[0])
-ax[1][0].hlines(y=0, xmin=times[0], xmax=times[-1])
+ax[1].plot(times, contra_distractor_epochs_data.mean(axis=0)*10e5, color="r")
+ax[1].plot(times, ipsi_distractor_epochs_data.mean(axis=0)*10e5, color="b")
+ax[1].plot(times, diff_wave_distractor*10e5, color="g")
+ax[1].hlines(y=0, xmin=times[0], xmax=times[-1])
+ax[1].legend(["Contra", "Ipsi", "Contra-Ipsi"])
+ax[1].set_title("Distractor lateral")
+ax[1].set_xlabel("Time [s]")
+# add t stats on same plot with different axis
+twin1 = ax[0].twinx()
+twin1.tick_params(axis='y', labelcolor="brown")
+twin1.plot(times, result_target[0], color="brown", linestyle="dashed", alpha=0.5)
 # fourth plot
-ax[1][1].plot(times, result_distractor[0])
-ax[1][1].hlines(y=0, xmin=times[0], xmax=times[-1])
-plt.tight_layout()
+twin2 = ax[1].twinx()
+twin1.sharey(twin2)
+twin2.set_ylabel("T-Value", color="brown")
+twin2.tick_params(axis='y', labelcolor="brown")
+twin2.plot(times, result_distractor[0], color="brown", linestyle="dashed", alpha=0.5)
 
 # --- STATISTICS ---
-run_on = "Distractor"  # can be Target or Distractor
 n_permutations = 10000  # number of permutations
 # some stats
 n_jobs = -1
@@ -92,41 +94,29 @@ tail = 0
 # FOR SPATIAL COMPARISON BUT TEMPORAL COMPARISON, we should use a single t-value. A reasonable starting point would be
 # a t-value corresponding to an uncorrected p-value of 0.05 for a single comparison. We can calculate this using
 # scipy.stats.f.ppf.
-n1 = contra_target_epochs_data.shape[0] if run_on == "Target" else contra_distractor_epochs_data.shape[0]
-n2 = ipsi_target_epochs_data.shape[0] if run_on == "Target" else contra_distractor_epochs_data.shape[0]
-df = n1 + n2 - 2
-if tail == 0:
-    threshold = t.ppf(1 - pval / 2, df)  # Two-tailed
-else:  # tail == -1 or tail == 1
-    threshold = t.ppf(pval, df) if tail == -1 else t.ppf(1 - pval, df)
-print(f"Using threshold: {threshold}")
+for run_on in ["Target", "Distractor"]:
+    n1 = contra_target_epochs_data.shape[0] if run_on == "Target" else contra_distractor_epochs_data.shape[0]
+    n2 = ipsi_target_epochs_data.shape[0] if run_on == "Target" else contra_distractor_epochs_data.shape[0]
+    df = n1 + n2 - 2
+    if tail == 0:
+        threshold = t.ppf(1 - pval / 2, df)  # Two-tailed
+    else:  # tail == -1 or tail == 1
+        threshold = t.ppf(pval, df) if tail == -1 else t.ppf(1 - pval, df)
+    print(f"Using threshold: {threshold}")
 
-# mne.viz.plot_ch_adjacency(epochs.info, adjacency, epochs.info["ch_names"])
-X = [contra_target_epochs_data, ipsi_target_epochs_data] if run_on == "Target" else [contra_distractor_epochs_data, ipsi_distractor_epochs_data]
-t_obs, clusters, cluster_pv, h0 = permutation_cluster_test(X, threshold=threshold, n_permutations=n_permutations,
-                                                           n_jobs=n_jobs, out_type="mask", tail=tail, stat_fun=mne.stats.ttest_ind_no_p)
-times = epochs.times
-fig, (ax, ax2) = plt.subplots(2, 1, figsize=(8, 4))
-ax.set_title("Contra minus ipsi")
-ax.plot(
-    times,
-    diff_wave_target*10e5 if run_on=="Target" else diff_wave_distractor*10e5,
-    label="ERP Contrast (Contra minus ipsi)")
-ax.set_ylabel("EEG (µV)")
-ax.legend()
-
-for i_c, c in enumerate(clusters):
-    c = c[0]
-    if cluster_pv[i_c] <= pval:
-        h = ax2.axvspan(times[c.start], times[c.stop - 1], color="r", alpha=0.3)
-    else:
-        h = 0
-        ax2.axvspan(times[c.start], times[c.stop - 1], color=(0.3, 0.3, 0.3), alpha=0.3)
-
-hf = plt.plot(times, t_obs, "g")
-ax2.legend((h,), ("cluster p-value < 0.05",))
-ax2.set_xlabel("time (ms)")
-ax2.set_ylabel("statistic value")  # which statistic?
+    # mne.viz.plot_ch_adjacency(epochs.info, adjacency, epochs.info["ch_names"])
+    X = [contra_target_epochs_data, ipsi_target_epochs_data] if run_on == "Target" else [contra_distractor_epochs_data, ipsi_distractor_epochs_data]
+    t_obs, clusters, cluster_pv, h0 = permutation_cluster_test(X, threshold=threshold, n_permutations=n_permutations,
+                                                               n_jobs=n_jobs, out_type="mask", tail=tail, stat_fun=mne.stats.ttest_ind_no_p)
+    # plot on existing axes
+    plot_on_axis = 1 if run_on == "Distractor" else 0
+    for i_c, c in enumerate(clusters):
+        c = c[0]
+        if cluster_pv[i_c] <= pval:
+            h = ax[plot_on_axis].axvspan(times[c.start], times[c.stop - 1], color="r", alpha=0.3)
+        else:
+            h = 0
+            ax[plot_on_axis].axvspan(times[c.start], times[c.stop - 1], color="grey", alpha=0.3)
 
 # --- TOPOGRAPHIES ---
 # calculate difference waves
