@@ -3,7 +3,6 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import pandas as pd
 from scipy.stats import ttest_ind, f
-import mne
 
 
 def cohen_d(x, y):
@@ -11,6 +10,216 @@ def cohen_d(x, y):
     ny = len(y)
     dof = nx + ny - 2
     return (np.mean(x) - np.mean(y)) / np.sqrt(((nx - 1) * np.std(x, ddof=1) ** 2 + (ny - 1) * np.std(y, ddof=1) ** 2) / dof)
+
+
+def convert_effsize(ef, input_type, output_type, nx=None, ny=None):
+    """Conversion between effect sizes.
+
+    Parameters
+    ----------
+    ef : float
+        Original effect size.
+    input_type : string
+        Effect size type of ef. Must be ``'cohen'`` or ``'pointbiserialr'``.
+    output_type : string
+        Desired effect size type. Available methods are:
+
+        * ``'cohen'``: Unbiased Cohen d
+        * ``'hedges'``: Hedges g
+        * ``'pointbiserialr'``: Point-biserial correlation
+        * ``'eta-square'``: Eta-square
+        * ``'odds-ratio'``: Odds ratio
+        * ``'AUC'``: Area Under the Curve
+        * ``'none'``: pass-through (return ``ef``)
+
+    nx, ny : int, optional
+        Length of vector x and y. Required to convert to Hedges g.
+
+    Returns
+    -------
+    ef : float
+        Desired converted effect size
+
+    See Also
+    --------
+    compute_effsize : Calculate effect size between two set of observations.
+    compute_effsize_from_t : Convert a T-statistic to an effect size.
+
+    Notes
+    -----
+    The formula to convert from a`point-biserial correlation
+    <https://en.wikipedia.org/wiki/Point-biserial_correlation_coefficient>`_ **r** to **d** is
+    given in [1]_:
+
+    .. math:: d = \\frac{2r_{pb}}{\\sqrt{1 - r_{pb}^2}}
+
+    The formula to convert **d** to a point-biserial correlation **r** is given in [2]_:
+
+    .. math::
+
+        r_{pb} = \\frac{d}{\\sqrt{d^2 + \\frac{(n_x + n_y)^2 - 2(n_x + n_y)}
+        {n_xn_y}}}
+
+    The formula to convert **d** to :math:`\\eta^2` is given in [3]_:
+
+    .. math:: \\eta^2 = \\frac{(0.5 d)^2}{1 + (0.5 d)^2}
+
+    The formula to convert **d** to an odds-ratio is given in [4]_:
+
+    .. math:: \\text{OR} = \\exp (\\frac{d \\pi}{\\sqrt{3}})
+
+    The formula to convert **d** to area under the curve is given in [5]_:
+
+    .. math:: \\text{AUC} = \\mathcal{N}_{cdf}(\\frac{d}{\\sqrt{2}})
+
+    References
+    ----------
+    .. [1] Rosenthal, Robert. "Parametric measures of effect size."
+       The handbook of research synthesis 621 (1994): 231-244.
+
+    .. [2] McGrath, Robert E., and Gregory J. Meyer. "When effect sizes
+       disagree: the case of r and d." Psychological methods 11.4 (2006): 386.
+
+    .. [3] Cohen, Jacob. "Statistical power analysis for the behavioral
+       sciences. 2nd." (1988).
+
+    .. [4] Borenstein, Michael, et al. "Effect sizes for continuous data."
+       The handbook of research synthesis and meta-analysis 2 (2009): 221-235.
+
+    .. [5] Ruscio, John. "A probability-based measure of effect size:
+       Robustness to base rates and other factors." Psychological methods 1
+       3.1 (2008): 19.
+
+    Examples
+    --------
+    1. Convert from Cohen d to eta-square
+
+    >>> import pingouin as pg
+    >>> d = .45
+    >>> eta = pg.convert_effsize(d, 'cohen', 'eta-square')
+    >>> print(eta)
+    0.048185603807257595
+
+    2. Convert from Cohen d to Hegdes g (requires the sample sizes of each
+       group)
+
+    >>> pg.convert_effsize(.45, 'cohen', 'hedges', nx=10, ny=10)
+    0.4309859154929578
+
+    3. Convert a point-biserial correlation to Cohen d
+
+    >>> rpb = 0.40
+    >>> d = pg.convert_effsize(rpb, 'pointbiserialr', 'cohen')
+    >>> print(d)
+    0.8728715609439696
+
+    4. Reverse operation: convert Cohen d to a point-biserial correlation
+
+    >>> pg.convert_effsize(d, 'cohen', 'pointbiserialr')
+    0.4000000000000001
+    """
+    it = input_type.lower()
+    ot = output_type.lower()
+
+    # Pass-through option
+    if it == ot or ot == "none":
+        return ef
+
+    # Convert point-biserial r to Cohen d (Rosenthal 1994)
+    d = (2 * ef) / np.sqrt(1 - ef**2) if it == "pointbiserialr" else ef
+
+    # Then convert to the desired output type
+    if ot == "cohen":
+        return d
+    elif ot == "pointbiserialr":
+        # McGrath and Meyer 2006
+        if all(v is not None for v in [nx, ny]):
+            a = ((nx + ny) ** 2 - 2 * (nx + ny)) / (nx * ny)
+        else:
+            a = 4
+        return d / np.sqrt(d**2 + a)
+    elif ot == "eta-square":
+        # Cohen 1988
+        return (d / 2) ** 2 / (1 + (d / 2) ** 2)
+    elif ot == "odds-ratio":
+        # Borenstein et al. 2009
+        return np.exp(d * np.pi / np.sqrt(3))
+    elif ot == "r":
+        # https://github.com/raphaelvallat/pingouin/issues/302
+        raise ValueError(
+            "Using effect size 'r' in `pingouin.convert_effsize` has been deprecated. "
+            "Please use 'pointbiserialr' instead."
+        )
+    else:  # ['auc']
+        # Ruscio 2008
+        from scipy.stats import norm
+
+        return norm.cdf(d / np.sqrt(2))
+
+def compute_effsize_from_t(tval, nx=None, ny=None, N=None, eftype="cohen"):
+    """Compute effect size from a T-value.
+
+    Parameters
+    ----------
+    tval : float
+        T-value
+    nx, ny : int, optional
+        Group sample sizes.
+    N : int, optional
+        Total sample size (will not be used if nx and ny are specified)
+    eftype : string, optional
+        Desired output effect size.
+
+    Returns
+    -------
+    ef : float
+        Effect size
+
+    See Also
+    --------
+    compute_effsize : Calculate effect size between two set of observations.
+    convert_effsize : Conversion between effect sizes.
+
+    Notes
+    -----
+    If both nx and ny are specified, the formula to convert from *t* to *d* is:
+
+    .. math:: d = t * \\sqrt{\\frac{1}{n_x} + \\frac{1}{n_y}}
+
+    If only N (total sample size) is specified, the formula is:
+
+    .. math:: d = \\frac{2t}{\\sqrt{N}}
+
+    Examples
+    --------
+    1. Compute effect size from a T-value when both sample sizes are known.
+
+    >>> from pingouin import compute_effsize_from_t
+    >>> tval, nx, ny = 2.90, 35, 25
+    >>> d = compute_effsize_from_t(tval, nx=nx, ny=ny, eftype='cohen')
+    >>> print(d)
+    0.7593982580212534
+
+    2. Compute effect size when only total sample size is known (nx+ny)
+
+    >>> tval, N = 2.90, 60
+    >>> d = compute_effsize_from_t(tval, N=N, eftype='cohen')
+    >>> print(d)
+    0.7487767802667672
+    """
+
+    if not isinstance(tval, float):
+        err = "T-value must be float"
+        raise ValueError(err)
+
+    # Compute Cohen d (Lakens, 2013)
+    if nx is not None and ny is not None:
+        d = tval * np.sqrt(1 / nx + 1 / ny)
+    elif N is not None:
+        d = 2 * tval / np.sqrt(N)
+    else:
+        raise ValueError("You must specify either nx + ny, or just N")
+    return convert_effsize(d, "cohen", eftype, nx=nx, ny=ny)
 
 
 def cohen_d_av(mean1, mean2, sd1, sd2):
