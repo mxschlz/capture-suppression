@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from utils import get_passive_listening_ERPs
 from mne.stats import permutation_cluster_test
 from scipy.stats import t
+import seaborn as sns
 plt.ion()
 
 
@@ -17,46 +18,51 @@ result_target = ttest_ind(contra_target_epochs_data, ipsi_target_epochs_data, ax
 result_distractor = ttest_ind(contra_distractor_epochs_data, ipsi_distractor_epochs_data, axis=0)
 result_control = ttest_ind(contra_control_epochs_data, ipsi_control_epochs_data, axis=0)
 # plot the data
-fig, ax = plt.subplots(2, 3, sharex=True, sharey=False)
-# target plot
-ax[0][0].plot(times, contra_target_epochs_data.mean(axis=0), color="r")
-ax[0][0].plot(times, ipsi_target_epochs_data.mean(axis=0), color="b")
-ax[0][0].plot(times, diff_target[0], color="g")
-ax[0][0].hlines(y=0, xmin=times[0], xmax=times[-1])
-ax[0][0].legend(["Contra", "Ipsi", "Contra-Ipsi"])
-ax[0][0].set_title("Target lateral")
-ax[0][0].set_ylabel("Amplitude [µV]")
-ax[0][0].set_xlabel("Time [s]")
-# distractor plot
-ax[0][1].plot(times, contra_distractor_epochs_data.mean(axis=0), color="r")
-ax[0][1].plot(times, ipsi_distractor_epochs_data.mean(axis=0), color="b")
-ax[0][1].plot(times, diff_distractor[0], color="g")
-ax[0][1].hlines(y=0, xmin=times[0], xmax=times[-1])
-ax[0][1].set_title("Distractor lateral")
-ax[0][1].set_ylabel("Amplitude [µV]")
-ax[0][1].set_xlabel("Time [s]")
-# control plot
-ax[0][2].plot(times, contra_control_epochs_data.mean(axis=0), color="r")
-ax[0][2].plot(times, ipsi_control_epochs_data.mean(axis=0), color="b")
-ax[0][2].plot(times, diff_control[0], color="g")
-ax[0][2].hlines(y=0, xmin=times[0], xmax=times[-1])
-ax[0][2].set_title("Control lateral")
-ax[0][2].set_ylabel("Amplitude [µV]")
-ax[0][2].set_xlabel("Time [s]")
-# stats target plot
-ax[1][0].plot(times, result_target[0])
-ax[1][0].hlines(y=0, xmin=times[0], xmax=times[-1])
-# stats distractor plot
-ax[1][1].plot(times, result_distractor[0])
-ax[1][1].hlines(y=0, xmin=times[0], xmax=times[-1])
-# stats control plot
-ax[1][2].plot(times, result_control[0])
-ax[1][2].hlines(y=0, xmin=times[0], xmax=times[-1])
-# let stats plot share y axes
-ax[1][0].set_ylim((-7, 7))
-ax[1][1].set_ylim((-7, 7))
-ax[1][2].set_ylim((-7, 7))
-plt.tight_layout()
+times = epochs.times
+fig, ax = plt.subplots(1, 3, figsize=(12, 6), sharey=True)
+ax = ax.flatten()
+# first plot
+ax[0].plot(times, contra_target_epochs_data.mean(axis=0)*10e5, color="r")
+ax[0].plot(times, ipsi_target_epochs_data.mean(axis=0)*10e5, color="b")
+ax[0].plot(times, diff_target[0]*10e5, color="g")
+ax[0].hlines(y=0, xmin=times[0], xmax=times[-1])
+#ax[0].legend(["Contra", "Ipsi", "Contra-Ipsi"])
+ax[0].set_title("Target lateral")
+ax[0].set_ylabel("Amplitude [µV]")
+ax[0].set_xlabel("Time [s]")
+# second plot
+ax[1].plot(times, contra_distractor_epochs_data.mean(axis=0)*10e5, color="r")
+ax[1].plot(times, ipsi_distractor_epochs_data.mean(axis=0)*10e5, color="b")
+ax[1].plot(times, diff_distractor[0]*10e5, color="g")
+ax[1].hlines(y=0, xmin=times[0], xmax=times[-1])
+#ax[1].legend(["Contra", "Ipsi", "Contra-Ipsi"])
+ax[1].set_title("Distractor lateral")
+ax[1].set_xlabel("Time [s]")
+# control
+ax[2].plot(times, contra_control_epochs_data.mean(axis=0)*10e5, color="r")
+ax[2].plot(times, ipsi_control_epochs_data.mean(axis=0)*10e5, color="b")
+ax[2].plot(times, diff_control[0]*10e5, color="g")
+ax[2].hlines(y=0, xmin=times[0], xmax=times[-1])
+#ax[2].legend(["Contra", "Ipsi", "Contra-Ipsi"])
+ax[2].set_title("Control lateral")
+ax[2].set_xlabel("Time [s]")# add t stats on same plot with different axis
+twin1 = ax[0].twinx()
+twin1.tick_params(axis='y', labelcolor="brown")
+twin1.plot(times, result_target[0], color="brown", linestyle="dashed", alpha=0.5)
+# fourth plot
+twin2 = ax[1].twinx()
+twin2.tick_params(axis='y', labelcolor="brown")
+twin1.sharey(twin2)
+twin2.plot(times, result_distractor[0], color="brown", linestyle="dashed", alpha=0.5)
+# control
+twin3 = ax[2].twinx()
+twin3.tick_params(axis='y', labelcolor="brown")
+twin2.sharey(twin3)
+twin3.plot(times, result_control[0], color="brown", linestyle="dashed", alpha=0.5)
+# set axis label to right plot
+twin3.set_ylabel("T-Value", color="brown")
+# despine
+sns.despine(fig=fig, right=False)
 
 # --- STATISTICS ---
 run_on = "Target"  # can be Target or Distractor
