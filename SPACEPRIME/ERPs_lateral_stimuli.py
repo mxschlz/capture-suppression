@@ -8,6 +8,7 @@ from scipy.stats import ttest_ind
 from scipy.stats import t
 from SPACEPRIME.subjects import subject_ids
 from SPACEPRIME.plotting import difference_topos
+import seaborn as sns
 plt.ion()
 
 
@@ -15,7 +16,7 @@ settings_path = f"{get_data_path()}settings/"
 montage = mne.channels.read_custom_montage(settings_path + "CACS-64_NO_REF.bvef")
 ch_pos = montage.get_positions()["ch_pos"]
 # load epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=True) for subject in subject_ids])
+epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=False) for subject in subject_ids])
 epochs = epochs.crop(0, 0.7)
 #epochs = epochs["select_target==True"]
 # epochs.apply_baseline()
@@ -83,6 +84,8 @@ twin1.sharey(twin2)
 twin2.set_ylabel("T-Value", color="brown")
 twin2.tick_params(axis='y', labelcolor="brown")
 twin2.plot(times, result_distractor[0], color="brown", linestyle="dashed", alpha=0.5)
+# despine
+sns.despine(fig=fig, right=False)
 
 # --- STATISTICS ---
 n_permutations = 10000  # number of permutations
