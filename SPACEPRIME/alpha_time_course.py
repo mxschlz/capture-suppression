@@ -20,15 +20,15 @@ n_cycles = alpha_freqs / 2  # different number of cycle per frequency
 #window_length = 0.5  # window lengths as in Wöstmann et al. (2019)
 method = "morlet"  # wavelet
 decim = 7  # keep all the samples along the time axis
-
+mode = "mean"
+baseline = (epochs.tmin, epochs.tmax)
 # compute the absolute oscillatory power for all subjects
 alpha_power = epochs.compute_tfr(method=method, freqs=alpha_freqs, n_cycles=n_cycles,
                            decim=decim, n_jobs=-1, return_itc=False, average=False)
 # apply baseline to transform the y-axis into dB values
-# alpha_power.apply_baseline((-0.9, -0.5), mode="logratio")
+alpha_power.apply_baseline(baseline=baseline, mode="mean")
 # store the within-subject alpha power
 subjects_alpha = dict()
-
 # iterate over subjects
 # --- DO OVERALL ALPHA POWER FOR ALL SUBJECTS ---
 for subject in subject_ids:
@@ -37,7 +37,6 @@ for subject in subject_ids:
     power_avg = power_sub.average()
     alpha_freqs_times = power_avg.get_data().mean(axis=0)  # get alpha power frequencies over all channels
     subjects_alpha[f"{subject}"] = alpha_freqs_times.mean(axis=0)  # average over all frequencies
-
 # get the time vector for plotting purposes
 times = np.linspace(alpha_power.tmin, alpha_power.tmax, alpha_power.get_data().shape[-1])
 
