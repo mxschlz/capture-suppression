@@ -9,7 +9,7 @@ plt.ion()
 
 
 # load df
-subject_id = 150
+subject_id = 152
 df = pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/sub-{subject_id}/beh/sub-{subject_id}_clean*.csv")[0])
 df = df[df["phase"]!=2]
 df = remove_outliers(df, column_name="rt", threshold=2)
@@ -55,7 +55,7 @@ plt.tight_layout()  # Adjust layout to prevent labels from overlapping
 
 # priming accuracy
 plt.figure()
-barplot = sns.barplot(data=df, x="Priming", y="select_target", errorbar=("se", 1))
+barplot = sns.barplot(data=df, x="Priming", y="select_target", errorbar=None)
 plot_individual_lines(ax=barplot, data=df, y_col="select_target")
 plt.ylabel("Response accuracy")
 plt.xlabel("Priming")
@@ -68,3 +68,6 @@ plot_individual_lines(ax=barplot, data=df, y_col="rt")
 plt.ylabel("Reaction time")
 plt.xlabel("Priming")
 barplot.set_xticklabels(["Negative", "No", "Positive"])
+
+plt.figure()
+barplot = sns.barplot(data=df, x="TargetLoc", y="select_target", errorbar=None)
