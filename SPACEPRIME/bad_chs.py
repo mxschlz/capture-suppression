@@ -27,5 +27,7 @@ bad_chs = {
 	144: None,
 	146: None,
 	148: None,
-	150: None
+	150: None,
+	152: None,
+	154: None
 }
