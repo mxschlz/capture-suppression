@@ -8,6 +8,7 @@ from stats import remove_outliers
 from SPACEPRIME.subjects import subject_ids
 from stats import compute_effsize_from_t
 from statannotations.Annotator import Annotator
+from SPACEPRIME.plotting import plot_individual_lines
 
 
 df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/sub-{subject}/beh/sub-{subject}_clean*.csv")[0]) for subject in subject_ids])
@@ -26,6 +27,7 @@ sns.barplot(data=df_mean, x="Priming", y="select_target",
             color=color_acc, # Use a single color for clarity or a palette
             ax=ax[0],
             width=0.8) # Adjust box width if desired
+plot_individual_lines(ax=ax[0], data=df_mean, x_col="Priming", y_col="select_target")
 ax[0].set_xlabel("Priming Condition")
 ax[0].set_ylabel("Proportion Correct")
 ax[0].tick_params(axis='y')
@@ -39,6 +41,7 @@ sns.barplot(data=df_mean, x="Priming", y="rt",
             color=color_rt,
             ax=ax[1],
             width=0.8)
+plot_individual_lines(ax=ax[1], data=df_mean, x_col="Priming", y_col="rt")
 ax[1].set_ylabel("Reaction Time (s)")
 ax[1].tick_params(axis='y')
 # Adjust ylim based on data + potential annotation space
