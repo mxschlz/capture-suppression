@@ -8,6 +8,7 @@ import statsmodels.formula.api as smf
 import seaborn as sns
 import numpy as np
 from scipy.stats import pearsonr, zscore
+import statsmodels.genmod.bayes_mixed_glm as sm_bayes
 from stats import remove_outliers
 plt.ion()
 
@@ -63,9 +64,9 @@ print(f"Unique values found in '{distractor_col_name}': ", df[distractor_col_nam
 print("-" * 30) # Separator
 
 # --- 3. Calculate Mean Amplitudes in Time Windows ---
-Pd_window = (0.25, 0.35)
+Pd_window = (0.28, 0.4)
 Pd_elecs = ["C3", "C4"]
-N2ac_window = (0.2, 0.3)
+N2ac_window = (0.22, 0.3)
 N2ac_elecs = ["FC5", "FC6"]
 
 # Get data for all relevant electrodes in wide format, indexed by epoch
@@ -135,15 +136,15 @@ print("-" * 30) # Separator
 
 # --- 6. Statistical Modeling ---
 # Now use the 'N2ac' and 'Pd' columns
-# Example Model for Pd (predicting Pd difference wave by distractor location)
+# Example Model for Pd (predicting Pd difference wave by distractor and target location)
 # Filter data for modeling - automatically drops trials with NaN in Pd_diff or SingletonLateral
-pd_stat_df = df[['Pd', 'SingletonLoc', 'subject_id']].dropna()
+pd_stat_df = df[['Pd', 'SingletonLoc', 'TargetLoc', 'subject_id', 'Priming']].dropna()
 
 # Check if data remains after filtering
 if pd_stat_df.empty:
     print("Warning: No data available for Pd model after filtering NaNs. Check calculations and data.")
 else:
-    pd_formula = "Pd ~ C(SingletonLoc)"
+    pd_formula = "Pd ~ C(SingletonLoc) + C(TargetLoc)"
     pd_model = smf.mixedlm(formula=pd_formula, data=pd_stat_df, groups="subject_id")
     try:
         pd_result = pd_model.fit() # Use ML for model comparison if needed
@@ -156,17 +157,17 @@ else:
         print(pd_stat_df.info())
 
 # Plotting
-sns.lmplot(data=pd_stat_df, x="SingletonLoc", y="Pd", hue="subject_id")
+sns.lmplot(data=pd_stat_df, x="SingletonLoc", y="Pd", hue="subject_id", legend=False)
 
 # Example Model for N2ac (predicting N2ac difference wave by target laterality)
 # Filter data for modeling
-n2ac_stat_df = df[['N2ac', 'TargetLoc', 'subject_id']].dropna()
+n2ac_stat_df = df[['N2ac', 'TargetLoc', 'SingletonLoc', 'subject_id', 'Priming']].dropna()
 
 # Check if data remains after filtering
 if n2ac_stat_df.empty:
     print("\nWarning: No data available for N2ac model after filtering NaNs. Check calculations and data.")
 else:
-    n2ac_formula = "N2ac ~ C(TargetLoc)"
+    n2ac_formula = "N2ac ~ C(TargetLoc) + C(SingletonLoc)"
     n2ac_model = smf.mixedlm(formula=n2ac_formula, data=n2ac_stat_df, groups="subject_id")
     try:
         n2ac_result = n2ac_model.fit(reml=False)
@@ -202,3 +203,24 @@ rt_formula = "rt ~ C(SingletonPresent) + C(TargetDigit) + C(TargetLoc) + C(Singl
 rt_model = smf.mixedlm(formula=rt_formula, data=rt_stat_df, groups="subject_id")
 rt_result = rt_model.fit()
 rt_result.summary()
+# model accuracy
+acc_stat_df = df[["SingletonPresent", "TargetDigit", "TargetLoc", "SingletonDigit", "SingletonLoc", "Priming", "select_target", "subject_id"]].dropna()
+# IMPORTANT: Ensure your binary outcome is coded as 0 and 1 integers
+acc_stat_df['select_target_int'] = acc_stat_df['select_target'].astype(int)
+# --- Define and Fit Bayesian GLMM ---
+acc_formula_glmm = "select_target_int ~ C(SingletonPresent) + C(TargetDigit) + C(TargetLoc) + C(SingletonDigit) + C(SingletonLoc) + C(Priming)"
+# Specify the random effects structure (random intercept for subject_id)
+# This syntax might vary slightly based on statsmodels version
+# vc_formulas defines the variance components
+vc_f = {"subject_id": "0 + C(subject_id)"} # Formula for the random intercept grouped by subject_id
+# Create the model instance
+# Note: group argument might not be needed if specified in vc_formulas
+model_bayes_glmm = sm_bayes.BinomialBayesMixedGLM.from_formula(
+    formula=acc_formula_glmm,
+    vc_formulas=vc_f,
+    data=acc_stat_df)
+# Fit the model using Variational Bayes (often faster than MCMC)
+# This might take longer than mixedlm.fit()
+result_bayes_glmm = model_bayes_glmm.fit_vb() # Or .fit_mcmc() for MCMC sampling
+# Print the summary
+result_bayes_glmm.summary()
