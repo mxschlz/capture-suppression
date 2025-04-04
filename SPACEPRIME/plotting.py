@@ -16,8 +16,8 @@ def plot_individual_lines(ax, data, x_col="Priming", y_col="select_target"):
         # Aligning subject data with bar positions
         x_positions = [bar_positions[i] for i, _ in enumerate(subject_df[x_col].unique())]
         # plot the data
-        ax.plot(x_positions, subject_mean.values, label=subject, linestyle='--', marker='', alpha=0.7)
-    plt.legend()
+        ax.plot(x_positions, subject_mean.values, label=subject, linestyle='--', marker='', alpha=0.7, color="grey")
+    # plt.legend()
 
 
 def difference_topos(epochs, montage):
