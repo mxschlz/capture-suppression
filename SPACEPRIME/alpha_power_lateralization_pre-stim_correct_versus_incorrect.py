@@ -213,14 +213,18 @@ for i_clu, clu_idx in enumerate(good_cluster_inds):
     plt.tight_layout()
 
 # define some params for the upcoming analysis
-alpha_tmin = -0.4  #TODO: what is a good value for this?
+alpha_tmin = -0.3  #TODO: what is a good value for this?
 alpha_tmax = 0.0
+# pick occipito-parietal electrodes
+left_roi = ["TP9", "TP7", "CP5", "CP3", "CP1", "P7", "P5", "P3", "P1", "PO7", "PO3", "O1"]
+right_roi = ["TP10", "TP8", "CP6", "CP4", "CP2", "P8", "P6", "P4", "P2", "PO8", "PO4", "O2"]
+power_picked = power_total.pick(left_roi+right_roi)
 # Store subject-level results
 subject_results = {}
 for subject in subject_ids:
     print(f"Processing subject: {subject}")
     # Load epochs for the current subject
-    power_sub = power_total[f"subject_id=={subject}"]
+    power_sub = power_picked[f"subject_id=={subject}"]
     # Divide epochs into correct and incorrect trials
     power_corrects = power_sub["select_target==True"]
     power_incorrects = power_sub["select_target==False"]
@@ -261,7 +265,8 @@ plt.legend("")
 # Subtract correct from incorrect alpha
 diff = df.query("condition=='Correct'")["alpha"].reset_index(drop=True) - df.query("condition=='Incorrect'")["alpha"].reset_index(drop=True)
 # Compute t test
-t, p = stats.ttest_1samp(diff, popmean=0)
+t, p = stats.ttest_rel(df.query("condition=='Correct'")["alpha"].reset_index(drop=True),
+                       df.query("condition=='Incorrect'")["alpha"].reset_index(drop=True))
 
 # Okay, so now that we have computed the overall alpha power time courses and made a simple comparison between correct
 # and incorrect trials, we can further divide the alpha power into ipsi- and contralateral ROIs. This might be more
