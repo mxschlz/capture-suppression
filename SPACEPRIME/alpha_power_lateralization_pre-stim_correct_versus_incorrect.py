@@ -9,23 +9,23 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 from SPACEPRIME.plotting import plot_individual_lines
-from mne.stats import permutation_cluster_1samp_test
+from mne.stats import permutation_cluster_1samp_test, permutation_cluster_test
 import scipy
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 plt.ion()
 
 
+# This script intends to replicate the method from Boncompte et al. (2016).
 # --- ALPHA POWER PRE-STIMULUS ---
 # We first retrieve our epochs
 epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=False) for subject in subject_ids])
 # Control for priming
 #epochs = epochs["Priming==0"]
 # crop to reduce runtime
-epochs.crop(-0.5, 0.5)
-# First, define ROI electrode picks to reduce computation time.
-left_roi = ["TP9", "TP7", "CP5", "CP3", "CP1", "P7", "P5", "P3", "P1", "PO7", "PO3", "O1"]
-right_roi = ["TP10", "TP8", "CP6", "CP4", "CP2", "P8", "P6", "P4", "P2", "PO8", "PO4", "O2"]
-epochs = epochs.pick(picks=left_roi+right_roi)
+#epochs.crop(-0.5, 0.5)
+# define freqs of interest
+alpha_fmin = 8
+alpha_fmax = 12
 # epochs.resample(128)  # downsample from 250 to 128 to reduce RAM cost
 # Get the sampling frequency because we need it later
 sfreq = epochs.info["sfreq"]
@@ -34,13 +34,13 @@ sfreq = epochs.info["sfreq"]
 # of cycles of this wavelet that changes according to the frequency (smaller frequencies get smaller cycles, whereas
 # larger frequencies have larger cycles, but all have a cycle of half the frequency value). We also set decim = 1 to
 # keep the full amount of data
-freqs = numpy.arange(1, 31, 1)  # 1 to 30 Hz
+freqs = numpy.arange(alpha_fmin, alpha_fmax+1, 1)  # 1 to 30 Hz
 #window_length = 0.5  # window lengths as in Wöstmann et al. (2019)
 n_cycles = freqs / 3  # different number of cycle per frequency
 method = "morlet"  # wavelet
 decim = 7  # keep only every fifth of the samples along the time axis
-mode = "zscore"  # normalization
-baseline = (epochs.tmin, epochs.tmax)  # Do not use baseline interval
+mode = "mean"  # normalization
+baseline = (None, None)  # Do not use baseline interval
 n_jobs = -1  # number of parallel jobs. -1 uses all cores
 average = False  # get total oscillatory power, opposed to evoked oscillatory power (get power from ERP)
 # apply baseline to epochs
@@ -55,9 +55,9 @@ power_total = epochs.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, 
 # Subtract the evoked power, trial by trial.
 power_induced = power_total.copy()
 for trial in range(len(power_total)):
-    power_induced.data[trial] -= power_evoked.data[0]  # subtract the evoked power from total power
+    power_induced.data[trial] -= power_evoked.data[0]  # subtract the evoked power from total power"""
 # apply baseline
-power_induced.apply_baseline(baseline, mode=mode)"""
+power_total.apply_baseline(baseline, mode=mode)
 # Now, we devide the epochs into our respective priming conditions. In order to do so, we make use of the metadata
 # which was appended to the epochs of every subject during preprocessing. We can access the metadata the same way as
 # we would by calling the event_ids in the experiment.
@@ -70,10 +70,8 @@ power_diff = power_corrects - power_incorrects
 power_diff.average().plot(combine="mean")
 
 # Prepare the data matrix for the permutation function. In this case, X must be a matrix of N observations x freqs x times
-alpha_fmin = 7
-alpha_fmax = 14
-prestim_interval = (-0.4, 0.0)
-X = power_diff.get_data(fmin=alpha_fmin, fmax=alpha_fmax, tmin=prestim_interval[0], tmax=prestim_interval[1])  # shape: trials x channels x freqs x times
+#prestim_interval = (-0.4, 0.0)
+X = power_diff.get_data(fmin=alpha_fmin, fmax=alpha_fmax)  # shape: trials x channels x freqs x times
 # The difference in induced oscillatory power between correct and incorrect trials we observe in the data might be
 # predictive of the performance of the participants. In order to find out where this power difference originates from
 # (broadly), we can apply a 1-sample
@@ -92,18 +90,18 @@ t_thresh = scipy.stats.t.ppf(1 - alpha / 2, df=degrees_of_freedom)  # t threshol
 tfce_thresh = dict(start=0, step=0.2)  # threshold-free cluster enhancement
 n_permutations = 1000  # number of permutations
 # Run the analysis
-t_obs, clusters, cluster_p_values, H0 = permutation_cluster_1samp_test(
-    X,
-    n_permutations=n_permutations,
-    threshold=t_thresh,
-    tail=tail,
-    adjacency=tfr_adjacency,
-    out_type="mask",
-    verbose=True)
+t_obs, clusters, cluster_p_values, H0 = permutation_cluster_1samp_test(X,
+                                                                       n_permutations=n_permutations,
+                                                                       threshold=t_thresh,
+                                                                       tail=tail,
+                                                                       adjacency=tfr_adjacency,
+                                                                       out_type="mask",
+                                                                       verbose=True,
+                                                                       n_jobs=3)
 
 # --- Plotting the Results ---
 freq_inds = (freqs >= alpha_fmin) & (freqs <= alpha_fmax)
-time_inds = power_total.time_as_index(prestim_interval) # Use power_total or power_induced
+time_inds = power_total.time_as_index() # Use power_total or power_induced
 times_test = power_total.times[time_inds[0]:time_inds[1]] # Get the actual time values used
 freqs_test = freqs[freq_inds]
 # Find indices of significant clusters (p < alpha)
@@ -215,7 +213,7 @@ for i_clu, clu_idx in enumerate(good_cluster_inds):
     plt.tight_layout()
 
 # define some params for the upcoming analysis
-alpha_tmin = -0.4
+alpha_tmin = -0.4  #TODO: what is a good value for this?
 alpha_tmax = 0.0
 # Store subject-level results
 subject_results = {}
@@ -278,10 +276,6 @@ alpha_lateralization_subjects_mean = dict(subject_id=[],
                                           incorrect_ipsi=[],
                                           correct_contra=[],
                                           incorrect_contra=[])
-# First, define ROI electrode picks to reduce computation time.
-left_roi = ["TP9", "TP7", "CP5", "CP3", "CP1", "P7", "P5", "P3", "P1", "PO7", "PO3", "O1"]
-right_roi = ["TP10", "TP8", "CP6", "CP4", "CP2", "P8", "P6", "P4", "P2", "PO8", "PO4", "O2"]
-epochs = epochs.pick(picks=left_roi+right_roi)
 # Iterate over subjects and get all the ipsi and contra alpha power values
 for subject in subject_ids:
     print(f"Processing subject: {subject}")
@@ -361,11 +355,19 @@ df_melted = df_alpha_lateralization_mean.melt(id_vars='subject_id',
 df_melted[['condition', 'side']] = df_melted['condition_side'].str.split('_', expand=True)
 # Create the boxplots
 plt.figure()
-sns.boxplot(x='condition', y='value', hue='side', data=df_melted)
-plt.hlines(y=0, xmin=plt.xlim()[0], xmax=plt.xlim()[1], linestyles="dashed", color="black")
+sns.boxplot(x='side', y='value', hue='condition', data=df_melted)
+#plt.hlines(y=0, xmin=plt.xlim()[0], xmax=plt.xlim()[1], linestyles="dashed", color="black")
 plt.title('Alpha power lateralization (Contra - Ipsi)')
 plt.xlabel('Condition')
 plt.ylabel('Value')
+# paired ttest on ipsi-contra differences in correct and incorrect trials
+correct_ipsi = df_melted.query("condition=='correct'&side=='ipsi'")["value"].reset_index(drop=True)
+correct_contra = df_melted.query("condition=='correct'&side=='contra'")["value"].reset_index(drop=True)
+t, p = stats.ttest_rel(correct_ipsi, correct_contra)
+# incorrect trials
+incorrect_ipsi = df_melted.query("condition=='incorrect'&side=='ipsi'")["value"].reset_index(drop=True)
+incorrect_contra = df_melted.query("condition=='incorrect'&side=='contra'")["value"].reset_index(drop=True)
+t, p = stats.ttest_rel(incorrect_ipsi, incorrect_contra)
 
 # Calculate difference in ipsi- versus contralateral correct and incorrect responses
 # ATTENTION: here, we calculate the difference as ipsi - contra (usually, I do contra - ipsi for everything)
@@ -388,8 +390,8 @@ t, p = stats.ttest_rel(diff_correct, diff_incorrect)
 # Store the computed data in a dataframe
 alpha_lateralization_subjects = dict()
 # Split into left and right lateral targets
-left_target_power = power_induced[[x for x in power_total.event_id if "Target-1-Singleton-2" in x]]
-right_target_power = power_induced[[x for x in power_total.event_id if "Target-3-Singleton-2" in x]]
+left_target_power = power_total[[x for x in power_total.event_id if "Target-1-Singleton-2" in x]]
+right_target_power = power_total[[x for x in power_total.event_id if "Target-3-Singleton-2" in x]]
 # Now, divide into correct and incorrect trials
 left_target_power_correct = left_target_power["select_target==True"]
 right_target_power_correct = right_target_power["select_target==True"]
@@ -404,14 +406,14 @@ contra_target_power_correct_data = np.concatenate([left_target_power_correct.cop
                                                     right_target_power_correct.copy().get_data(picks=left_roi,
                                                                                                fmin=alpha_fmin,
                                                                                                fmax=alpha_fmax)],
-                                                   axis=0).mean(axis=(0, 1, 2))
+                                                   axis=0).mean(axis=(1, 2))
 ipsi_target_power_correct_data = np.concatenate([left_target_power_correct.copy().get_data(picks=left_roi,
                                                                                            fmin=alpha_fmin,
                                                                                            fmax=alpha_fmax),
                                                   right_target_power_correct.copy().get_data(picks=right_roi,
                                                                                              fmin=alpha_fmin,
                                                                                              fmax=alpha_fmax)],
-                                                 axis=0).mean(axis=(0, 1, 2))
+                                                 axis=0).mean(axis=(1, 2))
 # Do the same for incorrect trials
 contra_target_power_incorrect_data = np.concatenate([left_target_power_incorrect.copy().get_data(picks=right_roi,
                                                                                                   fmin=alpha_fmin,
@@ -419,14 +421,14 @@ contra_target_power_incorrect_data = np.concatenate([left_target_power_incorrect
                                                       right_target_power_incorrect.copy().get_data(picks=left_roi,
                                                                                                    fmin=alpha_fmin,
                                                                                                    fmax=alpha_fmax)],
-                                                     axis=0).mean(axis=(0, 1, 2))
+                                                     axis=0).mean(axis=(1, 2))
 ipsi_target_power_incorrect_data = np.concatenate([left_target_power_incorrect.copy().get_data(picks=left_roi,
                                                                                                fmin=alpha_fmin,
                                                                                                fmax=alpha_fmax),
                                                     right_target_power_incorrect.copy().get_data(picks=right_roi,
                                                                                                  fmin=alpha_fmin,
                                                                                                  fmax=alpha_fmax)],
-                                                   axis=0).mean(axis=(0, 1, 2))
+                                                   axis=0).mean(axis=(1, 2))
 # store all the computed data in a dataframe
 alpha_lateralization_subjects["incorrect_ipsi"] = ipsi_target_power_incorrect_data
 alpha_lateralization_subjects["correct_ipsi"] = ipsi_target_power_correct_data
@@ -434,13 +436,52 @@ alpha_lateralization_subjects["incorrect_contra"] = contra_target_power_incorrec
 alpha_lateralization_subjects["correct_contra"] = contra_target_power_correct_data
 
 # Plot single subject and grand average data
-times = power_induced.times
+times = power_total.times
 incorrect_diff_sub = alpha_lateralization_subjects["incorrect_contra"] - alpha_lateralization_subjects["incorrect_ipsi"]
+incorrect_diff_sub_mean = incorrect_diff_sub.mean(axis=0)
+# incorrect_diff_sub_sem = np.std(incorrect_diff_sub, axis=0) / np.sqrt(len(times))
 correct_diff_sub = alpha_lateralization_subjects["correct_contra"] - alpha_lateralization_subjects["correct_ipsi"]
-plt.plot(times, incorrect_diff_sub,
-         label=f"Incorrect Average", color="red")
-plt.plot(times, correct_diff_sub,
-         label=f"Correct Average", color="green")
-plt.plot(times, (correct_diff_sub-incorrect_diff_sub), color="black",
-         label=f"Total alpha lateralization")
+correct_diff_sub_mean = correct_diff_sub.mean(axis=0)
+# correct_diff_sub_sem = np.std(correct_diff_sub, axis=0) / np.sqrt(len(times))
+result_ttest = stats.ttest_ind(incorrect_diff_sub, correct_diff_sub)
+plt.plot(times, incorrect_diff_sub_mean,
+         label=f"Incorrect average lateralization", color="black")
+plt.plot(times, correct_diff_sub_mean,
+         label=f"Correct average lateralization", color="grey")
 plt.legend()
+# make axis twin for plotting t values on different axis scaling
+ax = plt.gca()  # get current axis
+twin = ax.twinx()
+twin.tick_params(axis='y', labelcolor="blue")
+twin.plot(times, result_ttest[0], color="blue", linestyle="dashed", alpha=0.5, label="T-test result")
+plt.title("Alpha power difference time course (contra - ipsi)")
+ax.set_xlabel("Time [s]")
+ax.set_ylabel("Z-score")
+plt.legend()
+# --- STATISTICS ---
+# Define some statistic params
+tail = 0  # two-sided
+alpha = 0.05  # significane threshold
+# set degrees of freedom to len(epochs) - 1
+n1 = len(correct_diff_sub)
+n2 = len(incorrect_diff_sub)
+df = n1 + n2 - 2
+t_thresh = scipy.stats.t.ppf(1 - alpha / 2, df=df)  # t threshold for a two-sided alpha
+n_permutations = 10000  # number of permutations
+# Run the analysis
+X = [correct_diff_sub, incorrect_diff_sub]
+t_obs, clusters, cluster_p_values, H0 = permutation_cluster_test(
+    X,
+    n_permutations=n_permutations,
+    threshold=t_thresh,
+    tail=tail,
+    out_type="mask",
+    verbose=True)
+# Visualize permutation test result
+for i_c, c in enumerate(clusters):
+    c = c[0]
+    if cluster_p_values[i_c] <= alpha:
+        h = ax.axvspan(times[c.start], times[c.stop - 1], color="r", alpha=0.3)
+    else:
+        h = 0
+        ax.axvspan(times[c.start], times[c.stop - 1], color="grey", alpha=0.3)
