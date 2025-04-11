@@ -91,7 +91,7 @@ sns.despine(fig=fig, right=False)
 n_permutations = 10000  # number of permutations
 # some stats
 n_jobs = -1
-pval = 0.05
+alpha = 0.05
 tail = 0
 # Now we need to set the threshold parameter. For this time-series data (1 electrode pair over time) which is NOT SUITED
 # FOR SPATIAL COMPARISON BUT TEMPORAL COMPARISON, we should use a single t-value. A reasonable starting point would be
@@ -102,9 +102,9 @@ for run_on in ["Target", "Distractor"]:
     n2 = ipsi_target_epochs_data.shape[0] if run_on == "Target" else contra_distractor_epochs_data.shape[0]
     df = n1 + n2 - 2
     if tail == 0:
-        threshold = t.ppf(1 - pval / 2, df)  # Two-tailed
+        threshold = t.ppf(1 - alpha / 2, df)  # Two-tailed
     else:  # tail == -1 or tail == 1
-        threshold = t.ppf(pval, df) if tail == -1 else t.ppf(1 - pval, df)
+        threshold = t.ppf(alpha, df) if tail == -1 else t.ppf(1 - alpha, df)
     print(f"Using threshold: {threshold}")
 
     # mne.viz.plot_ch_adjacency(epochs.info, adjacency, epochs.info["ch_names"])
@@ -115,7 +115,7 @@ for run_on in ["Target", "Distractor"]:
     plot_on_axis = 1 if run_on == "Distractor" else 0
     for i_c, c in enumerate(clusters):
         c = c[0]
-        if cluster_pv[i_c] <= pval:
+        if cluster_pv[i_c] <= alpha:
             h = ax[plot_on_axis].axvspan(times[c.start], times[c.stop - 1], color="r", alpha=0.3)
         else:
             h = 0
