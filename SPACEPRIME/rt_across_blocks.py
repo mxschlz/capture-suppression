@@ -87,7 +87,7 @@ plt.tight_layout()
 
 # regression plot
 sns.lmplot(data=df_merged, x="sub_block", y="rt_diff_running_avg", hue="subject_id", palette="tab20", scatter=False,
-           ci=None)
+           ci=None, legend=False)
 # run linear mixed model
 df["trial_nr_abs"] = list(range(len(df)))
 df.drop("duration", axis=1, inplace=True)  # drop duration because it is always NaN
