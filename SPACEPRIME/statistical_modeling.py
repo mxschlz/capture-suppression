@@ -64,7 +64,7 @@ print(f"Unique values found in '{distractor_col_name}': ", df[distractor_col_nam
 print("-" * 30) # Separator
 
 # --- 3. Calculate Mean Amplitudes in Time Windows ---
-Pd_window = (0.28, 0.4)
+Pd_window = (0.28, 0.35)
 Pd_elecs = ["C3", "C4"]
 N2ac_window = (0.22, 0.3)
 N2ac_elecs = ["FC5", "FC6"]
@@ -139,22 +139,17 @@ print("-" * 30) # Separator
 # Example Model for Pd (predicting Pd difference wave by distractor and target location)
 # Filter data for modeling - automatically drops trials with NaN in Pd_diff or SingletonLateral
 pd_stat_df = df[['Pd', 'SingletonLoc', 'TargetLoc', 'subject_id', 'Priming']].dropna()
-
-# Check if data remains after filtering
-if pd_stat_df.empty:
-    print("Warning: No data available for Pd model after filtering NaNs. Check calculations and data.")
-else:
-    pd_formula = "Pd ~ C(SingletonLoc) + C(TargetLoc)"
-    pd_model = smf.mixedlm(formula=pd_formula, data=pd_stat_df, groups="subject_id")
-    try:
-        pd_result = pd_model.fit() # Use ML for model comparison if needed
-        print("\n--- Pd Model Summary ---")
-        print(pd_result.summary())
-    except Exception as e:
-        print(f"\nError fitting Pd model: {e}")
-        print("Check the data in pd_stat_df:")
-        print(pd_stat_df.head())
-        print(pd_stat_df.info())
+pd_formula = "Pd ~ C(SingletonLoc) + C(TargetLoc) + C(Priming)"
+pd_model = smf.mixedlm(formula=pd_formula, data=pd_stat_df, groups="subject_id")
+try:
+    pd_result = pd_model.fit(reml=True) # Use ML for model comparison if needed
+    print("\n--- Pd Model Summary ---")
+    print(pd_result.summary())
+except Exception as e:
+    print(f"\nError fitting Pd model: {e}")
+    print("Check the data in pd_stat_df:")
+    print(pd_stat_df.head())
+    print(pd_stat_df.info())
 
 # Plotting
 sns.lmplot(data=pd_stat_df, x="SingletonLoc", y="Pd", hue="subject_id", legend=False)
@@ -162,39 +157,64 @@ sns.lmplot(data=pd_stat_df, x="SingletonLoc", y="Pd", hue="subject_id", legend=F
 # Example Model for N2ac (predicting N2ac difference wave by target laterality)
 # Filter data for modeling
 n2ac_stat_df = df[['N2ac', 'TargetLoc', 'SingletonLoc', 'subject_id', 'Priming']].dropna()
-
-# Check if data remains after filtering
-if n2ac_stat_df.empty:
-    print("\nWarning: No data available for N2ac model after filtering NaNs. Check calculations and data.")
-else:
-    n2ac_formula = "N2ac ~ C(TargetLoc) + C(SingletonLoc)"
-    n2ac_model = smf.mixedlm(formula=n2ac_formula, data=n2ac_stat_df, groups="subject_id")
-    try:
-        n2ac_result = n2ac_model.fit(reml=False)
-        print("\n--- N2ac Model Summary ---")
-        print(n2ac_result.summary())
-    except Exception as e:
-        print(f"\nError fitting N2ac model: {e}")
-        print("Check the data in n2ac_stat_df:")
-        print(n2ac_stat_df.head())
-        print(n2ac_stat_df.info())
+n2ac_formula = "N2ac ~ C(TargetLoc) + C(SingletonLoc) + C(Priming)"
+n2ac_model = smf.mixedlm(formula=n2ac_formula, data=n2ac_stat_df, groups="subject_id")
+try:
+    n2ac_result = n2ac_model.fit(reml=True)
+    print("\n--- N2ac Model Summary ---")
+    print(n2ac_result.summary())
+except Exception as e:
+    print(f"\nError fitting N2ac model: {e}")
+    print("Check the data in n2ac_stat_df:")
+    print(n2ac_stat_df.head())
+    print(n2ac_stat_df.info())
 
 # Plotting
 sns.lmplot(data=n2ac_stat_df, x="TargetLoc", y="N2ac", hue="subject_id")
 
 # Do some nice correlation (behavior against neural data)
 df_corr = df.groupby(["subject_id"])[["rt", "select_target", "Pd", "N2ac"]].mean().reset_index().astype(float)
-# do z-score transformation
+"""# do z-score transformation
 cols_to_zscore = ['rt', 'select_target', 'Pd', 'N2ac']
 # create new columns for storing the z-scores
 z_cols = [col + '_z' for col in cols_to_zscore]
 # Apply the zscore function to the selected columns
 # .apply() runs the zscore function on each column individually
-df_corr[z_cols] = df_corr[cols_to_zscore].apply(zscore)
+df_corr[z_cols] = df_corr[cols_to_zscore].apply(zscore)"""
 # do stats
-pearsonr(df_corr.rt_z, df_corr.N2ac_z)
+pearsonr(df_corr.rt, df_corr.N2ac)
 # Plotting
-sns.lmplot(data=df_corr, x="select_target_z", y="N2ac_z")
+sns.lmplot(data=df_corr, x="rt", y="N2ac")
+
+# statistical modeling of relationship between response speed and Pd magnitude
+pd_beh_df = df[['Pd', 'rt', 'subject_id']].dropna()
+pd_beh_formula = "Pd ~ rt"
+pd_beh_model = smf.mixedlm(formula=pd_beh_formula, data=pd_beh_df, groups="subject_id")
+try:
+    result = pd_beh_model.fit(reml=True)
+    print("\n--- Model Summary ---")
+    print(result.summary())
+except Exception as e:
+    print(f"\nError fitting N2ac model: {e}")
+    print("Check the data in n2ac_stat_df:")
+    print(pd_beh_df.head())
+    print(pd_beh_df.info())
+
+sns.lmplot(data=pd_beh_df, x="rt", y="Pd", hue="subject_id", legend=False)
+
+# statistical modeling of relationship between experiment time course and Pd magnitude
+beh_df = df[['Pd', 'rt', 'subject_id', 'total_trial_nr', 'block']].dropna()
+formula = "Pd ~ total_trial_nr"
+model = smf.mixedlm(formula=formula, data=beh_df, groups="subject_id")
+try:
+    result = model.fit(reml=True)
+    print("\n--- Model Summary ---")
+    print(result.summary())
+except Exception as e:
+    print(f"\nError fitting N2ac model: {e}")
+    print("Check the data in n2ac_stat_df:")
+    print(beh_df.head())
+    print(beh_df.info())
 
 # Now, do one giant mixed model where we predict reaction time/accuracy with the following predictors:
 # distractor presence, priming type, target identity/location, distractor identity/location
