@@ -29,5 +29,6 @@ bad_chs = {
 	148: None,
 	150: None,
 	152: None,
-	154: None
+	154: None,
+	156: ["Fp1", "Fp2"]
 }
