@@ -17,13 +17,19 @@ plt.ion()
 # This script intends to replicate the method from Boncompte et al. (2016).
 # --- ALPHA POWER PRE-STIMULUS ---
 # We first retrieve our epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=False) for subject in subject_ids])
-# Control for priming
-epochs = epochs["Priming==0"]
 # pick occipito-parietal electrodes
 left_roi = ["TP9", "TP7", "CP5", "CP3", "CP1", "P7", "P5", "P3", "P1", "PO7", "PO3", "O1"]
 right_roi = ["TP10", "TP8", "CP6", "CP4", "CP2", "P8", "P6", "P4", "P2", "PO8", "PO4", "O2"]
-epochs = epochs.pick(left_roi+right_roi)
+all_epochs = list()
+for sj in subject_ids:
+    epochs = mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{sj}/eeg/sub-{sj}_task-spaceprime-epo.fif")[0], preload=True)
+    epochs = epochs["Priming==0"]
+    epochs.pick(left_roi+right_roi)
+    all_epochs.append(epochs)
+
+epochs = mne.concatenate_epochs(all_epochs)
+
+
 # crop to reduce runtime
 #epochs.crop(-0.5, 0.5)
 # define freqs of interest
@@ -52,13 +58,13 @@ average = False  # get total oscillatory power, opposed to evoked oscillatory po
 power_total = epochs.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, average=average, n_jobs=n_jobs, decim=decim)
 # Furthermore, since we are interested in the induced alpha power only, we get the evoked alpha by averagring epochs and
 # then conducting TFR analysis. We subtract the evoked power from the total power to get induced oscillatory power.
-"""power_evoked = epochs.average().compute_tfr(method=method, freqs=freqs, decim=decim, n_cycles=n_cycles, n_jobs=n_jobs)
+power_evoked = epochs.average().compute_tfr(method=method, freqs=freqs, decim=decim, n_cycles=n_cycles, n_jobs=n_jobs)
 # apply baseline
 #power_evoked.apply_baseline(baseline=baseline, mode=mode)
 # Subtract the evoked power, trial by trial.
 power_induced = power_total.copy()
 for trial in range(len(power_total)):
-    power_induced.data[trial] -= power_evoked.data[0]  # subtract the evoked power from total power"""
+    power_induced.data[trial] -= power_evoked.data[0]  # subtract the evoked power from total power
 # apply baseline
 # power_total.apply_baseline(baseline, mode=mode)
 # Now, we devide the epochs into our respective priming conditions. In order to do so, we make use of the metadata
@@ -250,9 +256,10 @@ t, p = stats.ttest_rel(diff_correct, diff_incorrect)
 # for our pre-stimulus alpha power. Sounds good, right! Let's do it.
 # Store the computed data in a dataframe
 alpha_lateralization_subjects = dict()
+alpha_li = dict()
 # Split into left and right lateral targets
-left_target_power = power_total[[x for x in power_total.event_id if "Target-1-Singleton-2" in x]]
-right_target_power = power_total[[x for x in power_total.event_id if "Target-3-Singleton-2" in x]]
+left_target_power = power_induced[[x for x in power_total.event_id if "Target-1-Singleton-2" in x]]
+right_target_power = power_induced[[x for x in power_total.event_id if "Target-3-Singleton-2" in x]]
 # Now, divide into correct and incorrect trials
 left_target_power_correct = left_target_power["select_target==True"]
 right_target_power_correct = right_target_power["select_target==True"]
@@ -295,13 +302,21 @@ alpha_lateralization_subjects["incorrect_ipsi"] = ipsi_target_power_incorrect_da
 alpha_lateralization_subjects["correct_ipsi"] = ipsi_target_power_correct_data
 alpha_lateralization_subjects["incorrect_contra"] = contra_target_power_incorrect_data
 alpha_lateralization_subjects["correct_contra"] = contra_target_power_correct_data
+# calculate lateralization indices
+li_incorrect = (ipsi_target_power_incorrect_data - contra_target_power_incorrect_data) / (
+            ipsi_target_power_incorrect_data + contra_target_power_incorrect_data)
+li_correct = (ipsi_target_power_correct_data - contra_target_power_correct_data) / (
+            ipsi_target_power_correct_data + contra_target_power_correct_data)
+# store lateralization index
+alpha_li['incorrect'] = li_incorrect
+alpha_li['correct'] = li_correct
 
 # Plot single subject and grand average data
 times = power_total.times
-incorrect_diff_sub = alpha_lateralization_subjects["incorrect_contra"] - alpha_lateralization_subjects["incorrect_ipsi"]
+incorrect_diff_sub = alpha_lateralization_subjects["incorrect_ipsi"] - alpha_lateralization_subjects["incorrect_contra"]
 incorrect_diff_sub_mean = incorrect_diff_sub.mean(axis=0)
 # incorrect_diff_sub_sem = np.std(incorrect_diff_sub, axis=0) / np.sqrt(len(times))
-correct_diff_sub = alpha_lateralization_subjects["correct_contra"] - alpha_lateralization_subjects["correct_ipsi"]
+correct_diff_sub = alpha_lateralization_subjects["correct_ipsi"] - alpha_lateralization_subjects["correct_contra"]
 correct_diff_sub_mean = correct_diff_sub.mean(axis=0)
 # correct_diff_sub_sem = np.std(correct_diff_sub, axis=0) / np.sqrt(len(times))
 result_ttest = stats.ttest_ind(incorrect_diff_sub, correct_diff_sub)
@@ -314,11 +329,24 @@ plt.legend()
 ax = plt.gca()  # get current axis
 twin = ax.twinx()
 twin.tick_params(axis='y', labelcolor="blue")
-twin.plot(times, result_ttest[0], color="blue", linestyle="dashed", alpha=0.5, label="T-test result")
+#twin.plot(times, result_ttest[0], color="blue", linestyle="dashed", alpha=0.5, label="T-test result")
+plt.title("Alpha power difference (Correct - incorrect response) time course (ipsi - contra)")
+ax.set_xlabel("Time [s]")
+ax.set_ylabel("µV")
+plt.legend()
+"""# plot li
+plt.figure()
+plt.plot(times, alpha_li["correct"].mean(axis=0))
+plt.plot(times, alpha_li["incorrect"].mean(axis=0))
+result_li = stats.ttest_ind(alpha_li["correct"], alpha_li["incorrect"])[0]
+ax = plt.gca()  # get current axis
+twin = ax.twinx()
+twin.tick_params(axis='y', labelcolor="blue")
+twin.plot(times, result_li, color="blue", linestyle="dashed", alpha=0.5, label="T-test result")
 plt.title("Alpha power difference time course (contra - ipsi)")
 ax.set_xlabel("Time [s]")
 ax.set_ylabel("Z-score")
-plt.legend()
+plt.legend()"""
 # --- STATISTICS ---
 # Define some statistic params
 tail = 0  # two-sided
