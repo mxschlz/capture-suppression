@@ -4,87 +4,108 @@ import glob
 from SPACEPRIME.subjects import subject_ids
 from SPACEPRIME import get_data_path
 import numpy
-import seaborn as sns
-import pandas as pd
 import numpy as np
 from scipy import stats
-from SPACEPRIME.plotting import plot_individual_lines
-from mne.stats import permutation_cluster_1samp_test, permutation_cluster_test
+from mne.stats import permutation_cluster_1samp_test
 import scipy
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 plt.ion()
 
 
-# This script intends to replicate the method from Boncompte et al. (2016).
-# --- ALPHA POWER PRE-STIMULUS ---
-# We first retrieve our epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=False) for subject in subject_ids])
-# Control for priming
-epochs = epochs["Priming==0"]
-# crop to reduce runtime
-epochs.crop(-0.5, 0.5)
-# epochs.resample(128)  # downsample from 250 to 128 to reduce RAM cost
-# Get the sampling frequency because we need it later
-sfreq = epochs.info["sfreq"]
-# Now, we need to define some parameters for time-frequency analysis. This is pretty standard, we use morlet wavelet
-# convolution (sine wave multiplied by a gaussian distribution to flatten the edges of the filter), we define a number
-# of cycles of this wavelet that changes according to the frequency (smaller frequencies get smaller cycles, whereas
-# larger frequencies have larger cycles, but all have a cycle of half the frequency value). We also set decim = 1 to
-# keep the full amount of data
-freqs = numpy.arange(5, 31, 1)  # 1 to 30 Hz
+freqs = numpy.arange(4, 31, 1)  # 1 to 30 Hz
 #window_length = 0.5  # window lengths as in Wöstmann et al. (2019)
 n_cycles = freqs / 2  # different number of cycle per frequency
 method = "morlet"  # wavelet
-decim = 10  # keep only every fifth of the samples along the time axis
-mode = "mean"  # normalization
-n_jobs = -1  # number of parallel jobs. -1 uses all cores
+decim = 5  # keep only every fifth of the samples along the time axis
+n_jobs = 10  # number of parallel jobs. -1 uses all cores
 average = False  # get total oscillatory power, opposed to evoked oscillatory power (get power from ERP)
-# apply baseline to epochs
-# epochs.apply_baseline(baseline=baseline)
-# Compute time-frequency analysis
-power_total = epochs.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, average=average, n_jobs=n_jobs, decim=decim)
-# Furthermore, since we are interested in the induced alpha power only, we get the evoked alpha by averagring epochs and
-# then conducting TFR analysis. We subtract the evoked power from the total power to get induced oscillatory power.
-power_evoked = epochs.average().compute_tfr(method=method, freqs=freqs, decim=decim, n_cycles=n_cycles, n_jobs=n_jobs)
-# apply baseline
-#power_evoked.apply_baseline(baseline=baseline, mode=mode)
-# Subtract the evoked power, trial by trial.
-power_induced = power_total.copy()
-for trial in range(len(power_total)):
-    power_induced.data[trial] -= power_evoked.data[0]  # subtract the evoked power from total power
-# apply baseline
-#power_total.apply_baseline(baseline, mode=mode)
-# Now, we devide the epochs into our respective priming conditions. In order to do so, we make use of the metadata
-# which was appended to the epochs of every subject during preprocessing. We can access the metadata the same way as
-# we would by calling the event_ids in the experiment.
-power_corrects = power_induced["select_target==True"]
-power_incorrects = power_induced["select_target==False"]
-# Further, we balance the amount of trials by removing trials randomly from the larger portion.
-mne.epochs.equalize_epoch_counts([power_incorrects, power_corrects], method="random")
-# calculate difference spectrum
-power_diff = power_corrects - power_incorrects
-power_diff.average().plot(combine="mean")
+time_roi = (-0.4, 0.3)  # time to investigate for permutation test
+# --- Corrected Data Preparation Logic ---
+X_diff_list = []
+times_for_X = None  # Initialize
+freqs_for_X = None  # Initialize
+info_ref = None  # To store info from first subject
 
-# Prepare the data matrix for the permutation function. In this case, X must be a matrix of N observations x freqs x times
-time_roi = (-0.4, 0.3)
-X = power_diff.get_data(tmin=time_roi[0], tmax=time_roi[1])  # shape: trials x channels x freqs x times
-# The difference in induced oscillatory power between correct and incorrect trials we observe in the data might be
-# predictive of the performance of the participants. In order to find out where this power difference originates from
-# (broadly), we can apply a 1-sample
-# permutation cluster test. MNE provides a pipeline for this procedure, we just have to apply it to our own data.
-# First, we retrieve the channel adjacency (n_channels x n_channels) matrix from the data.
-sensor_adjacency, ch_names = mne.channels.find_ch_adjacency(power_diff.info, "eeg")
-# We further need to combine this adjacency with our dimensions of interest. For spatio-spectro-temporal data, we need
-# to add the spectro-temporal domain to the existing adjacency matrix.
-tfr_adjacency = mne.stats.combine_adjacency(X.shape[2], X.shape[-1], sensor_adjacency)
-# Define some statistic params
-tail = 0  # two-sided
-alpha = 0.05  # significane threshold
-# set degrees of freedom to len(epochs) - 1
-degrees_of_freedom = len(epochs) - 1
-t_thresh = scipy.stats.t.ppf(1 - alpha / 2, df=degrees_of_freedom)  # t threshold for a two-sided alpha
-tfce_thresh = dict(start=0, step=0.2)  # threshold-free cluster enhancement
-n_permutations = 1000  # number of permutations
+for sj in subject_ids:
+    print(f"Processing subject {sj}...")
+    epochs_sj = mne.read_epochs(
+        glob.glob(f"{get_data_path()}derivatives/epoching/sub-{sj}/eeg/sub-{sj}_task-spaceprime-epo.fif")[0],
+        preload=True)
+    epochs_sj.crop(-0.5, 0.5)  # Crop per subject
+
+    # Compute TFR per subject
+    power_total_sj = epochs_sj.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, average=False, n_jobs=n_jobs,
+                                           decim=decim)
+    power_evoked_sj = epochs_sj.average().compute_tfr(method=method, freqs=freqs, decim=decim, n_cycles=n_cycles,
+                                                      n_jobs=n_jobs)
+    power_induced_sj = power_total_sj.copy()
+    # Subtract evoked trial-by-trial (or just subtract the average evoked from each trial)
+    for trial in range(len(power_total_sj)):
+        power_induced_sj.data[trial] -= power_evoked_sj.data[0]
+
+    # Split conditions for THIS subject
+    power_corrects_sj = power_induced_sj["select_target==True"].copy()  # Use copy
+    power_incorrects_sj = power_induced_sj["select_target==False"].copy()  # Use copy
+
+    # Equalize trials for THIS subject
+    try:
+        print(f"  Subject {sj}: {len(power_corrects_sj)} correct vs {len(power_incorrects_sj)} incorrect trials.")
+        mne.epochs.equalize_epoch_counts([power_incorrects_sj, power_corrects_sj], method="random")  # TODO: I think the random method might yield unreplicable results
+        print(f"  Equalized to {len(power_corrects_sj)} trials per condition.")
+    except ValueError as e:
+        print(f"  Skipping subject {sj} due to equalization error: {e}")
+        continue  # Skip to next subject if equalization fails
+
+    # Calculate the difference TFR *for this subject* (average correct - average incorrect)
+    diff_tfr_sj = power_corrects_sj.average() - power_incorrects_sj.average()
+
+    # Store times/freqs/info from first valid subject
+    if times_for_X is None:
+        times_for_X = diff_tfr_sj.times
+        freqs_for_X = diff_tfr_sj.freqs
+        info_ref = diff_tfr_sj.info
+
+    # Crop to time ROI and get data
+    # Ensure times/freqs/channels match across subjects
+    if not np.allclose(diff_tfr_sj.times, times_for_X) or \
+            not np.allclose(diff_tfr_sj.freqs, freqs_for_X) or \
+            diff_tfr_sj.ch_names != info_ref.ch_names:
+        print(f"Warning: Data dimensions mismatch for subject {sj}. Skipping.")
+        continue
+
+    # Or use time_as_index on the diff_tfr_sj object if times are guaranteed identical
+    # tmin_idx, tmax_idx = diff_tfr_sj.time_as_index([time_roi[0], time_roi[1]], use_rounding=True)
+    # tmax_idx += 1 # Include endpoint
+
+    sj_diff_data_roi = diff_tfr_sj.get_data(tmin=time_roi[0], tmax=time_roi[1])  # Crop data array
+    X_diff_list.append(sj_diff_data_roi)
+
+# --- Create final X matrix ---
+if not X_diff_list:
+    raise RuntimeError("No subjects processed successfully.")
+
+X = np.stack(X_diff_list, axis=0)  # Stack along the first (subject) dimension
+n_subjects_in_test = X.shape[0]
+n_channels = X.shape[1]
+n_freqs = X.shape[2]
+n_times_in_roi = X.shape[3]
+
+print(f"Shape of final data matrix X: {X.shape}")
+# Now X has shape (n_subjects_processed, n_channels, n_freqs, n_times_in_roi)
+# and represents the average difference (Correct - Incorrect) per subject.
+
+# --- Adjacency Calculation (using dimensions from the final X) ---
+sensor_adjacency, ch_names = mne.channels.find_ch_adjacency(info_ref, "eeg")
+tfr_adjacency = mne.stats.combine_adjacency(sensor_adjacency, n_freqs, n_times_in_roi)
+print(f"Shape of final adjacency matrix: {tfr_adjacency.shape}")  # Should match n_features * n_features
+
+# --- Statistics ---
+alpha = 0.05
+degrees_of_freedom = n_subjects_in_test - 1  # Use actual number of subjects in X
+t_thresh = scipy.stats.t.ppf(1 - alpha / 2, df=degrees_of_freedom)
+# ... rest of the permutation test call using the new X and tfr_adjacency ...
+n_permutations = 100  # number of permutations
+tail = 0
 # Run the analysis
 t_obs, clusters, cluster_p_values, H0 = permutation_cluster_1samp_test(X,
                                                                        n_permutations=n_permutations,
@@ -93,17 +114,18 @@ t_obs, clusters, cluster_p_values, H0 = permutation_cluster_1samp_test(X,
                                                                        adjacency=tfr_adjacency,
                                                                        out_type="mask",
                                                                        verbose=True,
-                                                                       n_jobs=3)
-
+                                                                       n_jobs=n_jobs)
+alpha_fmin = 8
+alpha_fmax = 12
 # --- Plotting the Results ---
 freq_inds = (freqs >= alpha_fmin) & (freqs <= alpha_fmax)
-time_inds = power_total.time_as_index() # Use power_total or power_induced
-times_test = power_total.times[time_inds[0]:time_inds[1]] # Get the actual time values used
+time_inds = power_induced_sj.time_as_index(time_roi) # Use power_total or power_induced
+times_test = power_induced_sj.times[time_inds[0]:time_inds[1]] # Get the actual time values used
 freqs_test = freqs[freq_inds]
 # Find indices of significant clusters (p < alpha)
 good_cluster_inds = np.where(cluster_p_values < alpha)[0]
 # Use the info structure corresponding to the channels included in the test
-info_test = power_diff.info # This should have the correct channels
+info_test = power_induced_sj.info # This should have the correct channels
 # Loop through significant clusters and plot
 for i_clu, clu_idx in enumerate(good_cluster_inds):
     cluster_info = clusters[clu_idx] # Boolean mask: (freqs_test, times_test, channels)
