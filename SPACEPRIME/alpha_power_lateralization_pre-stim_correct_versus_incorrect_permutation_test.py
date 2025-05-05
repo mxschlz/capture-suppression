@@ -17,7 +17,7 @@ freqs = numpy.arange(4, 31, 1)  # 1 to 30 Hz
 n_cycles = freqs / 2  # different number of cycle per frequency
 method = "morlet"  # wavelet
 decim = 5  # keep only every fifth of the samples along the time axis
-n_jobs = 10  # number of parallel jobs. -1 uses all cores
+n_jobs = 5  # number of parallel jobs. -1 uses all cores
 average = False  # get total oscillatory power, opposed to evoked oscillatory power (get power from ERP)
 time_roi = (-0.4, 0.3)  # time to investigate for permutation test
 # --- Corrected Data Preparation Logic ---
@@ -32,9 +32,9 @@ for sj in subject_ids:
         glob.glob(f"{get_data_path()}derivatives/epoching/sub-{sj}/eeg/sub-{sj}_task-spaceprime-epo.fif")[0],
         preload=True)
     epochs_sj.crop(-0.5, 0.5)  # Crop per subject
-
+    epochs_sj = epochs_sj["Priming==0"]  #  get only no-priming condition
     # Compute TFR per subject
-    power_total_sj = epochs_sj.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, average=False, n_jobs=n_jobs,
+    power_total_sj = epochs_sj.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, average=average, n_jobs=n_jobs,
                                            decim=decim)
     power_evoked_sj = epochs_sj.average().compute_tfr(method=method, freqs=freqs, decim=decim, n_cycles=n_cycles,
                                                       n_jobs=n_jobs)
@@ -43,11 +43,11 @@ for sj in subject_ids:
     for trial in range(len(power_total_sj)):
         power_induced_sj.data[trial] -= power_evoked_sj.data[0]
 
-    # Split conditions for THIS subject
+    # Split conditions for subject
     power_corrects_sj = power_induced_sj["select_target==True"].copy()  # Use copy
     power_incorrects_sj = power_induced_sj["select_target==False"].copy()  # Use copy
 
-    # Equalize trials for THIS subject
+    # Equalize trials for subject
     try:
         print(f"  Subject {sj}: {len(power_corrects_sj)} correct vs {len(power_incorrects_sj)} incorrect trials.")
         mne.epochs.equalize_epoch_counts([power_incorrects_sj, power_corrects_sj], method="random")  # TODO: I think the random method might yield unreplicable results
@@ -104,7 +104,7 @@ alpha = 0.05
 degrees_of_freedom = n_subjects_in_test - 1  # Use actual number of subjects in X
 t_thresh = scipy.stats.t.ppf(1 - alpha / 2, df=degrees_of_freedom)
 # ... rest of the permutation test call using the new X and tfr_adjacency ...
-n_permutations = 100  # number of permutations
+n_permutations = 10000  # number of permutations
 tail = 0
 # Run the analysis
 t_obs, clusters, cluster_p_values, H0 = permutation_cluster_1samp_test(X,
