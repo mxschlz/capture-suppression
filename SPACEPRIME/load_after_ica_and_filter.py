@@ -24,7 +24,7 @@ params = dict(
 )
 settings_path = f"{get_data_path()}settings/"
 # get subject id and settings path
-subject_ids = subject_ids
+subject_ids = subject_ids[-1:]
 for subject_id in subject_ids:
     if subject_id in []:  # already processed
         continue
@@ -34,8 +34,11 @@ for subject_id in subject_ids:
     if subject_id == 101:
         epochs = mne.Epochs(raw, events=events, event_id=encoding_sub_101, preload=True, tmin=params["epoch_tmin"]+0.3, tmax=params["epoch_tmax"]+0.3,
                             baseline=None)
-    elif subject_id == 102:
+    elif subject_id in [102]:
         epochs = mne.Epochs(raw, events=events, event_id=encoding, preload=True, tmin=params["epoch_tmin"]+0.08, tmax=params["epoch_tmax"]+0.08,
+                            baseline=None)
+    elif subject_id in [166]:
+        epochs = mne.Epochs(raw, events=events, event_id=encoding, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
                             baseline=None)
     elif subject_id in [103, 104, 105, 112, 116, 118, 120]:
         epochs = mne.Epochs(raw, events=events, event_id=encoding, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
