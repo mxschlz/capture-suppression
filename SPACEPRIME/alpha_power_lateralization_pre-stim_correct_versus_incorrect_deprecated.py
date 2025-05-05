@@ -29,7 +29,6 @@ for sj in subject_ids:
 
 epochs = mne.concatenate_epochs(all_epochs)
 
-
 # crop to reduce runtime
 #epochs.crop(-0.5, 0.5)
 # define freqs of interest
@@ -45,7 +44,7 @@ sfreq = epochs.info["sfreq"]
 # keep the full amount of data
 freqs = numpy.arange(alpha_fmin, alpha_fmax+1, 1)  # 1 to 30 Hz
 #window_length = 0.5  # window lengths as in Wöstmann et al. (2019)
-n_cycles = freqs / 3  # different number of cycle per frequency
+n_cycles = freqs / 2  # different number of cycle per frequency
 method = "morlet"  # wavelet
 decim = 7  # keep only every fifth of the samples along the time axis
 mode = "mean"  # normalization
@@ -320,16 +319,16 @@ correct_diff_sub = alpha_lateralization_subjects["correct_ipsi"] - alpha_lateral
 correct_diff_sub_mean = correct_diff_sub.mean(axis=0)
 # correct_diff_sub_sem = np.std(correct_diff_sub, axis=0) / np.sqrt(len(times))
 result_ttest = stats.ttest_ind(incorrect_diff_sub, correct_diff_sub)
-plt.plot(times, incorrect_diff_sub_mean,
+plt.plot(times, alpha_li["incorrect"].mean(axis=0),
          label=f"Incorrect average lateralization", color="black")
-plt.plot(times, correct_diff_sub_mean,
+plt.plot(times, alpha_li["correct"].mean(axis=0),
          label=f"Correct average lateralization", color="grey")
 plt.legend()
 # make axis twin for plotting t values on different axis scaling
 ax = plt.gca()  # get current axis
 twin = ax.twinx()
 twin.tick_params(axis='y', labelcolor="blue")
-#twin.plot(times, result_ttest[0], color="blue", linestyle="dashed", alpha=0.5, label="T-test result")
+twin.plot(times, result_ttest[0], color="blue", linestyle="dashed", alpha=0.5, label="T-test result")
 plt.title("Alpha power difference (Correct - incorrect response) time course (ipsi - contra)")
 ax.set_xlabel("Time [s]")
 ax.set_ylabel("µV")
