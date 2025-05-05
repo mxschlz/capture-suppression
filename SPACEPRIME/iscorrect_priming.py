@@ -143,6 +143,7 @@ print(f"Overall Mean Mean RT: {overall_mean_rt:.4f}, Std Dev: {overall_std_rt:.4
 print(f"Overall Mean Mean PC: {overall_mean_pc:.4f}, Std Dev: {overall_std_pc:.4f}")
 print("\n")
 df_agg['zAcc'] = (df_agg['mean_pc'] - overall_mean_pc) / overall_std_pc
+df_agg['zRT'] = (df_agg['mean_rt'] - overall_mean_rt) / overall_std_rt
 # 3. Calculate Balanced Integration Score (BIS)
 df_agg['BIS'] = df_agg['zAcc'] - df_agg['zRT']
 # Plot BIS as a function of Priming
