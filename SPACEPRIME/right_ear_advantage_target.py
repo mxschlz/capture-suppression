@@ -5,6 +5,9 @@ from SPACEPRIME.plotting import plot_individual_lines
 import glob
 import os
 from SPACEPRIME import get_data_path
+from SPACEPRIME.subjects import subject_ids
+from stats import remove_outliers
+from scipy import stats
 plt.ion()
 
 
@@ -12,12 +15,16 @@ plt.ion()
 data_root = f"{get_data_path()}derivatives/preprocessing/"
 # get all the subject ids
 subjects = os.listdir(data_root)
-sub_ids = [104, 106, 108, 110, 112, 114]
 # load data from children
-df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/{subject}/beh/{subject}_clean*.csv")[0]) for subject in subjects if int(subject.split("-")[1]) in sub_ids])
+df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/sub-{subject}/beh/sub-{subject}_clean*.csv")[0]) for subject in subject_ids])
+df = df[df["phase"]!=2]
+df = remove_outliers(df, column_name="rt", threshold=2)
 # some cleaning
-barplot = sns.barplot(data=df, x="TargetLoc", y="select_target")
+df_mean = df.groupby(["subject_id", "TargetLoc"])[["select_target", "rt"]].mean().reset_index()
+barplot = sns.barplot(data=df_mean, x="TargetLoc", y="select_target")
 plot_individual_lines(barplot, data=df, x_col="TargetLoc", y_col="select_target")
 plt.xlabel("Target Position")
 plt.ylabel("Proportion correct")
 barplot.set_xticklabels([-90, 0, 90])
+# do stats
+stats.ttest_rel(df_mean.query("TargetLoc==2")["rt"], df_mean.query("TargetLoc==1")["rt"])

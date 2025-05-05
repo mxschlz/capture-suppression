@@ -1,31 +1,26 @@
-import matplotlib
-matplotlib.use("Qt5Agg")
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from color_palette import get_subpalette
+from SPACEPRIME.plotting import plot_individual_lines
+import glob
+import os
+from SPACEPRIME import get_data_path
+from SPACEPRIME.subjects import subject_ids
+from scipy import stats
 plt.ion()
 
-# insert color palette
-sns.set_palette(list(get_subpalette([14, 84, 44]).values()))
 
-# load up dataframe
-df = pd.read_excel("/home/max/data/SPACEPRIME/sub-101/beh/results_October_10_2024_16_56_41.xlsx", index_col=0)
+# define data root dir
+data_root = f"{get_data_path()}derivatives/preprocessing/"
+# get all the subject ids
+subjects = os.listdir(data_root)
+# load data from children
+df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/sub-{subject}/beh/sub-{subject}_clean*.csv")[0]) for subject in subject_ids])
+df = df.query("SingletonPresent==1")
 # some cleaning
-df = df[(df['event_type'] == 'mouse_click')]
-sp = df[df["SingletonPresent"] == 1]
-barplot = sns.barplot(data=sp, x="SingletonLoc", y="iscorrect")
-df_mean = sp.groupby(['subject_id', 'SingletonLoc']).mean(numeric_only=True).reset_index()
-bar_positions = [patch.get_x() + patch.get_width() / 2 for patch in barplot.patches]
-# Plot individual subject data as lines
-subjects = df['subject_id'].unique()
-for subject in subjects:
-    subject_data = df_mean[df_mean['subject_id'] == subject]
-    # Aligning subject data with bar positions
-    x_positions = [bar_positions[i] for i, _ in enumerate(subject_data['SingletonLoc'])]
-    plt.plot(x_positions, subject_data['iscorrect'], marker='', linestyle='-', color='black', alpha=0.5)
-plt.xlabel("Singleton Position")
+barplot = sns.barplot(data=df, x="SingletonLoc", y="select_target")
+plot_individual_lines(barplot, data=df, x_col="SingletonLoc", y_col="select_target")
+plt.xlabel("Distractor Position")
 plt.ylabel("Proportion correct")
 barplot.set_xticklabels([-90, 0, 90])
-plt.savefig("/home/max/figures/SPACEPRIME/singleton_iscorrect.svg")
-
+# do stats
