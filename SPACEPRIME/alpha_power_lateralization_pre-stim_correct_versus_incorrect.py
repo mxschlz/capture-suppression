@@ -14,8 +14,15 @@ plt.ion()
 
 
 # --- ALPHA POWER PRE-STIMULUS ---
-# We first retrieve our epochs
-epochs = mne.concatenate_epochs([mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{subject}/eeg/sub-{subject}_task-spaceprime-epo.fif")[0], preload=False) for subject in subject_ids])
+left_roi = ["TP9", "TP7", "CP5", "CP3", "CP1", "P7", "P5", "P3", "P1", "PO7", "PO3", "O1"]
+right_roi = ["TP10", "TP8", "CP6", "CP4", "CP2", "P8", "P6", "P4", "P2", "PO8", "PO4", "O2"]
+all_epochs = list()
+for sj in subject_ids:
+    epochs = mne.read_epochs(glob.glob(f"{get_data_path()}derivatives/epoching/sub-{sj}/eeg/sub-{sj}_task-spaceprime-epo.fif")[0], preload=True)
+    epochs.pick(left_roi+right_roi)
+    all_epochs.append(epochs)
+
+epochs = mne.concatenate_epochs(all_epochs)
 # Control for priming
 epochs = epochs["Priming==0"]
 # crop to reduce runtime
@@ -33,19 +40,13 @@ sfreq = epochs.info["sfreq"]
 # keep the full amount of data
 freqs = numpy.arange(alpha_fmin, alpha_fmax+1, 1)  # 8 to 12 Hz
 #window_length = 0.5  # window lengths as in Wöstmann et al. (2019)
-n_cycles = freqs / 3  # different number of cycle per frequency
+n_cycles = freqs / 2  # different number of cycle per frequency
 method = "morlet"  # wavelet
-decim = 5  # keep only every fifth of the samples along the time axis
+decim = 7  # keep only every fifth of the samples along the time axis
 mode = "mean"  # normalization
-n_jobs = -1  # number of parallel jobs. -1 uses all cores
+n_jobs = 5  # number of parallel jobs. -1 uses all cores
 average = False  # get total oscillatory power, opposed to evoked oscillatory power (get power from ERP)
-# apply baseline to epochs
-# epochs.apply_baseline(baseline=baseline)
 # Compute time-frequency analysis
-# First, define ROI electrode picks to reduce computation time.
-left_roi = ["TP9", "TP7", "CP5", "CP3", "CP1", "P7", "P5", "P3", "P1", "PO7", "PO3", "O1"]
-right_roi = ["TP10", "TP8", "CP6", "CP4", "CP2", "P8", "P6", "P4", "P2", "PO8", "PO4", "O2"]
-epochs = epochs.pick(picks=left_roi+right_roi)
 power_total = epochs.compute_tfr(method=method, freqs=freqs, n_cycles=n_cycles, average=average, n_jobs=n_jobs, decim=decim)
 # Furthermore, since we are interested in the induced alpha power only, we get the evoked alpha by averagring epochs and
 # then conducting TFR analysis. We subtract the evoked power from the total power to get induced oscillatory power.
@@ -57,7 +58,7 @@ power_induced = power_total.copy()
 for trial in range(len(power_total)):
     power_induced.data[trial] -= power_evoked.data[0]  # subtract the evoked power from total power
 # apply baseline
-#power_total.apply_baseline(baseline, mode=mode)
+# power_induced.apply_baseline(baseline, mode=mode)
 # Now, we devide the epochs into our respective priming conditions. In order to do so, we make use of the metadata
 # which was appended to the epochs of every subject during preprocessing. We can access the metadata the same way as
 # we would by calling the event_ids in the experiment.
@@ -70,7 +71,7 @@ power_diff = power_corrects - power_incorrects
 power_diff.average().plot(combine="mean")
 
 # define some params for the upcoming analysis
-alpha_tmin = -0.3  #TODO: what is a good value for this?
+alpha_tmin = -0.2  #TODO: what is a good value for this?
 alpha_tmax = 0.0
 # Store subject-level results
 subject_results = {}
@@ -256,13 +257,20 @@ for sub in subject_ids:
     print(f"Processing subject {sub} ... ")
     power_induced_sub = power_induced[f"subject_id=={sub}"]
     # Split into left and right lateral targets
-    left_target_power = power_induced_sub[[x for x in power_total.event_id if "Target-1-Singleton-2" in x]]
-    right_target_power = power_induced_sub[[x for x in power_total.event_id if "Target-3-Singleton-2" in x]]
+    left_target_power = power_induced_sub[[x for x in power_total.event_id if "Target-1" in x]]
+    right_target_power = power_induced_sub[[x for x in power_total.event_id if "Target-3" in x]]
     # Now, divide into correct and incorrect trials
     left_target_power_correct = left_target_power["select_target==True"]
     right_target_power_correct = right_target_power["select_target==True"]
     left_target_power_incorrect = left_target_power["select_target==False"]
     right_target_power_incorrect = right_target_power["select_target==False"]
+    print(
+        f"Equalizing left target: {len(left_target_power_correct)} correct vs {len(left_target_power_incorrect)} incorrect")
+    mne.epochs.equalize_epoch_counts([left_target_power_correct, left_target_power_incorrect])
+    print(
+        f"Equalizing right target: {len(right_target_power_correct)} correct vs {len(right_target_power_incorrect)} incorrect")
+    mne.epochs.equalize_epoch_counts([right_target_power_correct, right_target_power_incorrect])
+    print(f"Equalization successful for subject {sub}")
     # Now, divide all power spectra into contra and ipsi target presentation
     # get the trial-wise data for targets contra and ipsilateral to the stimulus, concatenate and average over stimulus.
     # Also, define the alpha frequency range in the get_data() method.
