@@ -123,7 +123,7 @@ def _create_and_save_concatenated_tfr(tfr_output_path, source_epochs_path):
     # For AverageTFR (if you average across epochs during computation):
     power = epochs.compute_tfr(method='morlet', freqs=freqs, n_cycles=n_cycles, return_itc=False,
                                average=False)
-    power.save(tfr_output_path, overwrite=True, output="complex") # Saves AverageTFR object
+    power.save(tfr_output_path, overwrite=True, output="power") # Saves AverageTFR object
     print(f"INFO: Successfully saved concatenated TFR to {tfr_output_path}.")
 
 def concatenate_eeg_and_save(create_epochs_if_missing=True, create_tfr_if_missing=True):
@@ -182,49 +182,33 @@ def concatenate_eeg_and_save(create_epochs_if_missing=True, create_tfr_if_missin
 
 # --- Data Loading Logic (Placeholders) ---
 def _load_concatenated_epochs_data(epochs_file_path):
-    """
-    TODO: Implement MNE-Python logic to load concatenated epochs.
-    This is a placeholder.
-    """
     print(f"INFO: Loading concatenated epochs from {epochs_file_path}...")
-    # --- BEGIN MNE-PYTHON EPOCH LOADING LOGIC ---
-    # try:
-    #     # Preload true/false based on typical usage patterns for this data.
-    #     epochs_data = mne.read_epochs(epochs_file_path, preload=True)
-    #     print(f"INFO: Successfully loaded epochs from {epochs_file_path}.")
-    #     return epochs_data
-    # except Exception as e:
-    #     print(f"ERROR: Failed to load epochs from {epochs_file_path}: {e}")
-    #     return None # Or re-raise, depending on desired error handling
-    # --- END MNE-PYTHON EPOCH LOADING LOGIC ---
-    print("INFO: (Placeholder) Returning dummy epochs data.")
-    return f"[[Dummy Epochs Object from {os.path.basename(epochs_file_path)}]]"
+    try:
+        # Preload true/false based on typical usage patterns for this data.
+        epochs_data = mne.read_epochs(epochs_file_path, preload=True)
+        print(f"INFO: Successfully loaded epochs from {epochs_file_path}.")
+        return epochs_data
+    except Exception as e:
+        print(f"ERROR: Failed to load epochs from {epochs_file_path}: {e}")
+        return None # Or re-raise, depending on desired error handling
 
 
 def _load_concatenated_tfr_data(tfr_file_path):
-    """
-    TODO: Implement MNE-Python logic to load concatenated TFR data.
-    This is a placeholder.
-    """
     print(f"INFO: Loading concatenated TFR from {tfr_file_path}...")
-    # --- BEGIN MNE-PYTHON TFR LOADING LOGIC ---
-    # try:
-    #     # mne.time_frequency.read_tfrs usually returns a list of TFR objects.
-    #     # If you save a single AverageTFR, it will be the first (and only) element.
-    #     tfr_objects_list = mne.time_frequency.read_tfrs(tfr_file_path)
-    #     if tfr_objects_list:
-    #         tfr_data = tfr_objects_list[0] # Assuming one TFR object per file
-    #         print(f"INFO: Successfully loaded TFR from {tfr_file_path}.")
-    #         return tfr_data
-    #     else:
-    #         print(f"ERROR: No TFR data found in file {tfr_file_path}.")
-    #         return None
-    # except Exception as e:
-    #     print(f"ERROR: Failed to load TFR from {tfr_file_path}: {e}")
-    #     return None # Or re-raise
-    # --- END MNE-PYTHON TFR LOADING LOGIC ---
-    print("INFO: (Placeholder) Returning dummy TFR data.")
-    return f"[[Dummy TFR Object from {os.path.basename(tfr_file_path)}]]"
+    try:
+        # mne.time_frequency.read_tfrs usually returns a list of TFR objects.
+        # If you save a single AverageTFR, it will be the first (and only) element.
+        tfr_objects_list = mne.time_frequency.read_tfrs(tfr_file_path)
+        if tfr_objects_list:
+            tfr_data = tfr_objects_list[0] # Assuming one TFR object per file
+            print(f"INFO: Successfully loaded TFR from {tfr_file_path}.")
+            return tfr_data
+        else:
+            print(f"ERROR: No TFR data found in file {tfr_file_path}.")
+            return None
+    except Exception as e:
+        print(f"ERROR: Failed to load TFR from {tfr_file_path}: {e}")
+        return None # Or re-raise
 
 
 # ======== Main execution block for __init__.py ========
@@ -248,11 +232,6 @@ is_tfr_available = _tfr_init_exist
 
 # 3. If data is missing, attempt to create it
 if _create_needed_for_epochs or _create_needed_for_tfr:
-    if _create_needed_for_epochs:
-        print(f"INFO: Concatenated epochs data ('{CONCATENATED_EPOCHS_FILENAME}') needs to be created.")
-    if _create_needed_for_tfr:
-        print(f"INFO: Concatenated TFR data ('{CONCATENATED_TFR_FILENAME}') needs to be created.")
-
     _epath, _tpath, _epok, _tpok = concatenate_eeg_and_save(
         create_epochs_if_missing=_create_needed_for_epochs,
         create_tfr_if_missing=_create_needed_for_tfr
