@@ -89,7 +89,7 @@ def _create_and_save_concatenated_epochs(epochs_output_path):
             if not epoch_files:
                 print(f"  Epoch file not found for subject {subject} using pattern: {epoch_file_pattern}. Skipping.")
                 continue
-            epochs_sub = mne.read_epochs(epoch_files[0], preload=True)
+            epochs_sub = mne.read_epochs(epoch_files[0], preload=False)
             print(f"  Loaded {len(epochs_sub)} epochs.")
         except Exception as e:
             print(f"  Error loading data for subject {subject}: {e}. Skipping.")
@@ -97,50 +97,34 @@ def _create_and_save_concatenated_epochs(epochs_output_path):
         all_epochs.append(epochs_sub)
         if not all_epochs:
              raise RuntimeError(f"ERROR: No epochs data found/processed to concatenate for {epochs_output_path}.")
-        if all_epochs: # Only proceed if there's something to concatenate
-            concatenated_epochs = mne.concatenate_epochs(all_epochs)
-            concatenated_epochs.save(epochs_output_path, overwrite=True)
-            print(f"INFO: Successfully saved concatenated epochs to {epochs_output_path}.")
-        else:
-            print(f"INFO: No epochs to concatenate. File not created: {epochs_output_path}")
+    if all_epochs: # Only proceed if there's something to concatenate
+        concatenated_epochs = mne.concatenate_epochs(all_epochs)
+        concatenated_epochs.save(epochs_output_path, overwrite=True)
+        print(f"INFO: Successfully saved concatenated epochs to {epochs_output_path}.")
+    else:
+        print(f"INFO: No epochs to concatenate. File not created: {epochs_output_path}")
 
 
 def _create_and_save_concatenated_tfr(tfr_output_path, source_epochs_path):
-    """
-    TODO: Implement MNE-Python logic to create and save concatenated TFR data.
-    This is a placeholder. It might load the concatenated epochs.
-    """
+    import numpy as np
     print(f"INFO: Attempting to create and save concatenated TFR to {tfr_output_path}...")
     # --- BEGIN MNE-PYTHON TFR COMPUTATION AND SAVING LOGIC ---
     # Example (replace with your actual TFR parameters and processing):
     #
-    # if not os.path.exists(source_epochs_path):
-    #     print(f"ERROR: Cannot create TFRs, concatenated epochs file not found: {source_epochs_path}")
-    #     return # Or raise error
-    #
-    # epochs = mne.read_epochs(source_epochs_path)
-    # freqs = np.arange(8, 30, 1)  # Example: 8-29 Hz in 1 Hz steps
-    # n_cycles = freqs / 2.0       # Example: Morlet wavelet cycles
-    #
-    # # Compute TFR (e.g., Morlet, multitaper) - choose one and average if needed
-    # # For AverageTFR (if you average across epochs during computation):
-    # power = mne.time_frequency.tfr_morlet(epochs, freqs=freqs, n_cycles=n_cycles,
-    #                                       use_fft=True, return_itc=False, average=True)
-    # power.save(tfr_output_path, overwrite=True) # Saves AverageTFR object
-    #
-    # print(f"INFO: Successfully saved concatenated TFR to {tfr_output_path}.")
-    # --- END MNE-PYTHON TFR COMPUTATION AND SAVING LOGIC ---
+    if not os.path.exists(source_epochs_path):
+       print(f"ERROR: Cannot create TFRs, concatenated epochs file not found: {source_epochs_path}")
+       return # Or raise error
 
-    # For demonstration purposes, creating a dummy file.
-    # TODO: Remove this dummy file creation when MNE logic is implemented.
-    try:
-        with open(tfr_output_path, 'w') as f:
-            f.write("Dummy concatenated TFR data. Replace with actual MNE processing.")
-        print(f"INFO: Successfully saved (dummy) concatenated TFR to {tfr_output_path}.")
-    except IOError as e:
-        print(f"ERROR: Failed to save dummy TFR to {tfr_output_path}: {e}")
-        raise
+    epochs = mne.read_epochs(source_epochs_path)
+    freqs = np.arange(1, 31, 1)  # Example: 8-29 Hz in 1 Hz steps
+    n_cycles = freqs / 2.0       # Example: Morlet wavelet cycles
 
+    # Compute TFR (e.g., Morlet, multitaper) - choose one and average if needed
+    # For AverageTFR (if you average across epochs during computation):
+    power = epochs.compute_tfr(method='morlet', freqs=freqs, n_cycles=n_cycles, return_itc=False,
+                               average=False)
+    power.save(tfr_output_path, overwrite=True, output="complex") # Saves AverageTFR object
+    print(f"INFO: Successfully saved concatenated TFR to {tfr_output_path}.")
 
 def concatenate_eeg_and_save(create_epochs_if_missing=True, create_tfr_if_missing=True):
     """
