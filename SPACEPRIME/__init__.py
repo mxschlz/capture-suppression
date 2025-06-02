@@ -185,7 +185,7 @@ def _load_concatenated_epochs_data(epochs_file_path):
     print(f"INFO: Loading concatenated epochs from {epochs_file_path}...")
     try:
         # Preload true/false based on typical usage patterns for this data.
-        epochs_data = mne.read_epochs(epochs_file_path, preload=True)
+        epochs_data = mne.read_epochs(epochs_file_path, preload=False)
         print(f"INFO: Successfully loaded epochs from {epochs_file_path}.")
         return epochs_data
     except Exception as e:
