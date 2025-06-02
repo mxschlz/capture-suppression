@@ -122,7 +122,7 @@ def _create_and_save_concatenated_tfr(tfr_output_path, source_epochs_path):
     # Compute TFR (e.g., Morlet, multitaper) - choose one and average if needed
     # For AverageTFR (if you average across epochs during computation):
     power = epochs.compute_tfr(method='morlet', freqs=freqs, n_cycles=n_cycles, return_itc=False,
-                               average=False, decim=7, n_jobs=20)
+                               average=False, decim=7, n_jobs=5)
     power.save(tfr_output_path, overwrite=True, output="power") # Saves AverageTFR object
     print(f"INFO: Successfully saved concatenated TFR to {tfr_output_path}.")
 
