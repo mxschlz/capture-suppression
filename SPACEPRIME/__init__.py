@@ -116,14 +116,14 @@ def _create_and_save_concatenated_tfr(tfr_output_path, source_epochs_path):
        return # Or raise error
 
     epochs = mne.read_epochs(source_epochs_path)
-    freqs = np.arange(1, 31, 1)  # Example: 8-29 Hz in 1 Hz steps
+    freqs = np.arange(5, 26, 1)  # Example: 5-25 Hz in 1 Hz steps
     n_cycles = freqs / 2.0       # Example: Morlet wavelet cycles
 
     # Compute TFR (e.g., Morlet, multitaper) - choose one and average if needed
     # For AverageTFR (if you average across epochs during computation):
     power = epochs.compute_tfr(method='morlet', freqs=freqs, n_cycles=n_cycles, return_itc=False,
-                               average=False, decim=10, n_jobs=5)
-    power.save(tfr_output_path, overwrite=True, output="power") # Saves AverageTFR object
+                               average=False, decim=15, n_jobs=5)
+    power.save(tfr_output_path, overwrite=True) # Saves AverageTFR object
     print(f"INFO: Successfully saved concatenated TFR to {tfr_output_path}.")
 
 def concatenate_eeg_and_save(create_epochs_if_missing=True, create_tfr_if_missing=True):
