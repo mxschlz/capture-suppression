@@ -19,34 +19,37 @@ from SPACEPRIME.subjects import subject_ids
 df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}sourcedata/raw/sub-{subject}/beh/flanker_data_{subject}*.csv")[0]) for subject in subject_ids])
 # clean rt data
 df = remove_outliers(df, column_name="rt", threshold=2)
+# get mean values
+df_mean = df.groupby(["subject_id", "congruency"])[["rt", "correct"]].mean().reset_index()
 # plot reaction time distribution
-sns.displot(data=df["rt"])
+sns.displot(data=df_mean["rt"])
+sns.displot(data=df_mean["correct"])
 # plot reaction time
-plot = sns.barplot(data=df, x="congruency", y="rt")
-plot_individual_lines(ax=plot, data=df, x_col="congruency", y_col="rt")
+plot = sns.barplot(data=df_mean, x="congruency", y="rt")
+plot_individual_lines(ax=plot, data=df_mean, x_col="congruency", y_col="rt")
 # plot performance accuracy
-plot = sns.barplot(data=df, x="congruency", y="correct")
-plot_individual_lines(ax=plot, data=df, x_col="congruency", y_col="correct")
+plot = sns.barplot(data=df_mean, x="congruency", y="correct")
+plot_individual_lines(ax=plot, data=df_mean, x_col="congruency", y_col="correct")
 # transform categories into integers for statistics
 mapping = dict(congruent=1, incongruent=0, neutral=2)
-df["congruency_int"] = df["congruency"].map(mapping)
+df_mean["congruency_int"] = df_mean["congruency"].map(mapping)
 # do t test
 # ad hoc stats
 # some stats on behavior
 # Perform repeated measures ANOVA for 'correct'
-anova_correct = AnovaRM(df, depvar='rt', subject='subject_id', within=['congruency'], aggregate_func="mean").fit()
+anova_correct = AnovaRM(df_mean, depvar='rt', subject='subject_id', within=['congruency'], aggregate_func="mean").fit()
 print(anova_correct.summary())
 # Perform paired t-tests
-t_stat_1, p_value_1 = ttest_rel(df.query("congruency=='neutral'")["rt"], df.query("congruency=='congruent'")["rt"],
+t_stat_1, p_value_1 = ttest_rel(df_mean.query("congruency=='neutral'")["rt"], df_mean.query("congruency=='congruent'")["rt"],
                                   nan_policy="omit")
-t_stat_2, p_value_2 = ttest_rel(df.query("congruency=='neutral'")["rt"], df.query("congruency=='incongruent'")["rt"],
+t_stat_2, p_value_2 = ttest_rel(df_mean.query("congruency=='neutral'")["rt"], df_mean.query("congruency=='incongruent'")["rt"],
                                   nan_policy="omit")
-t_stat_3, p_value_3 = ttest_rel(df.query("congruency=='incongruent'")["rt"], df.query("congruency=='congruent'")["rt"],
+t_stat_3, p_value_3 = ttest_rel(df_mean.query("congruency=='incongruent'")["rt"], df_mean.query("congruency=='congruent'")["rt"],
                                   nan_policy="omit")
 # Combine p-values
 p_values = [p_value_1, p_value_2, p_value_3]
 # Bonferroni correction
-reject, p_values_corrected, _, _ = multipletests(p_values, alpha=0.05, method='bonferroni')
+reject, p_values_corrected, _, _ = multipletests(p_values, alpha=0.05, method='holm')
 print("Corrected p-values (Bonferroni):", p_values_corrected)
 print("Reject null hypothesis:", reject)
 
