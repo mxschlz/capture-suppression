@@ -1,13 +1,13 @@
 import matplotlib.pyplot as plt
-from SPACEPRIME import get_data_path, concatenated_epochs_data  # Assuming this function returns your data path
+import SPACEPRIME
 import pandas as pd
 import statsmodels.formula.api as smf
 import seaborn as sns
 import numpy as np
 from scipy.stats import pearsonr
 import statsmodels.genmod.bayes_mixed_glm as sm_bayes
-from stats import remove_outliers  # Assuming this is your custom outlier removal function
-# from patsy.contrasts import Treatment # Import Treatment for specifying reference levels
+from stats import remove_outliers, r_squared_mixed_model  # Assuming this is your custom outlier removal function
+from patsy.contrasts import Treatment # Import Treatment for specifying reference levels
 
 plt.ion()
 
@@ -17,20 +17,20 @@ plt.ion()
 EPOCH_TMIN = 0.0  # Start time for epoch cropping (seconds)
 EPOCH_TMAX = 0.7  # End time for epoch cropping (seconds)
 OUTLIER_RT_THRESHOLD = 2.0  # SDs for RT outlier removal (used in remove_outliers)
-FILTER_PHASE = None  # Phase to exclude from analysis (e.g., practice blocks)
+FILTER_PHASE = 2  # Phase to exclude from analysis (e.g., practice blocks)
 
 # --- 2. Column Names ---
 # Existing columns in metadata or to be created
 SUBJECT_ID_COL = 'subject_id'
-TARGET_COL = 'TargetLoc'  # Target position (e.g., 1, 2, 3)
-DISTRACTOR_COL = 'SingletonLoc'  # Distractor position (e.g., 0, 1, 2, 3)
+TARGET_COL = 'TargetLoc'  # Target position (e.g., "left", "mid", "right")
+DISTRACTOR_COL = 'SingletonLoc'  # Distractor position (e.g., "absent", "left", "mid", "right")
 REACTION_TIME_COL = 'rt'
 ACCURACY_COL = 'select_target'  # Original accuracy column (e.g., True/False or 1.0/0.0)
 PHASE_COL = 'phase'
-DISTRACTOR_PRESENCE_COL = 'SingletonPresent'  # (e.g., 0 or 1)
-PRIMING_COL = 'Priming'  # (e.g., -1, 0, 1)
-#TARGET_DIGIT_COL = 'TargetDigit'
-#SINGLETON_DIGIT_COL = 'SingletonDigit'
+# DISTRACTOR_PRESENCE_COL = 'SingletonPresent'  # (e.g., 0 or 1)
+PRIMING_COL = 'Priming'  # (e.g., "np", "no-p", "pp")
+# TARGET_DIGIT_COL = 'TargetDigit'
+# SINGLETON_DIGIT_COL = 'SingletonDigit'
 # BLOCK_COL = 'block' # Removed as per request
 
 # ERP component columns (will be created in the script)
@@ -41,32 +41,57 @@ ERP_PD_COL = 'Pd'
 TRIAL_NUMBER_COL = 'total_trial_nr'  # Overall trial number per subject (will be created)
 ACCURACY_INT_COL = 'select_target_int'  # Integer version of accuracy (0 or 1, will be created)
 
+# --- Mappings and Reference Levels for Categorical Variables ---
+TARGET_LOC_MAP = {1: "left", 2: "mid", 3: "right"}
+DISTRACTOR_LOC_MAP = {0: "absent", 1: "left", 2: "mid", 3: "right"}
+PRIMING_MAP = {-1: "np", 0: "no-p", 1: "pp"}
+
+# Define string reference levels based on the original numeric ones
+TARGET_REF_VAL_ORIGINAL = 2
+TARGET_REF_STR = TARGET_LOC_MAP.get(TARGET_REF_VAL_ORIGINAL) # Should be "mid"
+
+DISTRACTOR_REF_VAL_ORIGINAL = 2 # This reference is typically for when distractor is present
+DISTRACTOR_REF_STR = DISTRACTOR_LOC_MAP.get(DISTRACTOR_REF_VAL_ORIGINAL) # Should be "mid"
+
+PRIMING_REF_VAL_ORIGINAL = 0
+PRIMING_REF_STR = PRIMING_MAP.get(PRIMING_REF_VAL_ORIGINAL) # Should be "no-p"
+
 # --- 3. ERP Component Definitions ---
-# Pd Component
 PD_TIME_WINDOW = (0.29, 0.38)  # (start_time, end_time) in seconds
-PD_ELECTRODES = ["C3",
-                 "C4"]  # Electrodes for Pd. Order: [left_hemisphere_electrode, right_hemisphere_electrode]
+PD_ELECTRODES = [
+    ("FC3", "FC4"),
+    ("FC5", "FC6"),
+    ("C3", "C4"),
+    ("C5", "C6"),
+    ("CP3", "CP4"),
+    ("CP5", "CP6")
+]  # Electrodes for Pd. Order: [left_hemisphere_electrode, right_hemisphere_electrode]
 
 # N2ac Component
-N2AC_TIME_WINDOW = (0.22, 0.29)  # (start_time, end_time) in seconds
-N2AC_ELECTRODES = ["FC5",
-                   "FC6"]  # Electrodes for N2ac. Order: [left_hemisphere_electrode, right_hemisphere_electrode]
-
+N2AC_TIME_WINDOW = (0.22, 0.38)  # (start_time, end_time) in seconds
+N2AC_ELECTRODES = [
+    ("FC3", "FC4"),
+    ("FC5", "FC6"),
+    ("C3", "C4"),
+    ("C5", "C6"),
+    ("CP3", "CP4"),
+    ("CP5", "CP6")
+]  # Electrodes for N2ac. Order: [left_hemisphere_electrode, right_hemisphere_electrode]
 
 # --- 4. LMM Predictor Variables for N2ac and Pd Models ---
 LMM_N2AC_PD_CONTINUOUS_PREDICTORS = [TRIAL_NUMBER_COL, REACTION_TIME_COL]
 LMM_N2AC_PD_CATEGORICAL_PREDICTORS = [
-    DISTRACTOR_PRESENCE_COL,
     TARGET_COL,
     DISTRACTOR_COL,
     PRIMING_COL,
     ACCURACY_INT_COL
     # BLOCK_COL removed
+    # DISTRACTOR_PRESENCE_COL removed
 ]
 
 # --- Main Script ---
 print("Loading and concatenating epochs...")
-epochs = concatenated_epochs_data.load_data().crop(tmin=EPOCH_TMIN, tmax=EPOCH_TMAX)
+epochs = SPACEPRIME.load_concatenated_epochs()
 print("Epochs loaded and cropped.")
 
 df = epochs.metadata.copy()
@@ -95,68 +120,133 @@ if ACCURACY_COL in df.columns:
 else:
     print(f"Warning: Accuracy column '{ACCURACY_COL}' not found. Cannot create '{ACCURACY_INT_COL}'.")
 
-for col_name in [TARGET_COL, DISTRACTOR_COL]:
-    if col_name not in df.columns:
-        raise ValueError(f"Error: Critical column '{col_name}' not found in metadata.")
-    df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
-    if df[col_name].isna().any():
-        print(f"Warning: NaNs introduced in '{col_name}' after coercion. Check data.")
-    print(f"Unique values in '{col_name}': {df[col_name].unique()}")
-    if 2 not in df[col_name].unique():
-         print(f"Warning: Column '{col_name}' does not contain the value 2. "
-               f"Setting 2 as reference might cause issues if it's not present in the data for some models.")
-
-
-if PRIMING_COL in df.columns:
-     if 0 not in df[PRIMING_COL].unique():
-         print(f"Warning: Priming column '{PRIMING_COL}' does not contain the value 0. "
-               f"Setting 0 as reference might cause issues if it's not present in the data.")
-     print(f"Unique values in '{PRIMING_COL}': {df[PRIMING_COL].unique()}")
+# Process TARGET_COL: Convert to numeric, then map to strings
+if TARGET_COL in df.columns:
+    numeric_target_col = pd.to_numeric(df[TARGET_COL], errors='coerce')
+    if numeric_target_col.isna().sum() > df[TARGET_COL].isna().sum(): # Check if new NaNs were introduced by coercion
+        print(f"Warning: NaNs introduced in '{TARGET_COL}' after coercion. Original non-numeric values will become NaN after mapping if not in map.")
+    df[TARGET_COL] = numeric_target_col.map(TARGET_LOC_MAP)
+    print(f"Unique values in '{TARGET_COL}' after mapping: {df[TARGET_COL].unique()}")
+    if TARGET_REF_STR is None:
+        print(f"Error: TARGET_REF_STR is None. Original numeric reference {TARGET_REF_VAL_ORIGINAL} might not be in TARGET_LOC_MAP.")
+    elif TARGET_REF_STR not in df[TARGET_COL].dropna().unique():
+        print(f"Warning: Mapped column '{TARGET_COL}' does not contain the reference value '{TARGET_REF_STR}'. "
+              f"Setting '{TARGET_REF_STR}' as reference might cause issues if it's not present in the data for some models.")
 else:
-     print(f"Warning: Priming column '{PRIMING_COL}' not found.")
+    raise ValueError(f"Error: Critical column '{TARGET_COL}' not found in metadata.")
 
-# Removed BLOCK_COL processing logic
+# Process DISTRACTOR_COL: Convert to numeric, then map to strings
+if DISTRACTOR_COL in df.columns:
+    numeric_distractor_col = pd.to_numeric(df[DISTRACTOR_COL], errors='coerce')
+    if numeric_distractor_col.isna().sum() > df[DISTRACTOR_COL].isna().sum():
+        print(f"Warning: NaNs introduced in '{DISTRACTOR_COL}' after coercion. Original non-numeric values will become NaN after mapping if not in map.")
+    df[DISTRACTOR_COL] = numeric_distractor_col.map(DISTRACTOR_LOC_MAP)
+    print(f"Unique values in '{DISTRACTOR_COL}' after mapping: {df[DISTRACTOR_COL].unique()}")
+    if DISTRACTOR_REF_STR is None:
+         print(f"Error: DISTRACTOR_REF_STR is None. Original numeric reference {DISTRACTOR_REF_VAL_ORIGINAL} might not be in DISTRACTOR_LOC_MAP.")
+    # Check for reference 'mid' among present distractors (relevant for Pd model)
+    elif DISTRACTOR_LOC_MAP.get(0) is not None and \
+         DISTRACTOR_REF_STR not in df[df[DISTRACTOR_COL] != DISTRACTOR_LOC_MAP[0]][DISTRACTOR_COL].dropna().unique():
+        print(f"Warning: Mapped column '{DISTRACTOR_COL}' (excluding '{DISTRACTOR_LOC_MAP[0]}') does not contain the reference value '{DISTRACTOR_REF_STR}'. "
+              f"This might cause issues for models using '{DISTRACTOR_REF_STR}' as reference for present distractors.")
+    elif DISTRACTOR_LOC_MAP.get(0) is None and DISTRACTOR_REF_STR not in df[DISTRACTOR_COL].dropna().unique():
+         print(f"Warning: Mapped column '{DISTRACTOR_COL}' does not contain the reference value '{DISTRACTOR_REF_STR}'.")
 
-print("-" * 30)
+else:
+    raise ValueError(f"Error: Critical column '{DISTRACTOR_COL}' not found in metadata.")
 
-erp_df_picks = list(set(N2AC_ELECTRODES + PD_ELECTRODES))
-erp_df = epochs.to_data_frame(picks=erp_df_picks, time_format=None)
+# Process PRIMING_COL: Convert to numeric, then map to strings
+if PRIMING_COL in df.columns:
+    numeric_priming_col = pd.to_numeric(df[PRIMING_COL], errors='coerce')
+    if numeric_priming_col.isna().sum() > df[PRIMING_COL].isna().sum():
+        print(f"Warning: NaNs introduced in '{PRIMING_COL}' after coercion. Original non-numeric values will become NaN after mapping if not in map.")
+    df[PRIMING_COL] = numeric_priming_col.map(PRIMING_MAP)
+    print(f"Unique values in '{PRIMING_COL}' after mapping: {df[PRIMING_COL].unique()}")
+    if PRIMING_REF_STR is None:
+        print(f"Error: PRIMING_REF_STR is None. Original numeric reference {PRIMING_REF_VAL_ORIGINAL} might not be in PRIMING_MAP.")
+    elif PRIMING_REF_STR not in df[PRIMING_COL].dropna().unique():
+        print(f"Warning: Mapped column '{PRIMING_COL}' does not contain the reference value '{PRIMING_REF_STR}'. "
+              f"Setting '{PRIMING_REF_STR}' as reference might cause issues if it's not present in the data for some models.")
+else:
+    print(f"Warning: Priming column '{PRIMING_COL}' not found.")
 
+# Get all unique electrodes needed for N2ac and Pd calculations
+erp_df_picks_tuples = list(set(N2AC_ELECTRODES + PD_ELECTRODES)) # List of unique (L,R) tuples
+erp_df_picks_flat = [item for electrode_pair in erp_df_picks_tuples for item in electrode_pair] # Flatten list of tuples
+erp_df_picks_unique_flat = sorted(list(set(erp_df_picks_flat))) # Unique electrode names, sorted
+
+# Extract ERP data for the required electrodes
+erp_df = epochs.to_data_frame(picks=erp_df_picks_unique_flat, time_format=None)
+
+# Calculate N2ac means
 n2ac_time_mask = (erp_df['time'] >= N2AC_TIME_WINDOW[0]) & (erp_df['time'] <= N2AC_TIME_WINDOW[1])
 n2ac_filtered_df = erp_df[n2ac_time_mask]
 print(f"Calculating N2ac means using electrodes: {N2AC_ELECTRODES} in window: {N2AC_TIME_WINDOW}")
-n2ac_means = n2ac_filtered_df.groupby('epoch')[N2AC_ELECTRODES].mean()
-print("N2ac means calculated.")
+# Calculate means for all relevant unique electrodes within the N2ac time window
+n2ac_means = n2ac_filtered_df.groupby('epoch')[erp_df_picks_unique_flat].mean()
+# Rename columns to specify they are from the N2ac time window
+n2ac_means = n2ac_means.rename(columns={elec: f"{elec}_N2acWindow" for elec in n2ac_means.columns})
+print("N2ac means calculated and columns renamed.")
 
+# Calculate Pd means
 pd_time_mask = (erp_df['time'] >= PD_TIME_WINDOW[0]) & (erp_df['time'] <= PD_TIME_WINDOW[1])
 pd_filtered_df = erp_df[pd_time_mask]
 print(f"Calculating Pd means using electrodes: {PD_ELECTRODES} in window: {PD_TIME_WINDOW}")
-pd_means = pd_filtered_df.groupby('epoch')[PD_ELECTRODES].mean()
-print("Pd means calculated.")
+# Calculate means for all relevant unique electrodes within the Pd time window
+pd_means = pd_filtered_df.groupby('epoch')[erp_df_picks_unique_flat].mean()
+# Rename columns to specify they are from the Pd time window
+pd_means = pd_means.rename(columns={elec: f"{elec}_PdWindow" for elec in pd_means.columns})
+print("Pd means calculated and columns renamed.")
 
+# Merge the window-specific means into the main dataframe
 df = df.merge(n2ac_means, left_index=True, right_index=True, how='left')
 df = df.merge(pd_means, left_index=True, right_index=True, how='left')
-print("ERP means merged into metadata.")
+print("ERP means merged into metadata with window-specific column names.")
 
+# Initialize ERP component columns
 df[ERP_N2AC_COL] = np.nan
 df[ERP_PD_COL] = np.nan
 
-n2ac_elec_L = N2AC_ELECTRODES[0]
-n2ac_elec_R = N2AC_ELECTRODES[1]
-pd_elec_L = PD_ELECTRODES[0]
-pd_elec_R = PD_ELECTRODES[1]
+# Calculate N2ac based on the mean of differences from specified electrode pairs
+n2ac_pair_difference_columns = []
+for left_electrode, right_electrode in N2AC_ELECTRODES:
+    left_col_name = f"{left_electrode}_N2acWindow"
+    right_col_name = f"{right_electrode}_N2acWindow"
+    if left_col_name in df.columns and right_col_name in df.columns:
+        temp_diff_col = f"temp_n2ac_diff_{left_electrode}_{right_electrode}"
+        df[temp_diff_col] = df[left_col_name] - df[right_col_name]
+        n2ac_pair_difference_columns.append(temp_diff_col)
+    else:
+        print(f"Warning: Columns for N2ac pair ({left_col_name}, {right_col_name}) not found. This pair will be skipped for N2ac calculation.")
 
-if n2ac_elec_L in df.columns and n2ac_elec_R in df.columns:
-    df[ERP_N2AC_COL] = df[n2ac_elec_L] - df[n2ac_elec_R]
-    print(f"{ERP_N2AC_COL} calculated as {n2ac_elec_L} - {n2ac_elec_R}.")
+if n2ac_pair_difference_columns:
+    df[ERP_N2AC_COL] = df[n2ac_pair_difference_columns].mean(axis=1)
+    print(f"{ERP_N2AC_COL} calculated as the mean of {len(n2ac_pair_difference_columns)} electrode pair differences.")
+    # Optionally, drop the temporary difference columns
+    # df = df.drop(columns=n2ac_pair_difference_columns)
 else:
-    print(f"Warning: Columns for N2ac electrodes ({n2ac_elec_L}, {n2ac_elec_R}) not found. {ERP_N2AC_COL} will remain NaN.")
+    print(f"Warning: No valid electrode pairs found for N2ac calculation. {ERP_N2AC_COL} will remain NaN.")
 
-if pd_elec_L in df.columns and pd_elec_R in df.columns:
-    df[ERP_PD_COL] = df[pd_elec_L] - df[pd_elec_R]
-    print(f"{ERP_PD_COL} calculated as {pd_elec_L} - {pd_elec_R}.")
+# Calculate Pd based on the mean of differences from specified electrode pairs
+pd_pair_difference_columns = []
+for left_electrode, right_electrode in PD_ELECTRODES:
+    left_col_name = f"{left_electrode}_PdWindow"
+    right_col_name = f"{right_electrode}_PdWindow"
+    if left_col_name in df.columns and right_col_name in df.columns:
+        temp_diff_col = f"temp_pd_diff_{left_electrode}_{right_electrode}"
+        df[temp_diff_col] = df[left_col_name] - df[right_col_name]
+        pd_pair_difference_columns.append(temp_diff_col)
+    else:
+        print(f"Warning: Columns for Pd pair ({left_col_name}, {right_col_name}) not found. This pair will be skipped for Pd calculation.")
+
+if pd_pair_difference_columns:
+    df[ERP_PD_COL] = df[pd_pair_difference_columns].mean(axis=1)
+    print(f"{ERP_PD_COL} calculated as the mean of {len(pd_pair_difference_columns)} electrode pair differences.")
+    # Optionally, drop the temporary difference columns
+    # df = df.drop(columns=pd_pair_difference_columns)
 else:
-    print(f"Warning: Columns for Pd electrodes ({pd_elec_L}, {pd_elec_R}) not found. {ERP_PD_COL} will remain NaN.")
+    print(f"Warning: No valid electrode pairs found for Pd calculation. {ERP_PD_COL} will remain NaN.")
+
 
 print(f"\n{ERP_N2AC_COL} Calculation Summary (Trials with calculated {ERP_N2AC_COL} per {TARGET_COL}):")
 if ERP_N2AC_COL in df and TARGET_COL in df:
@@ -176,6 +266,10 @@ n2ac_model_cols = [ERP_N2AC_COL, SUBJECT_ID_COL] + \
                   LMM_N2AC_PD_CONTINUOUS_PREDICTORS + \
                   LMM_N2AC_PD_CATEGORICAL_PREDICTORS
 df_n2ac_model = df[list(set(n2ac_model_cols))].dropna()
+df_n2ac_model[SUBJECT_ID_COL] = df_n2ac_model[SUBJECT_ID_COL].astype(int).astype(str)
+# save to csv
+df_n2ac_model.to_csv('G:\\Meine Ablage\\PhD\\data\\SPACEPRIME\\concatenated\\df_n2ac_model.csv', index=True)
+
 
 if df_n2ac_model.empty or df_n2ac_model[ERP_N2AC_COL].isna().all():
     print(f"N2ac model dataframe is empty or all '{ERP_N2AC_COL}' are NaN. Check N2ac calculation.")
@@ -185,26 +279,39 @@ else:
     formula_parts_n2ac.extend(LMM_N2AC_PD_CONTINUOUS_PREDICTORS)
     for cat_pred in LMM_N2AC_PD_CATEGORICAL_PREDICTORS:
         if cat_pred == PRIMING_COL:
-            if 0 in df_n2ac_model[PRIMING_COL].unique():
-                formula_parts_n2ac.append(f"C({cat_pred}, Treatment(reference=0))")
+            if PRIMING_REF_STR and PRIMING_REF_STR in df_n2ac_model[PRIMING_COL].unique():
+                formula_parts_n2ac.append(f"C({cat_pred}, Treatment(reference='{PRIMING_REF_STR}'))")
             else:
-                print(f"Warning: Reference 0 not found for {PRIMING_COL} in N2ac model data. Using default.")
+                print(f"Warning: Reference '{PRIMING_REF_STR}' not found for {PRIMING_COL} in N2ac model data. Using default.")
                 formula_parts_n2ac.append(f"C({cat_pred})")
         elif cat_pred == TARGET_COL:
-            if 2 in df_n2ac_model[TARGET_COL].unique():
-                formula_parts_n2ac.append(f"C({cat_pred}, Treatment(reference=2))")
+            if TARGET_REF_STR and TARGET_REF_STR in df_n2ac_model[TARGET_COL].unique():
+                formula_parts_n2ac.append(f"C({cat_pred}, Treatment(reference='{TARGET_REF_STR}'))")
             else:
-                print(f"Warning: Reference 2 not found for {TARGET_COL} in N2ac model data. Using default.")
+                print(f"Warning: Reference '{TARGET_REF_STR}' not found for {TARGET_COL} in N2ac model data. Using default.")
                 formula_parts_n2ac.append(f"C({cat_pred})")
         elif cat_pred == DISTRACTOR_COL:
-            if 2 in df_n2ac_model[DISTRACTOR_COL].unique():
-                formula_parts_n2ac.append(f"C({cat_pred}, Treatment(reference=2))")
+            if DISTRACTOR_REF_STR and DISTRACTOR_REF_STR in df_n2ac_model[DISTRACTOR_COL].unique():
+                formula_parts_n2ac.append(f"C({cat_pred}, Treatment(reference='{DISTRACTOR_REF_STR}'))")
             else:
-                print(f"Warning: Reference 2 not found for {DISTRACTOR_COL} in N2ac model data. Using default.")
+                print(f"Warning: Reference '{DISTRACTOR_REF_STR}' not found for {DISTRACTOR_COL} in N2ac model data. Using default.")
                 formula_parts_n2ac.append(f"C({cat_pred})")
-        # Removed BLOCK_COL handling
-        else:
+        else: # For ACCURACY_INT_COL, which is already 0/1
             formula_parts_n2ac.append(f"C({cat_pred})")
+    # Add interaction term for ACCURACY_INT_COL and TARGET_COL
+    if TARGET_COL in df_n2ac_model.columns and ACCURACY_INT_COL in df_n2ac_model.columns:
+        target_treatment_for_interaction = ""
+        # Check if the reference level for TARGET_COL is present in the current model's data
+        if TARGET_REF_STR and TARGET_REF_STR in df_n2ac_model[TARGET_COL].unique():
+            target_treatment_for_interaction = f", Treatment(reference='{TARGET_REF_STR}')"
+
+        interaction_term_n2ac = f"C({ACCURACY_INT_COL}):C({TARGET_COL}{target_treatment_for_interaction})"
+        formula_parts_n2ac.append(interaction_term_n2ac)
+        # print(f"Added interaction to N2ac: {interaction_term_n2ac}") # Optional: for confirmation
+    else:
+        print(f"Warning: Could not add {ACCURACY_INT_COL}:{TARGET_COL} interaction to N2ac model, "
+              f"as one or both columns are missing from df_n2ac_model after filtering.")
+
     n2ac_full_formula = " + ".join(formula_parts_n2ac)
     print(f"\nN2ac LMM Formula: {n2ac_full_formula}")
     print("Fitting N2ac LMM...")
@@ -213,6 +320,12 @@ else:
         n2ac_lmm_results = n2ac_lmm.fit(reml=True)
         print("\n--- N2ac LMM Summary (Full Model) ---")
         print(n2ac_lmm_results.summary())
+        # Calculate and print R-squared
+        r2_n2ac = r_squared_mixed_model(n2ac_lmm_results)
+        if r2_n2ac:
+            print(f"N2ac LMM Marginal R-squared (fixed effects): {r2_n2ac['marginal_r2']:.3f}")
+            print(f"N2ac LMM Conditional R-squared (fixed + random effects): {r2_n2ac['conditional_r2']:.3f}")
+
     except Exception as e:
         print(f"Error fitting N2ac LMM: {e}")
         print("Review data for N2ac model (first 5 rows):")
@@ -222,13 +335,16 @@ else:
             if col in df_n2ac_model:
                 print(f"Value counts for {col} in N2ac model data:\n{df_n2ac_model[col].value_counts(dropna=False)}")
 
-df_for_pd_modeling = df[df[DISTRACTOR_COL] != 0].copy() # Original line for Pd specific filtering
-# print(f"Trials after excluding '{DISTRACTOR_COL} == 0' for Pd modeling: {len(df_for_pd_modeling)}")
-# df_for_pd_modeling = df # Using all data for Pd model as per previous change, or revert if needed
+# Filter for Pd modeling: exclude trials where distractor was "absent"
+df_for_pd_modeling = df.copy()  # Use all trials for Pd modeling
+
 pd_model_cols = [ERP_PD_COL, SUBJECT_ID_COL] + \
                 LMM_N2AC_PD_CONTINUOUS_PREDICTORS + \
                 LMM_N2AC_PD_CATEGORICAL_PREDICTORS
 df_pd_model = df_for_pd_modeling[list(set(pd_model_cols))].dropna()
+df_pd_model[SUBJECT_ID_COL] = df_pd_model[SUBJECT_ID_COL].astype(int).astype(str)
+# save to csv
+df_pd_model.to_csv('G:\\Meine Ablage\\PhD\\data\\SPACEPRIME\\concatenated\\df_pd_model.csv', index=True)
 
 if df_pd_model.empty or df_pd_model[ERP_PD_COL].isna().all():
     print(f"Pd model dataframe is empty or all '{ERP_PD_COL}' are NaN. Check Pd calculation and filtering.")
@@ -241,48 +357,44 @@ else:
 
     formula_parts_pd = [f"{ERP_PD_COL} ~"]
     formula_parts_pd.extend(LMM_N2AC_PD_CONTINUOUS_PREDICTORS) # TRIAL_NUMBER_COL is in here
-    pd_model_categorical_predictors = []
-    for cat_pred in LMM_N2AC_PD_CATEGORICAL_PREDICTORS:
-        if cat_pred == DISTRACTOR_PRESENCE_COL:
-            if DISTRACTOR_PRESENCE_COL in df_pd_model and df_pd_model[DISTRACTOR_PRESENCE_COL].nunique() < 2:
-                print(f"Warning: '{DISTRACTOR_PRESENCE_COL}' has only one unique value in Pd model data. Excluding from Pd formula.")
-                continue
-        pd_model_categorical_predictors.append(cat_pred)
+    pd_model_categorical_predictors = LMM_N2AC_PD_CATEGORICAL_PREDICTORS # Use the defined list
 
     for cat_pred in pd_model_categorical_predictors:
         if cat_pred == PRIMING_COL:
-            if 0 in df_pd_model[PRIMING_COL].unique():
-                formula_parts_pd.append(f"C({cat_pred}, Treatment(reference=0))")
+            if PRIMING_REF_STR and PRIMING_REF_STR in df_pd_model[PRIMING_COL].unique():
+                formula_parts_pd.append(f"C({cat_pred}, Treatment(reference='{PRIMING_REF_STR}'))")
             else:
-                print(f"Warning: Reference 0 not found for {PRIMING_COL} in Pd model data. Using default.")
+                print(f"Warning: Reference '{PRIMING_REF_STR}' not found for {PRIMING_COL} in Pd model data. Using default.")
                 formula_parts_pd.append(f"C({cat_pred})")
         elif cat_pred == TARGET_COL:
-            if 2 in df_pd_model[TARGET_COL].unique():
-                formula_parts_pd.append(f"C({cat_pred}, Treatment(reference=2))")
+            if TARGET_REF_STR and TARGET_REF_STR in df_pd_model[TARGET_COL].unique():
+                formula_parts_pd.append(f"C({cat_pred}, Treatment(reference='{TARGET_REF_STR}'))")
             else:
-                print(f"Warning: Reference 2 not found for {TARGET_COL} in Pd model data. Using default.")
+                print(f"Warning: Reference '{TARGET_REF_STR}' not found for {TARGET_COL} in Pd model data. Using default.")
                 formula_parts_pd.append(f"C({cat_pred})")
         elif cat_pred == DISTRACTOR_COL:
-            if 2 in df_pd_model[DISTRACTOR_COL].unique(): # Check if this is still relevant if not filtering distractor==0
-                formula_parts_pd.append(f"C({cat_pred}, Treatment(reference=2))")
+            if DISTRACTOR_REF_STR and DISTRACTOR_REF_STR in df_pd_model[DISTRACTOR_COL].unique():
+                formula_parts_pd.append(f"C({cat_pred}, Treatment(reference='{DISTRACTOR_REF_STR}'))")
             else:
-                print(f"Warning: Reference 2 not found for {DISTRACTOR_COL} in Pd model data. Using default.")
+                print(f"Warning: Reference '{DISTRACTOR_REF_STR}' not found for {DISTRACTOR_COL} in Pd model data (after filtering). Using default.")
                 formula_parts_pd.append(f"C({cat_pred})")
-        # Removed BLOCK_COL handling
-        else:
+        else: # For ACCURACY_INT_COL
             formula_parts_pd.append(f"C({cat_pred})")
+    # Add interaction term for ACCURACY_INT_COL and TARGET_COL
+    if TARGET_COL in df_pd_model.columns and ACCURACY_INT_COL in df_pd_model.columns:
+        target_treatment_for_interaction_pd = ""
+        # Check if the reference level for TARGET_COL is present in the current model's data
+        if TARGET_REF_STR and TARGET_REF_STR in df_pd_model[TARGET_COL].unique():
+            target_treatment_for_interaction_pd = f", Treatment(reference='{TARGET_REF_STR}')"
+
+        interaction_term_pd = f"C({ACCURACY_INT_COL}):C({TARGET_COL}{target_treatment_for_interaction_pd})"
+        formula_parts_pd.append(interaction_term_pd)
+        # print(f"Added interaction to Pd: {interaction_term_pd}") # Optional: for confirmation
+    else:
+        print(f"Warning: Could not add {ACCURACY_INT_COL}:{TARGET_COL} interaction to Pd model, "
+              f"as one or both columns are missing from df_pd_model after filtering.")
 
     pd_full_formula = " + ".join(formula_parts_pd)
-    """
-    # Add the interaction C(SingletonPresent):total_trial_nr
-    if DISTRACTOR_PRESENCE_COL in df_pd_model.columns and TRIAL_NUMBER_COL in df_pd_model.columns:
-        interaction_term_pd = f"C({DISTRACTOR_PRESENCE_COL}):{TRIAL_NUMBER_COL}"
-        pd_full_formula += f" + {interaction_term_pd}"
-        print(f"Info: Added interaction '{interaction_term_pd}' to Pd formula.")
-    else:
-        print(f"Warning: Could not add C({DISTRACTOR_PRESENCE_COL}):{TRIAL_NUMBER_COL} interaction to Pd model, "
-              f"one or both columns missing from df_pd_model.")
-    """
     print(f"\nPd LMM Formula: {pd_full_formula}")
     print("Fitting Pd LMM...")
     try:
@@ -290,234 +402,19 @@ else:
         pd_lmm_results = pd_lmm.fit(reml=True)
         print("\n--- Pd LMM Summary (Full Model) ---")
         print(pd_lmm_results.summary())
+        # Calculate and print R-squared
+        r2_pd = r_squared_mixed_model(pd_lmm_results)
+        if r2_pd:
+            print(f"Pd LMM Marginal R-squared (fixed effects): {r2_pd['marginal_r2']:.3f}")
+            print(f"Pd LMM Conditional R-squared (fixed + random effects): {r2_pd['conditional_r2']:.3f}")
     except Exception as e:
         print(f"Error fitting Pd LMM: {e}")
         print("Review data for Pd model (first 5 rows):")
         print(df_pd_model.head())
         df_pd_model.info()
-        # Adjusted debug print loop
-        debug_cols_pd = [col for col in pd_model_categorical_predictors + [TRIAL_NUMBER_COL, DISTRACTOR_PRESENCE_COL] if col in df_pd_model]
-        for col in set(debug_cols_pd): # Use set to avoid duplicates
+        debug_cols_pd = [col for col in pd_model_categorical_predictors + LMM_N2AC_PD_CONTINUOUS_PREDICTORS if col in df_pd_model]
+        for col in set(debug_cols_pd):
             if df_pd_model[col].dtype == 'object' or df_pd_model[col].nunique() < 10:
                 print(f"Value counts for {col} in Pd model data:\n{df_pd_model[col].value_counts(dropna=False)}")
             else:
                 print(f"Summary for {col} in Pd model data:\n{df_pd_model[col].describe()}")
-
-
-print("-" * 30)
-# --- 7. Additional Analyses ---
-
-if all(col in df.columns for col in [SUBJECT_ID_COL, REACTION_TIME_COL, ACCURACY_COL, ERP_PD_COL, ERP_N2AC_COL]):
-    df_corr = df.groupby(SUBJECT_ID_COL)[
-        [REACTION_TIME_COL, ACCURACY_COL, ERP_PD_COL, ERP_N2AC_COL]].mean().reset_index().astype(float)
-    if REACTION_TIME_COL in df_corr.columns and ERP_N2AC_COL in df_corr.columns and not df_corr[[REACTION_TIME_COL, ERP_N2AC_COL]].isna().any().any():
-        corr_rt_n2ac, p_val_rt_n2ac = pearsonr(df_corr[REACTION_TIME_COL], df_corr[ERP_N2AC_COL])
-        print(f"\nPearson correlation between mean {REACTION_TIME_COL} and mean {ERP_N2AC_COL} per subject: r={corr_rt_n2ac:.3f}, p={p_val_rt_n2ac:.3f}")
-        sns.lmplot(data=df_corr, x=REACTION_TIME_COL, y=ERP_N2AC_COL)
-        plt.title(f"Correlation: Mean {REACTION_TIME_COL} vs. Mean {ERP_N2AC_COL}")
-        plt.show(block=False) # Use block=False if running interactively
-    else:
-        print(f"Skipping RT vs N2ac correlation due to missing data or columns in aggregated df_corr.")
-else:
-    print("Skipping correlation analysis due to missing columns for aggregation.")
-
-if all(col in df.columns for col in [ERP_PD_COL, REACTION_TIME_COL, SUBJECT_ID_COL]):
-    pd_beh_df = df[[ERP_PD_COL, REACTION_TIME_COL, SUBJECT_ID_COL]].dropna()
-    if not pd_beh_df.empty:
-        pd_beh_formula = f"{ERP_PD_COL} ~ {REACTION_TIME_COL}"
-        print(f"\nFitting LMM: {pd_beh_formula}")
-        pd_beh_model = smf.mixedlm(formula=pd_beh_formula, data=pd_beh_df, groups=SUBJECT_ID_COL)
-        try:
-            pd_beh_result = pd_beh_model.fit(reml=True)
-            print("\n--- Pd ~ RT Model Summary ---")
-            print(pd_beh_result.summary())
-            sns.lmplot(data=pd_beh_df, x=REACTION_TIME_COL, y=ERP_PD_COL, hue=SUBJECT_ID_COL, legend=False)
-            plt.title(f"LMM: {ERP_PD_COL} vs. {REACTION_TIME_COL}")
-            plt.show(block=False)
-        except Exception as e:
-            print(f"Error fitting {ERP_PD_COL} ~ {REACTION_TIME_COL} model: {e}")
-    else:
-        print(f"Skipping {ERP_PD_COL} ~ {REACTION_TIME_COL} LMM: Dataframe empty after dropna.")
-else:
-    print(f"Skipping {ERP_PD_COL} ~ {REACTION_TIME_COL} LMM: Missing required columns.")
-
-if all(col in df.columns for col in [ERP_PD_COL, TRIAL_NUMBER_COL, SUBJECT_ID_COL]):
-    pd_trial_df = df[[ERP_PD_COL, TRIAL_NUMBER_COL, SUBJECT_ID_COL]].dropna()
-    if not pd_trial_df.empty:
-        pd_trial_formula = f"{ERP_PD_COL} ~ {TRIAL_NUMBER_COL}" # Main effect of trial number
-        print(f"\nFitting LMM: {pd_trial_formula}")
-        pd_trial_model = smf.mixedlm(formula=pd_trial_formula, data=pd_trial_df, groups=SUBJECT_ID_COL)
-        try:
-            pd_trial_result = pd_trial_model.fit(reml=True)
-            print("\n--- Pd ~ Trial Number Model Summary ---")
-            print(pd_trial_result.summary())
-        except Exception as e:
-            print(f"Error fitting {ERP_PD_COL} ~ {TRIAL_NUMBER_COL} model: {e}")
-    else:
-        print(f"Skipping {ERP_PD_COL} ~ {TRIAL_NUMBER_COL} LMM: Dataframe empty after dropna.")
-else:
-    print(f"Skipping {ERP_PD_COL} ~ {TRIAL_NUMBER_COL} LMM: Missing required columns.")
-
-# Add TRIAL_NUMBER_COL to rt_lmm_cols for the RT model
-rt_lmm_cols = [DISTRACTOR_PRESENCE_COL, TARGET_COL, DISTRACTOR_COL, PRIMING_COL,
-               REACTION_TIME_COL, SUBJECT_ID_COL, TRIAL_NUMBER_COL] # BLOCK_COL removed
-# Check if all essential columns for RT LMM are present
-essential_rt_cols = [REACTION_TIME_COL, SUBJECT_ID_COL] # Minimal set for model to run
-if all(col in df.columns for col in essential_rt_cols):
-    rt_lmm_cols_existing = [col for col in rt_lmm_cols if col in df.columns]
-    rt_stat_df = df[rt_lmm_cols_existing].dropna()
-
-    if not rt_stat_df.empty:
-        target_ref_rt_str = ""
-        if TARGET_COL in rt_stat_df and 2 in rt_stat_df[TARGET_COL].unique():
-            target_ref_rt_str = ", Treatment(reference=2)"
-        elif TARGET_COL in rt_stat_df:
-            print(f"Warning: Reference 2 not found for {TARGET_COL} in RT model data. Using default.")
-
-        distractor_ref_rt_str = ""
-        if DISTRACTOR_COL in rt_stat_df and 2 in rt_stat_df[DISTRACTOR_COL].unique():
-            distractor_ref_rt_str = ", Treatment(reference=2)"
-        elif DISTRACTOR_COL in rt_stat_df:
-            print(f"Warning: Reference 2 not found for {DISTRACTOR_COL} in RT model data. Using default.")
-
-        priming_ref_rt_str = ""
-        if PRIMING_COL in rt_stat_df and 0 in rt_stat_df[PRIMING_COL].unique():
-            priming_ref_rt_str = ", Treatment(reference=0)"
-        elif PRIMING_COL in rt_stat_df:
-            print(f"Warning: Reference 0 not found for {PRIMING_COL} in RT model data. Using default.")
-
-        # Base formula parts
-        rt_formula_parts = [f"{REACTION_TIME_COL} ~"]
-        if DISTRACTOR_PRESENCE_COL in rt_stat_df:
-            rt_formula_parts.append(f"C({DISTRACTOR_PRESENCE_COL})")
-        if TARGET_COL in rt_stat_df:
-            rt_formula_parts.append(f"C({TARGET_COL}{target_ref_rt_str})")
-        if DISTRACTOR_COL in rt_stat_df:
-            rt_formula_parts.append(f"C({DISTRACTOR_COL}{distractor_ref_rt_str})")
-        if PRIMING_COL in rt_stat_df:
-            rt_formula_parts.append(f"C({PRIMING_COL}{priming_ref_rt_str})")
-        # BLOCK_COL main effect removed
-
-        # Add main effect of TRIAL_NUMBER_COL and its interaction with DISTRACTOR_PRESENCE_COL
-        interaction_term_rt = ""
-        if TRIAL_NUMBER_COL in rt_stat_df.columns:
-            rt_formula_parts.append(TRIAL_NUMBER_COL) # Main effect of trial number
-            if DISTRACTOR_PRESENCE_COL in rt_stat_df.columns:
-                interaction_term_rt = f"C({DISTRACTOR_PRESENCE_COL}):{TRIAL_NUMBER_COL}"
-                rt_formula_parts.append(interaction_term_rt)
-                print(f"Info: Added main effect '{TRIAL_NUMBER_COL}' and interaction '{interaction_term_rt}' to RT formula.")
-            else:
-                print(f"Warning: {DISTRACTOR_PRESENCE_COL} not in RT model data, cannot add interaction with {TRIAL_NUMBER_COL}.")
-        else:
-            print(f"Warning: {TRIAL_NUMBER_COL} not in RT model data, cannot add its main effect or interaction.")
-
-        rt_formula = " + ".join(rt_formula_parts)
-
-        print(f"\nFitting LMM for RT: {rt_formula}")
-        rt_model = smf.mixedlm(formula=rt_formula, data=rt_stat_df, groups=SUBJECT_ID_COL)
-        try:
-            rt_result = rt_model.fit(reml=True)
-            print("\n--- RT LMM Summary ---")
-            print(rt_result.summary())
-        except Exception as e:
-            print(f"Error fitting RT LMM: {e}")
-            print("Review data for RT model (first 5 rows):")
-            print(rt_stat_df.head())
-            rt_stat_df.info()
-            # Adjusted debug print loop
-            debug_cols_rt = [col for col in rt_lmm_cols_existing if col in rt_stat_df]
-            for col in set(debug_cols_rt): # Use set to avoid duplicates
-                 if rt_stat_df[col].dtype == 'object' or rt_stat_df[col].nunique() < 10:
-                    print(f"Value counts for {col} in RT model data:\n{rt_stat_df[col].value_counts(dropna=False)}")
-                 else:
-                    print(f"Summary for {col} in RT model data:\n{rt_stat_df[col].describe()}")
-    else:
-        print("Skipping RT LMM: Dataframe empty after dropna.")
-else:
-    print(f"Skipping RT LMM: Missing one or more essential columns for initial selection (e.g., {', '.join(essential_rt_cols)}).")
-
-
-acc_glmm_cols = [DISTRACTOR_PRESENCE_COL, TARGET_COL, DISTRACTOR_COL,
-                 PRIMING_COL, ACCURACY_INT_COL, SUBJECT_ID_COL, TRIAL_NUMBER_COL] # BLOCK_COL removed
-essential_acc_cols = [ACCURACY_INT_COL, SUBJECT_ID_COL] # Minimal set for model to run
-if all(col in df.columns for col in essential_acc_cols) and \
-   all(col in df.columns for col in acc_glmm_cols if col not in essential_acc_cols): # Check other desired cols exist
-    acc_glmm_cols_existing = [col for col in acc_glmm_cols if col in df.columns]
-    acc_stat_df = df[acc_glmm_cols_existing].dropna()
-
-    if not acc_stat_df.empty:
-        target_ref_acc_str = ""
-        if TARGET_COL in acc_stat_df and 2 in acc_stat_df[TARGET_COL].unique():
-            target_ref_acc_str = ", Treatment(reference=2)"
-        elif TARGET_COL in acc_stat_df:
-            print(f"Warning: Reference 2 not found for {TARGET_COL} in Accuracy model data. Using default.")
-
-        distractor_ref_acc_str = ""
-        if DISTRACTOR_COL in acc_stat_df and 2 in acc_stat_df[DISTRACTOR_COL].unique():
-            distractor_ref_acc_str = ", Treatment(reference=2)"
-        elif DISTRACTOR_COL in acc_stat_df:
-            print(f"Warning: Reference 2 not found for {DISTRACTOR_COL} in Accuracy model data. Using default.")
-
-        priming_ref_acc_str = ""
-        if PRIMING_COL in acc_stat_df and 0 in acc_stat_df[PRIMING_COL].unique():
-            priming_ref_acc_str = ", Treatment(reference=0)"
-        elif PRIMING_COL in acc_stat_df:
-            print(f"Warning: Reference 0 not found for {PRIMING_COL} in Accuracy model data. Using default.")
-
-        # Base formula parts
-        acc_formula_parts = [f"{ACCURACY_INT_COL} ~"]
-        if DISTRACTOR_PRESENCE_COL in acc_stat_df:
-            acc_formula_parts.append(f"C({DISTRACTOR_PRESENCE_COL})")
-        if TARGET_COL in acc_stat_df:
-            acc_formula_parts.append(f"C({TARGET_COL}{target_ref_acc_str})")
-        if DISTRACTOR_COL in acc_stat_df:
-            acc_formula_parts.append(f"C({DISTRACTOR_COL}{distractor_ref_acc_str})")
-        if PRIMING_COL in acc_stat_df:
-            acc_formula_parts.append(f"C({PRIMING_COL}{priming_ref_acc_str})")
-        # BLOCK_COL main effect removed
-
-        # Add main effect of TRIAL_NUMBER_COL and its interaction with DISTRACTOR_PRESENCE_COL
-        interaction_term_acc = ""
-        if TRIAL_NUMBER_COL in acc_stat_df.columns:
-            acc_formula_parts.append(TRIAL_NUMBER_COL) # Main effect of trial number
-            if DISTRACTOR_PRESENCE_COL in acc_stat_df.columns:
-                interaction_term_acc = f"C({DISTRACTOR_PRESENCE_COL}):{TRIAL_NUMBER_COL}"
-                acc_formula_parts.append(interaction_term_acc)
-                print(f"Info: Added main effect '{TRIAL_NUMBER_COL}' and interaction '{interaction_term_acc}' to ACC formula.")
-            else:
-                print(f"Warning: {DISTRACTOR_PRESENCE_COL} not in ACC model data, cannot add interaction with {TRIAL_NUMBER_COL}.")
-        else:
-            print(f"Warning: {TRIAL_NUMBER_COL} not in ACC model data, cannot add its main effect or interaction.")
-
-        acc_formula_glmm = " + ".join(acc_formula_parts)
-        vc_f = {SUBJECT_ID_COL: f"0 + C({SUBJECT_ID_COL})"} # Random intercept for subject_id
-
-        print(f"\nFitting Bayesian GLMM for Accuracy: {acc_formula_glmm}")
-        try:
-            model_bayes_glmm = sm_bayes.BinomialBayesMixedGLM.from_formula(
-                formula=acc_formula_glmm,
-                vc_formulas=vc_f,
-                data=acc_stat_df)
-            result_bayes_glmm = model_bayes_glmm.fit_vb()
-            print("\n--- Accuracy Bayesian GLMM Summary ---")
-            print(result_bayes_glmm.summary())
-        except Exception as e:
-            print(f"Error fitting Accuracy Bayesian GLMM: {e}")
-            print("Check data for accuracy GLMM (first 5 rows):")
-            print(acc_stat_df.head())
-            acc_stat_df.info()
-            # Adjusted debug print loop
-            debug_cols_acc = [col for col in acc_glmm_cols_existing if col in acc_stat_df]
-            for col in set(debug_cols_acc): # Use set to avoid duplicates
-                 if acc_stat_df[col].dtype == 'object' or acc_stat_df[col].nunique() < 10:
-                    print(f"Value counts for {col} in ACC model data:\n{acc_stat_df[col].value_counts(dropna=False)}")
-                 else:
-                    print(f"Summary for {col} in ACC model data:\n{acc_stat_df[col].describe()}")
-    else:
-        print("Skipping Accuracy Bayesian GLMM: Dataframe empty after dropna.")
-else:
-    print(f"Skipping Accuracy Bayesian GLMM: Missing one or more essential columns for initial selection (e.g., {', '.join(essential_acc_cols)}), or ACCURACY_INT_COL not created.")
-
-print("\nScript finished.")
-if plt.get_fignums(): # Check if any figures are open
-    plt.show(block=True) # Keep plots open until manually closed
