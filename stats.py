@@ -89,34 +89,6 @@ def convert_effsize(ef, input_type, output_type, nx=None, ny=None):
     .. [5] Ruscio, John. "A probability-based measure of effect size:
        Robustness to base rates and other factors." Psychological methods 1
        3.1 (2008): 19.
-
-    Examples
-    --------
-    1. Convert from Cohen d to eta-square
-
-    >>> import pingouin as pg
-    >>> d = .45
-    >>> eta = pg.convert_effsize(d, 'cohen', 'eta-square')
-    >>> print(eta)
-    0.048185603807257595
-
-    2. Convert from Cohen d to Hegdes g (requires the sample sizes of each
-       group)
-
-    >>> pg.convert_effsize(.45, 'cohen', 'hedges', nx=10, ny=10)
-    0.4309859154929578
-
-    3. Convert a point-biserial correlation to Cohen d
-
-    >>> rpb = 0.40
-    >>> d = pg.convert_effsize(rpb, 'pointbiserialr', 'cohen')
-    >>> print(d)
-    0.8728715609439696
-
-    4. Reverse operation: convert Cohen d to a point-biserial correlation
-
-    >>> pg.convert_effsize(d, 'cohen', 'pointbiserialr')
-    0.4000000000000001
     """
     it = input_type.lower()
     ot = output_type.lower()
@@ -189,23 +161,6 @@ def compute_effsize_from_t(tval, nx=None, ny=None, N=None, eftype="cohen"):
     If only N (total sample size) is specified, the formula is:
 
     .. math:: d = \\frac{2t}{\\sqrt{N}}
-
-    Examples
-    --------
-    1. Compute effect size from a T-value when both sample sizes are known.
-
-    >>> from pingouin import compute_effsize_from_t
-    >>> tval, nx, ny = 2.90, 35, 25
-    >>> d = compute_effsize_from_t(tval, nx=nx, ny=ny, eftype='cohen')
-    >>> print(d)
-    0.7593982580212534
-
-    2. Compute effect size when only total sample size is known (nx+ny)
-
-    >>> tval, N = 2.90, 60
-    >>> d = compute_effsize_from_t(tval, N=N, eftype='cohen')
-    >>> print(d)
-    0.7487767802667672
     """
 
     if not isinstance(tval, float):
@@ -577,6 +532,33 @@ def split_dataframe_by_blocks_balanced_subjects(df, block_col, subject_col, seed
     df2 = df[df[block_col].isin(split2_blocks)]
 
     return df1, df2
+
+
+def r_squared_mixed_model(lmm_results):
+    """
+    Calculates marginal and conditional R-squared for a statsmodels LMM.
+
+    Based on Nakagawa & Schielzeth (2013) and extensions.
+
+    Args:
+        lmm_results: A fitted statsmodels MixedLMResults object.
+
+    Returns:
+        dict: A dictionary with 'marginal_r2' and 'conditional_r2'.
+              Returns None if calculation fails (e.g., model did not converge).
+    """
+    # ICC
+    var_subject = lmm_results.cov_re.iloc[0, 0]  # Variance of random intercepts
+    var_residual = lmm_results.scale  # Residual variance
+    icc = var_subject / (var_subject + var_residual)
+    # R² calculations (Nakagawa & Schielzeth)
+    var_fixed = np.var(lmm_results.fittedvalues)
+    r2_marginal = var_fixed / (var_fixed + var_subject + var_residual)
+    r2_conditional = (var_fixed + var_subject) / (var_fixed + var_subject + var_residual)
+    # Output
+    print(f"\nIntraclass Correlation Coefficient (ICC): {icc:.3f}")
+    print(f"Marginal R²: {r2_marginal:.3f}")
+    print(f"Conditional R²: {r2_conditional:.3f}")
 
 
 if __name__ == "__main__":
