@@ -151,9 +151,17 @@ merged_df = pd.merge(
 df_clean = merged_df[merged_df["phase"]!=2]
 
 # do pearson correlation
-corr_df_st = df_clean.dropna(subset=["rt", "path_length_pixels"])
+corr_df_st = remove_outliers(df_clean, column_name="rt", threshold=2)
+corr_df_st = remove_outliers(corr_df_st, column_name="path_length_pixels", threshold=2)
 corr_df_avrg = corr_df_st.groupby(["subject_id"])[["rt", "path_length_pixels"]].mean().reset_index()
 pearsonr(corr_df_st.path_length_pixels, corr_df_st.rt)
+corr_df_st = corr_df_st.dropna(subset=["rt", "path_length_pixels"])
+sns.lmplot(x="path_length_pixels", y="rt", data=corr_df_st,
+            scatter=True)
+plt.ylabel("Reaction time [s]")
+plt.xlabel("Path length [px]")
+plt.title("Pearson r = 0.18, p < 0.001")
+sns.despine()
 
 # Load up ERP data
 df_pd = load_concatenated_csv("df_pd_model.csv", index_col=0)
@@ -182,13 +190,129 @@ lmm_data_for_model = pd.merge(
 # Prepare the final input for the LMM
 lmm_input = lmm_data_for_model.drop(columns=["duration"], errors='ignore').dropna()
 
-formula = "path_length_pixels ~ Pd + N2ac + block + rt + C(TargetLoc, Treatment(reference='mid')) + C(SingletonLoc, Treatment(reference='mid')) + C(Priming, Treatment(reference='no-p')) + C(select_target_int) + C(SingletonLoc, Treatment(reference='mid')):block"
-pd_lmm = smf.mixedlm(formula=formula, data=lmm_input, groups="subject_id")
-pd_lmm_results = pd_lmm.fit(reml=True)
-print("\n--- Path length LMM Summary (Full Model) ---")
-print(pd_lmm_results.summary())
-# Calculate and print R-squared
-r2_pd = r_squared_mixed_model(pd_lmm_results)
-if r2_pd:
-    print(f"LMM Marginal R-squared (fixed effects): {r2_pd['marginal_r2']:.3f}")
-    print(f"LMM Conditional R-squared (fixed + random effects): {r2_pd['conditional_r2']:.3f}")
+# Create SingletonPresent column
+# Assuming 'mid' in SingletonLoc means singleton absent, and other values mean present
+lmm_input['SingletonPresent'] = lmm_input['SingletonLoc'].apply(lambda x: 'absent' if x == 'absent' else 'present')
+
+# Define formulas (as in your script)
+formula_rt = "rt ~ block + C(SingletonLoc, Treatment('absent')) + C(Priming, Treatment(reference='no-p')) + C(select_target_int) + C(SingletonLoc):block"
+formula_path_length = "path_length_pixels ~ block + C(SingletonLoc, Treatment('absent')) + C(Priming, Treatment(reference='no-p')) + C(select_target_int) + C(SingletonLoc):block"
+
+# --- Fit Model 1: Reaction Time (RT) ---
+print("\n--- Fitting RT LMM ---")
+model_rt = smf.mixedlm(formula=formula_rt, data=lmm_input, groups="subject_id")
+results_rt = model_rt.fit(reml=True)
+print("\n--- RT LMM Summary ---")
+print(results_rt.summary())
+# r2_rt = r_squared_mixed_model(results_rt) # Uncomment if available
+# if r2_rt:
+#     print(f"RT LMM Marginal R-squared: {r2_rt['marginal_r2']:.3f}")
+#     print(f"RT LMM Conditional R-squared: {r2_rt['conditional_r2']:.3f}")
+
+# --- Fit Model 2: Path Length ---
+print("\n--- Fitting Path Length LMM ---")
+model_path_length = smf.mixedlm(formula=formula_path_length, data=lmm_input, groups="subject_id")
+results_path_length = model_path_length.fit(reml=True)
+print("\n--- Path Length LMM Summary ---")
+print(results_path_length.summary())
+# r2_path_length = r_squared_mixed_model(results_path_length) # Uncomment if available
+# if r2_path_length:
+#     print(f"Path Length LMM Marginal R-squared: {r2_path_length['marginal_r2']:.3f}")
+#     print(f"Path Length LMM Conditional R-squared: {r2_path_length['conditional_r2']:.3f}")
+
+
+# --- Helper function to prepare DataFrame for plotting ---
+def get_plot_df_for_model(results):
+    params = results.fe_params
+    conf_int_df = results.conf_int()
+
+    plot_df = pd.DataFrame({
+        'coef': params,
+        'conf_lower': conf_int_df.iloc[:, 0],
+        'conf_upper': conf_int_df.iloc[:, 1]
+    })
+    # Calculate error lengths for asymmetric error bars
+    plot_df['error_lower_len'] = plot_df['coef'] - plot_df['conf_lower']
+    plot_df['error_upper_len'] = plot_df['conf_upper'] - plot_df['coef']
+
+    plot_df['param_names'] = plot_df.index
+    # Exclude the intercept for plotting (which is a fixed effect)
+    # Random effects parameters (like variances) are not part of fe_params
+    plot_df = plot_df[~plot_df['param_names'].str.contains("Intercept", case=False)]
+
+    # Determine significance: CI does not include 0
+    plot_df['significant'] = ~((plot_df['conf_lower'] < 0) & (plot_df['conf_upper'] > 0))
+    return plot_df
+
+
+# Prepare DataFrames for plotting
+plot_df_rt = get_plot_df_for_model(results_rt)
+plot_df_path = get_plot_df_for_model(results_path_length)
+
+# --- Plotting with Subplots ---
+
+# Get unique parameter names for y-axis ordering.
+all_param_names_rt = plot_df_rt['param_names'].unique()
+all_param_names_path = plot_df_path['param_names'].unique()
+union_param_names = sorted(list(set(all_param_names_rt) | set(all_param_names_path)))
+param_to_y_index = {name: i for i, name in enumerate(union_param_names)}
+
+num_total_params = len(union_param_names)
+fig_height = max(6, num_total_params * 0.5)
+fig_width = 16
+
+fig, axes = plt.subplots(1, 2, figsize=(fig_width, fig_height), sharey=True)
+
+
+# --- Helper function to plot coefficients on a given axis ---
+def plot_coeffs_on_ax(ax, plot_data, model_title_suffix, param_y_map,
+                      color_sig, color_nonsig, ecolor_sig, ecolor_nonsig,
+                      mec_sig, mec_nonsig, label_prefix):
+    plot_data['y_pos'] = plot_data['param_names'].map(param_y_map)
+    plot_data_to_draw = plot_data.dropna(subset=['y_pos'])
+
+    ns_df = plot_data_to_draw[~plot_data_to_draw['significant']]
+    ax.errorbar(x=ns_df['coef'], y=ns_df['y_pos'],
+                xerr=[ns_df['error_lower_len'], ns_df['error_upper_len']],
+                fmt='o', color=color_nonsig, ecolor=ecolor_nonsig, elinewidth=1.5,
+                capsize=3, markersize=6, markeredgecolor=mec_nonsig,
+                label=f'{label_prefix}: Not Significant (p > 0.05)')
+    s_df = plot_data_to_draw[plot_data_to_draw['significant']]
+    ax.errorbar(x=s_df['coef'], y=s_df['y_pos'],
+                xerr=[s_df['error_lower_len'], s_df['error_upper_len']],
+                fmt='o', color=color_sig, ecolor=ecolor_sig, elinewidth=2,
+                capsize=4, markersize=7, markeredgecolor=mec_sig,
+                label=f'{label_prefix}: Significant (p < 0.05)')
+
+    ax.axvline(x=0, color='black', linestyle='--', linewidth=0.8, alpha=0.7)
+    ax.set_xlabel("Coefficient Estimate")
+    ax.set_title(f"{model_title_suffix}")
+    ax.legend(loc='best')
+    sns.despine(ax=ax, left=True, bottom=False)
+
+# Define common colors
+common_color_sig = 'black'
+common_color_nonsig = 'lightgrey'
+common_ecolor_sig = 'black'
+common_ecolor_nonsig = 'lightgrey'
+common_mec_sig = "black" # Markeredgecolor for significant
+common_mec_nonsig = "lightgrey" # Markeredgecolor for non-significant
+
+
+# Plot RT model on the first subplot (axes[0])
+plot_coeffs_on_ax(axes[0], plot_df_rt, 'Reaction Time', param_to_y_index,
+                  color_sig=common_color_sig, color_nonsig=common_color_nonsig,
+                  ecolor_sig=common_ecolor_sig, ecolor_nonsig=common_ecolor_nonsig,
+                  mec_sig=common_mec_sig, mec_nonsig=common_mec_nonsig, label_prefix='RT')
+
+# Plot Path Length model on the second subplot (axes[1])
+plot_coeffs_on_ax(axes[1], plot_df_path, 'Path Length', param_to_y_index,
+                  color_sig=common_color_sig, color_nonsig=common_color_nonsig,
+                  ecolor_sig=common_ecolor_sig, ecolor_nonsig=common_ecolor_nonsig,
+                  mec_sig=common_mec_sig, mec_nonsig=common_mec_nonsig, label_prefix='Path Length')
+
+# Set y-axis ticks and labels for the first subplot
+axes[0].set_yticks(list(param_to_y_index.values()))
+axes[0].set_yticklabels(union_param_names)
+
+plt.tight_layout()
