@@ -4,6 +4,7 @@ import mne
 from SPACEPRIME.subjects import subject_ids
 import glob
 import numpy as np # Needed for _create_and_save_concatenated_tfr
+import pandas as pd # Added for load_concatenated_csv
 
 # --- Configuration for filenames ---
 # These define the expected names for your processed data files.
@@ -280,6 +281,33 @@ def load_concatenated_tfr():
     # Reuse the internal loading logic
     return _load_concatenated_tfr_data(tfr_file_path)
 
+def load_concatenated_csv(filename, **kwargs):
+    """
+    Loads a specified CSV file from the 'concatenated' folder.
+
+    Args:
+        filename (str): The name of the CSV file (e.g., "my_data.csv").
+
+    Returns:
+        pandas.DataFrame or None: The loaded DataFrame, or None if the file
+                                   is not found or loading fails.
+    """
+    concatenated_folder = _get_concatenated_folder_path(create_if_not_exists=False)
+    csv_file_path = os.path.join(concatenated_folder, filename)
+
+    if not os.path.exists(csv_file_path):
+        print(f"WARNING: CSV file ('{filename}') not found at {csv_file_path}. Cannot load.")
+        return None
+
+    print(f"INFO: Loading CSV file from {csv_file_path}...")
+    try:
+        df = pd.read_csv(csv_file_path, **kwargs)
+        print(f"INFO: Successfully loaded CSV file '{filename}'.")
+        return df
+    except Exception as e:
+        print(f"ERROR: Failed to load CSV file '{filename}' from {csv_file_path}: {e}")
+        return None
+
 
 # ======== Main execution block for __init__.py ========
 # This code runs when the SPACEPRIME package is imported.
@@ -304,5 +332,6 @@ print(f"INFO: TFR file path: {final_tfr_file_path}")
 print("\nINFO: To load data, use:")
 print("INFO:   epochs = SPACEPRIME.load_concatenated_epochs()")
 print("INFO:   tfr = SPACEPRIME.load_concatenated_tfr()")
+print("INFO:   my_dataframe = SPACEPRIME.load_concatenated_csv('your_file.csv')")
 print("\nINFO: To create missing files, use:")
 print("INFO:   SPACEPRIME.concatenate_eeg_and_save()")
