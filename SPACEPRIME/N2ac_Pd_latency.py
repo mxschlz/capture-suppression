@@ -6,7 +6,7 @@ import os # For os.path.join
 from scipy.signal import savgol_filter
 from SPACEPRIME import get_data_path
 from SPACEPRIME.subjects import subject_ids
-
+from SPACEPRIME import load_concatenated_epochs
 plt.ion()
 
 # --- Parameters ---
@@ -49,21 +49,15 @@ subject_diff_waves = {
 times_vector = None # To be populated from the first subject
 processed_subject_count = 0
 
+# load epochs
+epochs = load_concatenated_epochs().crop(EPOCH_TMIN, EPOCH_TMAX)
+print(f"Loaded {len(epochs)} epochs.")
+
 # --- Subject Loop ---
 print("Starting subject-level processing...")
 for subject_id_int in subject_ids:
-    subject_str = f"sub-{subject_id_int:02d}" # Assumes subject_ids are integers
-    print(f"\n--- Processing Subject: {subject_str} ---")
-
     try:
-        epoch_file_path_pattern = os.path.join(get_data_path(), "derivatives", "epoching",
-                                               subject_str, "eeg", f"{subject_str}_task-spaceprime-epo.fif")
-        epoch_files = glob.glob(epoch_file_path_pattern)
-        if not epoch_files:
-            print(f"  Epoch file not found for {subject_str} using pattern: {epoch_file_path_pattern}. Skipping.")
-            continue
-
-        epochs_sub = mne.read_epochs(epoch_files[0], preload=True)
+        epochs_sub = epochs[f"subject_id=={subject_id_int}"]
         print(f"  Loaded {len(epochs_sub)} epochs.")
 
         # Apply baseline if needed (currently commented out in original)
@@ -77,7 +71,7 @@ for subject_id_int in subject_ids:
         print(f"  Cropped epochs to {EPOCH_TMIN}-{EPOCH_TMAX}s. {len(epochs_sub)} epochs remaining.")
 
         if not epochs_sub: # If cropping or filtering results in no epochs
-            print(f"  No epochs remaining for {subject_str} after preproc. Skipping.")
+            print(f"  No epochs remaining for sub-{subject_id_int} after preproc. Skipping.")
             continue
 
         if times_vector is None: # Store times vector from the first successfully processed subject
@@ -105,9 +99,9 @@ for subject_id_int in subject_ids:
             diff_wave_dl_sub = avg_contra_dl - avg_ipsi_dl
             subject_diff_waves['distractor_lateral'].append(diff_wave_dl_sub)
             subject_contributed_this_loop = True
-            print(f"    Calculated Pd-like diff wave for {subject_str}.")
+            print(f"    Calculated Pd-like diff wave for sub-{subject_id_int}.")
         else:
-            print(f"    Skipping Pd-like for {subject_str} due to insufficient trials.")
+            print(f"    Skipping Pd-like for sub-{subject_id_int} due to insufficient trials.")
 
         # --- 2. Target Lateral (Distractor Present; N2ac-like component) ---
         # Target-1-Singleton-2: Target Left, Distractor Central
@@ -128,9 +122,9 @@ for subject_id_int in subject_ids:
             diff_wave_tdp_sub = avg_contra_tdp - avg_ipsi_tdp
             subject_diff_waves['target_distractor_present'].append(diff_wave_tdp_sub)
             subject_contributed_this_loop = True
-            print(f"    Calculated N2ac-like (distractor present) diff wave for {subject_str}.")
+            print(f"    Calculated N2ac-like (distractor present) diff wave for sub-{subject_id_int}.")
         else:
-            print(f"    Skipping N2ac-like (distractor present) for {subject_str} due to insufficient trials.")
+            print(f"    Skipping N2ac-like (distractor present) for sub-{subject_id_int} due to insufficient trials.")
 
         # --- 3. Target Lateral (Distractor Absent; N2ac-like component) ---
         # Target-1-Singleton-0: Target Left, No Distractor
@@ -151,15 +145,15 @@ for subject_id_int in subject_ids:
             diff_wave_tda_sub = avg_contra_tda - avg_ipsi_tda
             subject_diff_waves['target_distractor_absent'].append(diff_wave_tda_sub)
             subject_contributed_this_loop = True
-            print(f"    Calculated N2ac-like (distractor absent) diff wave for {subject_str}.")
+            print(f"    Calculated N2ac-like (distractor absent) diff wave for sub-{subject_id_int}.")
         else:
-            print(f"    Skipping N2ac-like (distractor absent) for {subject_str} due to insufficient trials.")
+            print(f"    Skipping N2ac-like (distractor absent) for sub-{subject_id_int} due to insufficient trials.")
 
         if subject_contributed_this_loop:
             processed_subject_count += 1
 
     except Exception as e:
-        print(f"  Error processing subject {subject_str}: {e}. Skipping this subject.")
+        print(f"  Error processing subject sub-{subject_id_int}: {e}. Skipping this subject.")
         # Note: If an error occurs mid-subject, they might have partial contributions.
         # A more robust way would be to collect data in a temp dict for the subject
         # and only append to global lists if the subject processing completes fully.
