@@ -293,60 +293,93 @@ def permutation_test_behavior(group1, group2, n_permutations=10000, plot=True, *
 
 def remove_outliers(df, column_name, subject_id_column='subject_id', threshold=2):
     """
-    Marks outliers in a DataFrame column as NaN, per subject, based on standard deviation.
+    Removes entire rows containing outliers, per subject, based on standard deviation.
+
+    An outlier is defined as any value in `column_name` that is more than `threshold`
+    standard deviations away from the mean for that subject. Rows containing such
+    values are completely removed from the DataFrame.
 
     Args:
-        df: The input DataFrame.
-        column_name: The name of the column to check for outliers (e.g., 'reaction_time').
-        subject_id_column: The name of the column identifying subjects (e.g., 'subject_id').
-        threshold: The number of standard deviations to use as a threshold.
+        df (pd.DataFrame): The input DataFrame.
+        column_name (str): The name of the column to check for outliers (e.g., 'reaction_time').
+        subject_id_column (str): The name of the column identifying subjects (e.g., 'subject_id').
+        threshold (float): The number of standard deviations to use as a threshold.
 
     Returns:
-        A new DataFrame with outliers marked as NaN, or the original DataFrame if no outliers are found
-        or if the column is not numeric. Returns None if required columns are missing.
-    """
+        pd.DataFrame: A new DataFrame with outlier rows removed.
 
+    Raises:
+        ValueError: If `column_name` or `subject_id_column` are not found in the DataFrame.
+        TypeError: If `column_name` is not a numeric type.
+    """
+    # --- Input validation ---
     if column_name not in df.columns:
-        print(f"Column '{column_name}' not found in DataFrame.")
-        return None
+        raise ValueError(f"Column '{column_name}' not found in DataFrame.")
 
     if subject_id_column not in df.columns:
-        print(f"Subject ID column '{subject_id_column}' not found in DataFrame.")
-        return None
+        raise ValueError(f"Subject ID column '{subject_id_column}' not found in DataFrame.")
 
     if not pd.api.types.is_numeric_dtype(df[column_name]):
-        print(f"Column '{column_name}' is not numeric. Outlier marking not possible.")
-        return df
+        raise TypeError(f"Column '{column_name}' is not numeric. Outlier removal requires a numeric column.")
 
-    df_copy = df.copy()  # Work on a copy
+    df_copy = df.copy()
+    outlier_details = []  # To collect details for a summary print
 
-    def _remove_outliers_single_subject(subject_df, col_name, thresh):
-        """Helper function to remove outliers for a single subject."""
-        mean = subject_df[col_name].mean()
-        std = subject_df[col_name].std()
+    # --- Helper function for applying to each group ---
+    def _drop_outlier_rows(subject_df):
+        """Identifies and drops outlier rows for a single subject."""
+        nonlocal outlier_details
 
-        if std == 0:  # Handle cases where all RTs are identical for a subject
-            print(
-                f"Standard deviation of column '{col_name}' is zero for subject {subject_df[subject_id_column].iloc[0]}. No outliers marked.")
+        # Calculate stats on non-NaN values in the target column
+        col_data = subject_df[column_name].dropna()
+
+        # Can't calculate outliers if there's no variance or not enough data
+        if len(col_data) < 2 or col_data.std() == 0:
             return subject_df
 
-        upper_bound = mean + thresh * std
-        lower_bound = mean - thresh * std
+        mean = col_data.mean()
+        std = col_data.std()
 
-        outlier_mask = (subject_df[col_name] < lower_bound) | (subject_df[col_name] > upper_bound)
-        subject_df.loc[outlier_mask, col_name] = np.nan
+        # Define outlier boundaries
+        lower_bound = mean - (threshold * std)
+        upper_bound = mean + (threshold * std)
+
+        # Create a boolean mask to identify outliers.
+        outlier_mask = (subject_df[column_name] < lower_bound) | (subject_df[column_name] > upper_bound)
+
         num_outliers = outlier_mask.sum()
-
         if num_outliers > 0:
-            print(f"Subject: {subject_df[subject_id_column].iloc[0]}, {num_outliers} outliers marked")
+            subject_id = subject_df[subject_id_column].iloc[0]
+            outlier_details.append(f"  - Subject {subject_id}: Removed {num_outliers} outlier row(s).")
+
+            # Get the index of the rows to drop
+            outlier_indices = subject_df[outlier_mask].index
+
+            # Drop the rows from this subject's dataframe
+            subject_df = subject_df.drop(outlier_indices)
 
         return subject_df
 
-    # Group by subject ID and apply the outlier removal function to each subject's data
-    df_copy = df_copy.groupby(subject_id_column, group_keys=False).apply(
-        _remove_outliers_single_subject, col_name=column_name, thresh=threshold
-    )
-    return df_copy
+    # --- Main logic ---
+    initial_rows = len(df_copy)
+    print(f"Starting outlier check for column '{column_name}'...")
+
+    # Group by subject and apply the function that drops rows
+    # group_keys=False prevents the group key from being added as an index
+    df_processed = df_copy.groupby(subject_id_column, group_keys=False).apply(_drop_outlier_rows)
+
+    final_rows = len(df_processed)
+    total_outliers_removed = initial_rows - final_rows
+
+    # Print a clean, aggregated summary
+    if outlier_details:
+        print("Outlier removal summary:")
+        for detail in outlier_details:
+            print(detail)
+
+    print(f"\nOutlier check complete. Total rows removed: {total_outliers_removed}.")
+
+    return df_processed
 
 
 def cronbach_alpha(
