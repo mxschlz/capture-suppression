@@ -8,10 +8,9 @@ from SPACEPRIME import get_data_path
 import seaborn as sns
 from SPACEPRIME.subjects import subject_ids
 from SPACEPRIME import load_concatenated_csv
-from stats import remove_outliers, r_squared_mixed_model
+from stats import remove_outliers
 import statsmodels.formula.api as smf
 from scipy.stats import pearsonr
-from patsy.contrasts import Treatment # Import Treatment for specifying reference levels
 
 plt.ion()
 
@@ -153,47 +152,63 @@ df_clean = merged_df[merged_df["phase"]!=2]
 # do pearson correlation
 corr_df_st = remove_outliers(df_clean, column_name="rt", threshold=2)
 corr_df_st = remove_outliers(corr_df_st, column_name="path_length_pixels", threshold=2)
+corr_df_st = corr_df_st.dropna(subset=["rt", "path_length_pixels"])
 corr_df_avrg = corr_df_st.groupby(["subject_id"])[["rt", "path_length_pixels"]].mean().reset_index()
 pearsonr(corr_df_st.path_length_pixels, corr_df_st.rt)
-corr_df_st = corr_df_st.dropna(subset=["rt", "path_length_pixels"])
 sns.lmplot(x="path_length_pixels", y="rt", data=corr_df_st,
-            scatter=True)
-plt.ylabel("Reaction time [s]")
+           scatter=False, ci=95)
+sns.scatterplot(data=corr_df_st, x="path_length_pixels", y="rt", alpha=0.1)
+plt.ylabel("Response time [s]")
 plt.xlabel("Path length [px]")
 plt.title("Pearson r = 0.18, p < 0.001")
 sns.despine()
+plt.tight_layout()
 
 # Load up ERP data
 df_pd = load_concatenated_csv("df_pd_model.csv", index_col=0)
 df_n2ac = load_concatenated_csv("df_n2ac_model.csv", index_col=0)
+# Load latencies
+df_pd_latencies = load_concatenated_csv("pd_latencies.csv", index_col=0)
+df_n2ac_latencies = load_concatenated_csv("n2ac_latencies.csv", index_col=0)
 # Combine df_pd and df_n2ac
 # This assumes df_pd and df_n2ac share the same index and common column structure.
 df_erp_combined = df_pd.copy()
 df_erp_combined['N2ac'] = df_n2ac['N2ac']
+df_erp_combined['Pd_latency'] = df_pd_latencies['Pd_latency_50']
+df_erp_combined['N2ac_latency'] = df_n2ac_latencies['N2ac_latency_50']
 # Now df_erp_combined contains all common columns, 'Pd', and 'N2ac'
 
 # Prepare df_clean_for_merge
-# Identify columns in df_clean that are also in df_pd
+# This part is fine, it correctly identifies and removes columns that would be duplicated.
 cols_in_df_pd = df_pd.columns
 overlapping_cols_with_pd = cols_in_df_pd.intersection(df_clean.columns)
-df_clean_for_merge = df_clean.drop(columns=overlapping_cols_with_pd, errors='ignore')
+df_clean_for_merge = df_clean.drop(columns=overlapping_cols_with_pd.delete([list(overlapping_cols_with_pd).index("subject_id"),
+                                                                           list(overlapping_cols_with_pd).index("block"),
+                                                                           list(overlapping_cols_with_pd).index("trial_nr")]), errors='ignore')
 
-# Merge the combined ERP data with the prepared behavioral data
+# --- CORRECTED MERGE ---
+# Merge the combined ERP data with the prepared behavioral data using shared key columns
+# instead of the misaligned DataFrame indices.
+merge_keys = ['subject_id', "block", "trial_nr"]
 lmm_data_for_model = pd.merge(
     df_erp_combined,
     df_clean_for_merge,
-    left_index=True,
-    right_index=True,
-    how='left'  # Keeps all rows from df_erp_combined and adds matching from df_clean_for_merge
+    on=merge_keys,  # Use the columns that uniquely identify a trial
+    how='left'      # Keeps all rows from df_erp_combined
 )
 
 # Prepare the final input for the LMM
-lmm_input = lmm_data_for_model.drop(columns=["duration"], errors='ignore').dropna()
+# Now, .dropna() will only remove rows that are genuinely missing data,
+# not rows where the merge failed.
+lmm_input = lmm_data_for_model.drop(columns=["duration"], errors='ignore').dropna(subset=["N2ac_latency", "Pd_latency"])
+
+# You should see a significantly smaller number of dropped rows now.
+print(f"Original rows in lmm_data_for_model: {len(lmm_data_for_model)}")
+print(f"Rows after dropping NaNs for LMM input: {len(lmm_input)}")
 
 # Create SingletonPresent column
 # Assuming 'mid' in SingletonLoc means singleton absent, and other values mean present
 lmm_input['SingletonPresent'] = lmm_input['SingletonLoc'].apply(lambda x: 'absent' if x == 'absent' else 'present')
-
 # Define formulas (as in your script)
 formula_rt = "rt ~ block + C(SingletonLoc, Treatment('absent')) + C(Priming, Treatment(reference='no-p')) + C(select_target_int) + C(SingletonLoc):block"
 formula_path_length = "path_length_pixels ~ block + C(SingletonLoc, Treatment('absent')) + C(Priming, Treatment(reference='no-p')) + C(select_target_int) + C(SingletonLoc):block"
@@ -258,12 +273,10 @@ union_param_names = sorted(list(set(all_param_names_rt) | set(all_param_names_pa
 param_to_y_index = {name: i for i, name in enumerate(union_param_names)}
 
 num_total_params = len(union_param_names)
-fig_height = max(6, num_total_params * 0.5)
-fig_width = 16
+fig_height = 6
+fig_width = 8
 
 fig, axes = plt.subplots(1, 2, figsize=(fig_width, fig_height), sharey=True)
-
-
 # --- Helper function to plot coefficients on a given axis ---
 def plot_coeffs_on_ax(ax, plot_data, model_title_suffix, param_y_map,
                       color_sig, color_nonsig, ecolor_sig, ecolor_nonsig,
@@ -287,7 +300,7 @@ def plot_coeffs_on_ax(ax, plot_data, model_title_suffix, param_y_map,
     ax.axvline(x=0, color='black', linestyle='--', linewidth=0.8, alpha=0.7)
     ax.set_xlabel("Coefficient Estimate")
     ax.set_title(f"{model_title_suffix}")
-    ax.legend(loc='best')
+    ax.legend("")
     sns.despine(ax=ax, left=True, bottom=False)
 
 # Define common colors
@@ -300,7 +313,7 @@ common_mec_nonsig = "lightgrey" # Markeredgecolor for non-significant
 
 
 # Plot RT model on the first subplot (axes[0])
-plot_coeffs_on_ax(axes[0], plot_df_rt, 'Reaction Time', param_to_y_index,
+plot_coeffs_on_ax(axes[0], plot_df_rt, 'Response Time', param_to_y_index,
                   color_sig=common_color_sig, color_nonsig=common_color_nonsig,
                   ecolor_sig=common_ecolor_sig, ecolor_nonsig=common_ecolor_nonsig,
                   mec_sig=common_mec_sig, mec_nonsig=common_mec_nonsig, label_prefix='RT')
