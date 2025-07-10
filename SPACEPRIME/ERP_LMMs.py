@@ -2,419 +2,602 @@ import matplotlib.pyplot as plt
 import SPACEPRIME
 import pandas as pd
 import statsmodels.formula.api as smf
+import statsmodels.api as sm
 import seaborn as sns
 import numpy as np
-from scipy.stats import pearsonr
-import statsmodels.genmod.bayes_mixed_glm as sm_bayes
 from stats import remove_outliers, r_squared_mixed_model  # Assuming this is your custom outlier removal function
 from patsy.contrasts import Treatment # Import Treatment for specifying reference levels
 
 plt.ion()
 
+
+def get_jackknife_contra_ipsi_wave(sample_df, lateral_stim_loc, electrode_pairs, time_window, all_times, plot=False):
+    """
+    Calculates the average contralateral-ipsilateral difference wave from a jackknife sample.
+
+    Args:
+        sample_df (pd.DataFrame): DataFrame containing the ERP data for the jackknife sample (all trials but one).
+        lateral_stim_loc (str): Location of the lateralized stimulus ('left' or 'right').
+        electrode_pairs (list): List of tuples, where each tuple is a (left_hemi_el, right_hemi_el) pair.
+        time_window (tuple): The (start, end) time in seconds for the analysis.
+        all_times (np.ndarray): Array of all time points in the epoch.
+        plot (bool, optional): If True, displays a plot of the resulting difference wave. Defaults to False.
+
+    Returns:
+        tuple: A tuple containing:
+            - np.ndarray: The final averaged contra-ipsi difference wave.
+            - np.ndarray: The time points corresponding to the wave.
+    """
+    # Create a boolean mask for the desired time window
+    time_mask = (all_times >= time_window[0]) & (all_times <= time_window[1])
+    window_times = all_times[time_mask]
+
+    diff_waves_for_pairs = []
+    for left_el, right_el in electrode_pairs:
+        # Extract ERP data for the electrode pair from the sample trials
+        left_el_data = sample_df[left_el].loc[:, time_mask].values
+        right_el_data = sample_df[right_el].loc[:, time_mask].values
+
+        # Average across trials to get a single wave for each electrode
+        avg_left_wave = np.mean(left_el_data, axis=0)
+        avg_right_wave = np.mean(right_el_data, axis=0)
+
+        # Calculate contralateral - ipsilateral difference
+        if lateral_stim_loc == 'left':
+            # Contralateral is Right Hemisphere, Ipsilateral is Left Hemisphere
+            diff_wave = avg_right_wave - avg_left_wave
+        else:  # lateral_stim_loc == 'right'
+            # Contralateral is Left Hemisphere, Ipsilateral is Right Hemisphere
+            diff_wave = avg_left_wave - avg_right_wave
+        diff_waves_for_pairs.append(diff_wave)
+
+    # Average the difference waves across all specified electrode pairs
+    mean_diff_wave = np.mean(diff_waves_for_pairs, axis=0)
+
+    if plot:
+        plt.figure(figsize=(8, 5))
+        plt.plot(window_times, mean_diff_wave, label='Contra-Ipsi Difference', color='black')
+        plt.axhline(0, color='gray', linestyle='--', linewidth=1)
+        if window_times[0] <= 0 <= window_times[-1]:
+            plt.axvline(0, color='gray', linestyle='--', linewidth=1)
+        plt.title(f"Jackknife Contra-Ipsi Difference Wave (Stimulus: {lateral_stim_loc})")
+        plt.xlabel("Time (s)")
+        plt.ylabel("Amplitude (µV)")
+        plt.legend()
+        plt.grid(True, linestyle=':', alpha=0.6)
+        plt.show(block=True)
+
+    return mean_diff_wave, window_times
+
+
+def calculate_fractional_area_latency(erp_wave, times, percentage=0.5, plot=False, is_target=False):
+    """
+    Calculates latency based on a specified percentage of the area under a scaled ERP wave.
+
+    This method first performs a min-max normalization on the absolute ERP waveform to scale it
+    between 0 and 1. This emphasizes the shape of the wave relative to its peak. The latency is
+    then calculated as the time point where the cumulative area under this *scaled* wave
+    reaches the specified percentage of its total area.
+
+    Args:
+        erp_wave (np.ndarray): The ERP waveform (can be positive or negative-going).
+        times (np.ndarray): The time points corresponding to the erp_wave.
+        percentage (float, optional): The percentage of the total area to use as a threshold.
+                                      Defaults to 0.5 (for 50%).
+        plot (bool, optional): If True, displays a plot illustrating the calculation. Defaults to False.
+        is_target (bool): Set plot title according to ERP category. Defaults to False.
+
+    Returns:
+        float: The calculated latency in seconds, or np.nan if the latency cannot be determined.
+    """
+    # Work with the absolute value to make the calculation sign-independent
+    #abs_erp_wave = np.abs(erp_wave)
+    if is_target:
+        abs_erp_wave = erp_wave * -1
+    else:
+        abs_erp_wave = erp_wave # do NOT use np.abs() here
+
+    # --- Min-Max Scale the absolute ERP wave to a [0, 1] range ---
+    min_val = np.min(abs_erp_wave)
+    max_val = np.max(abs_erp_wave)
+
+    # If the wave is flat or has no amplitude, latency cannot be calculated.
+    if max_val <= min_val:
+        if plot:
+            print("Plotting skipped: ERP wave is flat or has no amplitude.")
+        return np.nan
+
+    scaled_wave = (abs_erp_wave - min_val) / (max_val - min_val)
+
+    # Calculate the cumulative sum (area under the curve) of the SCALED wave
+    cum_sum = np.cumsum(scaled_wave)
+    total_area = np.max(cum_sum)
+
+    # If the total area is zero (can happen if scaled_wave is all zeros), we cannot calculate a latency.
+    if total_area <= 0:
+        if plot:
+            print("Plotting skipped: Total area under the scaled curve is zero.")
+        return np.nan
+
+    # Determine the area threshold based on the specified percentage
+    target_area = total_area * percentage
+
+    # Find the first index where the cumulative sum crosses the threshold
+    crossings = np.where(cum_sum >= target_area)[0]
+
+    latency = np.nan
+    if len(crossings) > 0:
+        first_crossing_idx = crossings[0]
+
+        # If the crossing happens at the very first time point, no interpolation is possible.
+        if first_crossing_idx == 0:
+            latency = times[first_crossing_idx]
+        else:
+            # --- Linear Interpolation for a more precise latency ---
+            # Get the points just before and at the crossing
+            idx_before = first_crossing_idx - 1
+            idx_after = first_crossing_idx
+
+            t_before = times[idx_before]
+            t_after = times[idx_after]
+
+            # Use the cumulative sum of the scaled wave for interpolation
+            val_before = cum_sum[idx_before]
+            val_after = cum_sum[idx_after]
+
+            # Avoid division by zero if the cumulative sum is flat in this segment
+            if val_after == val_before:
+                latency = t_after
+            else:
+                # Interpolate the time at which the cumulative sum equals the target area
+                latency = np.interp(target_area, [val_before, val_after], [t_before, t_after])
+
+    # --- Plotting Logic ---
+    if plot:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6), sharex=True)
+        erp_type = 'N2ac' if is_target else 'Pd'
+        fig.suptitle(f"Fractional Area Latency ({percentage*100:.0f}%) on Scaled Waveform ({erp_type})", fontsize=16)
+
+        # Plot 1: Original and Scaled ERP Waveforms
+        ax1.set_title("Original vs. Scaled Waveform")
+        ax1.plot(times, erp_wave, color='navy', label='Original Wave (µV)')
+        ax1.set_xlabel("Time (s)")
+        ax1.set_ylabel("Amplitude (µV)", color='navy')
+        ax1.tick_params(axis='y', labelcolor='navy')
+        ax1.grid(True, linestyle=':', alpha=0.6)
+        ax1.axhline(0, color='gray', linestyle='--', linewidth=1)
+
+        # Create a second y-axis for the scaled wave
+        ax1_twin = ax1.twinx()
+        ax1_twin.plot(times, scaled_wave, color='darkorange', linestyle='--', label='Scaled Wave (0-1)')
+        ax1_twin.set_ylabel("Scaled Amplitude", color='darkorange')
+        ax1_twin.tick_params(axis='y', labelcolor='darkorange')
+        ax1_twin.set_ylim(-0.05, 1.05)
+
+        # Combine legends from both axes
+        lines, labels = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax1_twin.get_legend_handles_labels()
+        ax1_twin.legend(lines + lines2, labels + labels2, loc='upper left')
+
+        # Plot 2: Cumulative Sum and Latency Calculation
+        ax2.set_title("Cumulative Area & Latency")
+        ax2.plot(times, cum_sum, color='teal', label='Cumulative Area of Scaled Wave')
+        ax2.axhline(target_area, color='red', linestyle='--', label=f'{percentage*100:.0f}% Threshold Area')
+        ax2.set_xlabel("Time (s)")
+        ax2.set_ylabel("Cumulative Area (arbitrary units)")
+        ax2.grid(True, linestyle=':', alpha=0.6)
+
+        if not np.isnan(latency):
+            ax2.axvline(latency, color='purple', linestyle='-', lw=2, label=f'Latency: {latency:.3f}s')
+            # Mark the exact intersection of the latency and threshold lines
+            ax2.plot(latency, target_area, 'ro', markersize=8, label='Crossing Point')
+
+        ax2.legend()
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout for suptitle
+        plt.show(block=True)
+
+    return latency
+
 # --- Script Configuration Parameters ---
 
 # --- 1. Data Loading & Preprocessing ---
-EPOCH_TMIN = 0.0  # Start time for epoch cropping (seconds)
-EPOCH_TMAX = 0.7  # End time for epoch cropping (seconds)
-OUTLIER_RT_THRESHOLD = 2.0  # SDs for RT outlier removal (used in remove_outliers)
-FILTER_PHASE = 2  # Phase to exclude from analysis (e.g., practice blocks)
+OUTLIER_RT_THRESHOLD = 2.0
+FILTER_PHASE = 2
 
 # --- 2. Column Names ---
-# Existing columns in metadata or to be created
 SUBJECT_ID_COL = 'subject_id'
-TARGET_COL = 'TargetLoc'  # Target position (e.g., "left", "mid", "right")
-DISTRACTOR_COL = 'SingletonLoc'  # Distractor position (e.g., "absent", "left", "mid", "right")
+TARGET_COL = 'TargetLoc'
+DISTRACTOR_COL = 'SingletonLoc'
 REACTION_TIME_COL = 'rt'
-ACCURACY_COL = 'select_target'  # Original accuracy column (e.g., True/False or 1.0/0.0)
+ACCURACY_COL = 'select_target'
 PHASE_COL = 'phase'
-# DISTRACTOR_PRESENCE_COL = 'SingletonPresent'  # (e.g., 0 or 1)
-PRIMING_COL = 'Priming'  # (e.g., "np", "no-p", "pp")
-# TARGET_DIGIT_COL = 'TargetDigit'
-# SINGLETON_DIGIT_COL = 'SingletonDigit'
-# BLOCK_COL = 'block' # Removed as per request
+PRIMING_COL = 'Priming'
+TRIAL_NUMBER_COL = 'total_trial_nr'
+ACCURACY_INT_COL = 'select_target_int'
+BLOCK_COL = 'block'
 
-# ERP component columns (will be created in the script)
-ERP_N2AC_COL = 'N2ac'
-ERP_PD_COL = 'Pd'
 
-# Derived columns for modeling
-TRIAL_NUMBER_COL = 'total_trial_nr'  # Overall trial number per subject (will be created)
-ACCURACY_INT_COL = 'select_target_int'  # Integer version of accuracy (0 or 1, will be created)
+# --- MERGED: ERP component columns for both Latency and Amplitude ---
+ERP_N2AC_LATENCY_COL = 'N2ac_latency'
+ERP_PD_LATENCY_COL = 'Pd_latency'
+ERP_N2AC_AMPLITUDE_COL = 'N2ac_amplitude'
+ERP_PD_AMPLITUDE_COL = 'Pd_amplitude'
 
-# --- Mappings and Reference Levels for Categorical Variables ---
+# --- Mappings and Reference Levels ---
 TARGET_LOC_MAP = {1: "left", 2: "mid", 3: "right"}
 DISTRACTOR_LOC_MAP = {0: "absent", 1: "left", 2: "mid", 3: "right"}
 PRIMING_MAP = {-1: "np", 0: "no-p", 1: "pp"}
-
-# Define string reference levels based on the original numeric ones
-TARGET_REF_VAL_ORIGINAL = 2
-TARGET_REF_STR = TARGET_LOC_MAP.get(TARGET_REF_VAL_ORIGINAL) # Should be "mid"
-
-DISTRACTOR_REF_VAL_ORIGINAL = 2 # This reference is typically for when distractor is present
-DISTRACTOR_REF_STR = DISTRACTOR_LOC_MAP.get(DISTRACTOR_REF_VAL_ORIGINAL) # Should be "mid"
-
-PRIMING_REF_VAL_ORIGINAL = 0
-PRIMING_REF_STR = PRIMING_MAP.get(PRIMING_REF_VAL_ORIGINAL) # Should be "no-p"
+TARGET_REF_STR = TARGET_LOC_MAP.get(2)
+DISTRACTOR_REF_STR = DISTRACTOR_LOC_MAP.get(2)
+PRIMING_REF_STR = PRIMING_MAP.get(0)
 
 # --- 3. ERP Component Definitions ---
-PD_TIME_WINDOW = (0.29, 0.38)  # (start_time, end_time) in seconds
-PD_ELECTRODES = [
-    ("FC3", "FC4"),
-    ("FC5", "FC6"),
-    ("C3", "C4"),
-    ("C5", "C6"),
-    ("CP3", "CP4"),
-    ("CP5", "CP6")
-]  # Electrodes for Pd. Order: [left_hemisphere_electrode, right_hemisphere_electrode]
+PD_TIME_WINDOW = (0.20, 0.4)
+PD_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4"), ("C5", "C6"), ("CP3", "CP4"), ("CP5", "CP6")]
+N2AC_TIME_WINDOW = (0.18, 0.4)
+N2AC_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4"), ("C5", "C6"), ("CP3", "CP4"), ("CP5", "CP6")]
 
-# N2ac Component
-N2AC_TIME_WINDOW = (0.22, 0.38)  # (start_time, end_time) in seconds
-N2AC_ELECTRODES = [
-    ("FC3", "FC4"),
-    ("FC5", "FC6"),
-    ("C3", "C4"),
-    ("C5", "C6"),
-    ("CP3", "CP4"),
-    ("CP5", "CP6")
-]  # Electrodes for N2ac. Order: [left_hemisphere_electrode, right_hemisphere_electrode]
-
-# --- 4. LMM Predictor Variables for N2ac and Pd Models ---
-LMM_N2AC_PD_CONTINUOUS_PREDICTORS = [TRIAL_NUMBER_COL, REACTION_TIME_COL]
-LMM_N2AC_PD_CATEGORICAL_PREDICTORS = [
-    TARGET_COL,
-    DISTRACTOR_COL,
-    PRIMING_COL,
-    ACCURACY_INT_COL
-    # BLOCK_COL removed
-    # DISTRACTOR_PRESENCE_COL removed
-]
+# --- Latency Robustness Check Configuration ---
+PERCENTAGES_TO_TEST = [0.5] # Using 50% as the standard
 
 # --- Main Script ---
 print("Loading and concatenating epochs...")
 epochs = SPACEPRIME.load_concatenated_epochs()
-print("Epochs loaded and cropped.")
-
 df = epochs.metadata.copy()
 print(f"Original number of trials: {len(df)}")
 
+# --- Preprocessing Steps (unchanged) ---
 if PHASE_COL in df.columns and FILTER_PHASE is not None:
     df = df[df[PHASE_COL] != FILTER_PHASE]
-    print(f"Trials after filtering phase != {FILTER_PHASE}: {len(df)}")
-elif FILTER_PHASE is not None:
-    print(f"Warning: Column '{PHASE_COL}' not found for filtering.")
-
 if REACTION_TIME_COL in df.columns:
     df = remove_outliers(df, column_name=REACTION_TIME_COL, threshold=OUTLIER_RT_THRESHOLD)
-    print(f"Trials after RT outlier removal: {len(df)}")
-else:
-    print(f"Warning: Column '{REACTION_TIME_COL}' not found for outlier removal.")
-
 if SUBJECT_ID_COL in df.columns:
     df[TRIAL_NUMBER_COL] = df.groupby(SUBJECT_ID_COL).cumcount()
-else:
-    print(f"Warning: '{SUBJECT_ID_COL}' column not found. Cannot create '{TRIAL_NUMBER_COL}'.")
-
 if ACCURACY_COL in df.columns:
     df[ACCURACY_INT_COL] = df[ACCURACY_COL].astype(int)
-    print(f"Created '{ACCURACY_INT_COL}' from '{ACCURACY_COL}'. Unique values: {df[ACCURACY_INT_COL].unique()}")
-else:
-    print(f"Warning: Accuracy column '{ACCURACY_COL}' not found. Cannot create '{ACCURACY_INT_COL}'.")
+# Map categorical variables to strings
+df[TARGET_COL] = pd.to_numeric(df[TARGET_COL], errors='coerce').map(TARGET_LOC_MAP)
+df[DISTRACTOR_COL] = pd.to_numeric(df[DISTRACTOR_COL], errors='coerce').map(DISTRACTOR_LOC_MAP)
+df[PRIMING_COL] = pd.to_numeric(df[PRIMING_COL], errors='coerce').map(PRIMING_MAP)
+print("Preprocessing and column mapping complete.")
 
-# Process TARGET_COL: Convert to numeric, then map to strings
-if TARGET_COL in df.columns:
-    numeric_target_col = pd.to_numeric(df[TARGET_COL], errors='coerce')
-    if numeric_target_col.isna().sum() > df[TARGET_COL].isna().sum(): # Check if new NaNs were introduced by coercion
-        print(f"Warning: NaNs introduced in '{TARGET_COL}' after coercion. Original non-numeric values will become NaN after mapping if not in map.")
-    df[TARGET_COL] = numeric_target_col.map(TARGET_LOC_MAP)
-    print(f"Unique values in '{TARGET_COL}' after mapping: {df[TARGET_COL].unique()}")
-    if TARGET_REF_STR is None:
-        print(f"Error: TARGET_REF_STR is None. Original numeric reference {TARGET_REF_VAL_ORIGINAL} might not be in TARGET_LOC_MAP.")
-    elif TARGET_REF_STR not in df[TARGET_COL].dropna().unique():
-        print(f"Warning: Mapped column '{TARGET_COL}' does not contain the reference value '{TARGET_REF_STR}'. "
-              f"Setting '{TARGET_REF_STR}' as reference might cause issues if it's not present in the data for some models.")
-else:
-    raise ValueError(f"Error: Critical column '{TARGET_COL}' not found in metadata.")
-
-# Process DISTRACTOR_COL: Convert to numeric, then map to strings
-if DISTRACTOR_COL in df.columns:
-    numeric_distractor_col = pd.to_numeric(df[DISTRACTOR_COL], errors='coerce')
-    if numeric_distractor_col.isna().sum() > df[DISTRACTOR_COL].isna().sum():
-        print(f"Warning: NaNs introduced in '{DISTRACTOR_COL}' after coercion. Original non-numeric values will become NaN after mapping if not in map.")
-    df[DISTRACTOR_COL] = numeric_distractor_col.map(DISTRACTOR_LOC_MAP)
-    print(f"Unique values in '{DISTRACTOR_COL}' after mapping: {df[DISTRACTOR_COL].unique()}")
-    if DISTRACTOR_REF_STR is None:
-         print(f"Error: DISTRACTOR_REF_STR is None. Original numeric reference {DISTRACTOR_REF_VAL_ORIGINAL} might not be in DISTRACTOR_LOC_MAP.")
-    # Check for reference 'mid' among present distractors (relevant for Pd model)
-    elif DISTRACTOR_LOC_MAP.get(0) is not None and \
-         DISTRACTOR_REF_STR not in df[df[DISTRACTOR_COL] != DISTRACTOR_LOC_MAP[0]][DISTRACTOR_COL].dropna().unique():
-        print(f"Warning: Mapped column '{DISTRACTOR_COL}' (excluding '{DISTRACTOR_LOC_MAP[0]}') does not contain the reference value '{DISTRACTOR_REF_STR}'. "
-              f"This might cause issues for models using '{DISTRACTOR_REF_STR}' as reference for present distractors.")
-    elif DISTRACTOR_LOC_MAP.get(0) is None and DISTRACTOR_REF_STR not in df[DISTRACTOR_COL].dropna().unique():
-         print(f"Warning: Mapped column '{DISTRACTOR_COL}' does not contain the reference value '{DISTRACTOR_REF_STR}'.")
-
-else:
-    raise ValueError(f"Error: Critical column '{DISTRACTOR_COL}' not found in metadata.")
-
-# Process PRIMING_COL: Convert to numeric, then map to strings
-if PRIMING_COL in df.columns:
-    numeric_priming_col = pd.to_numeric(df[PRIMING_COL], errors='coerce')
-    if numeric_priming_col.isna().sum() > df[PRIMING_COL].isna().sum():
-        print(f"Warning: NaNs introduced in '{PRIMING_COL}' after coercion. Original non-numeric values will become NaN after mapping if not in map.")
-    df[PRIMING_COL] = numeric_priming_col.map(PRIMING_MAP)
-    print(f"Unique values in '{PRIMING_COL}' after mapping: {df[PRIMING_COL].unique()}")
-    if PRIMING_REF_STR is None:
-        print(f"Error: PRIMING_REF_STR is None. Original numeric reference {PRIMING_REF_VAL_ORIGINAL} might not be in PRIMING_MAP.")
-    elif PRIMING_REF_STR not in df[PRIMING_COL].dropna().unique():
-        print(f"Warning: Mapped column '{PRIMING_COL}' does not contain the reference value '{PRIMING_REF_STR}'. "
-              f"Setting '{PRIMING_REF_STR}' as reference might cause issues if it's not present in the data for some models.")
-else:
-    print(f"Warning: Priming column '{PRIMING_COL}' not found.")
-
-# Get all unique electrodes needed for N2ac and Pd calculations
-erp_df_picks_tuples = list(set(N2AC_ELECTRODES + PD_ELECTRODES)) # List of unique (L,R) tuples
-erp_df_picks_flat = [item for electrode_pair in erp_df_picks_tuples for item in electrode_pair] # Flatten list of tuples
-erp_df_picks_unique_flat = sorted(list(set(erp_df_picks_flat))) # Unique electrode names, sorted
-
-# Extract ERP data for the required electrodes
+# --- ERP Data Reshaping (unchanged) ---
+erp_df_picks_flat = [item for pair in set(N2AC_ELECTRODES + PD_ELECTRODES) for item in pair]
+erp_df_picks_unique_flat = sorted(list(set(erp_df_picks_flat)))
 erp_df = epochs.to_data_frame(picks=erp_df_picks_unique_flat, time_format=None)
+print("Reshaping ERP data to wide format...")
+erp_wide = erp_df.pivot(index='epoch', columns='time')
+erp_wide = erp_wide.reorder_levels([1, 0], axis=1).sort_index(axis=1)
+erp_wide.columns = erp_wide.columns.droplevel(0)
+merged_df = df.join(erp_wide)
+print(f"Merged metadata with wide ERP data. Shape: {merged_df.shape}")
 
-# Calculate N2ac means
-n2ac_time_mask = (erp_df['time'] >= N2AC_TIME_WINDOW[0]) & (erp_df['time'] <= N2AC_TIME_WINDOW[1])
-n2ac_filtered_df = erp_df[n2ac_time_mask]
-print(f"Calculating N2ac means using electrodes: {N2AC_ELECTRODES} in window: {N2AC_TIME_WINDOW}")
-# Calculate means for all relevant unique electrodes within the N2ac time window
-n2ac_means = n2ac_filtered_df.groupby('epoch')[erp_df_picks_unique_flat].mean()
-# Rename columns to specify they are from the N2ac time window
-n2ac_means = n2ac_means.rename(columns={elec: f"{elec}_N2acWindow" for elec in n2ac_means.columns})
-print("N2ac means calculated and columns renamed.")
+# --- Filter for N2ac and Pd trials (unchanged) ---
+is_target_lateral = merged_df[TARGET_COL].isin(['left', 'right'])
+is_distractor_lateral = merged_df[DISTRACTOR_COL].isin(['left', 'right'])
+is_target_central = merged_df[TARGET_COL] == TARGET_REF_STR
+is_distractor_central = merged_df[DISTRACTOR_COL] == 'mid'
+n2ac_analysis_df = merged_df[is_target_lateral & is_distractor_central].copy()
+pd_analysis_df = merged_df[is_distractor_lateral & is_target_central].copy()
+print(f"N2ac trials: {len(n2ac_analysis_df)}, Pd trials: {len(pd_analysis_df)}")
 
-# Calculate Pd means
-pd_time_mask = (erp_df['time'] >= PD_TIME_WINDOW[0]) & (erp_df['time'] <= PD_TIME_WINDOW[1])
-pd_filtered_df = erp_df[pd_time_mask]
-print(f"Calculating Pd means using electrodes: {PD_ELECTRODES} in window: {PD_TIME_WINDOW}")
-# Calculate means for all relevant unique electrodes within the Pd time window
-pd_means = pd_filtered_df.groupby('epoch')[erp_df_picks_unique_flat].mean()
-# Rename columns to specify they are from the Pd time window
-pd_means = pd_means.rename(columns={elec: f"{elec}_PdWindow" for elec in pd_means.columns})
-print("Pd means calculated and columns renamed.")
+# --- MERGED: Single-Trial ERP Latency & Amplitude Calculation ---
+print("\n--- Calculating Single-Trial ERP Latencies and Amplitudes ---")
 
-# Merge the window-specific means into the main dataframe
-df = df.merge(n2ac_means, left_index=True, right_index=True, how='left')
-df = df.merge(pd_means, left_index=True, right_index=True, how='left')
-print("ERP means merged into metadata with window-specific column names.")
+# Initialize all new columns in the main dataframe `df`
+df[ERP_N2AC_AMPLITUDE_COL] = np.nan
+df[ERP_PD_AMPLITUDE_COL] = np.nan
+for p in PERCENTAGES_TO_TEST:
+    p_int = int(p * 100)
+    df[f'{ERP_N2AC_LATENCY_COL}_{p_int}'] = np.nan
+    df[f'{ERP_PD_LATENCY_COL}_{p_int}'] = np.nan
 
-# Initialize ERP component columns
-df[ERP_N2AC_COL] = np.nan
-df[ERP_PD_COL] = np.nan
+all_times = epochs.times
+plot_erp_wave = False  # Set to True to debug/visualize a single trial's calculation
 
-# Calculate N2ac based on the mean of differences from specified electrode pairs
-n2ac_pair_difference_columns = []
-for left_electrode, right_electrode in N2AC_ELECTRODES:
-    left_col_name = f"{left_electrode}_N2acWindow"
-    right_col_name = f"{right_electrode}_N2acWindow"
-    if left_col_name in df.columns and right_col_name in df.columns:
-        temp_diff_col = f"temp_n2ac_diff_{left_electrode}_{right_electrode}"
-        df[temp_diff_col] = df[left_col_name] - df[right_col_name]
-        n2ac_pair_difference_columns.append(temp_diff_col)
-    else:
-        print(f"Warning: Columns for N2ac pair ({left_col_name}, {right_col_name}) not found. This pair will be skipped for N2ac calculation.")
+# --- N2ac Calculation Loop ---
+print("\n--- Calculating N2ac Latencies & Amplitudes ---")
+for subject_id in n2ac_analysis_df[SUBJECT_ID_COL].unique():
+    print(f"Processing N2ac for subject: {subject_id}...")
+    subject_n2ac_df = n2ac_analysis_df[n2ac_analysis_df[SUBJECT_ID_COL] == subject_id]
+    for trial_idx, trial_row in subject_n2ac_df.iterrows():
+        jackknife_sample_df = subject_n2ac_df.drop(index=trial_idx)
+        if jackknife_sample_df.empty: continue
 
-if n2ac_pair_difference_columns:
-    df[ERP_N2AC_COL] = df[n2ac_pair_difference_columns].mean(axis=1)
-    print(f"{ERP_N2AC_COL} calculated as the mean of {len(n2ac_pair_difference_columns)} electrode pair differences.")
-    # Optionally, drop the temporary difference columns
-    # df = df.drop(columns=n2ac_pair_difference_columns)
-else:
-    print(f"Warning: No valid electrode pairs found for N2ac calculation. {ERP_N2AC_COL} will remain NaN.")
+        n2ac_wave, n2ac_times = get_jackknife_contra_ipsi_wave(
+            sample_df=jackknife_sample_df, lateral_stim_loc=trial_row[TARGET_COL],
+            electrode_pairs=N2AC_ELECTRODES, time_window=N2AC_TIME_WINDOW, all_times=all_times
+        )
 
-# Calculate Pd based on the mean of differences from specified electrode pairs
-pd_pair_difference_columns = []
-for left_electrode, right_electrode in PD_ELECTRODES:
-    left_col_name = f"{left_electrode}_PdWindow"
-    right_col_name = f"{right_electrode}_PdWindow"
-    if left_col_name in df.columns and right_col_name in df.columns:
-        temp_diff_col = f"temp_pd_diff_{left_electrode}_{right_electrode}"
-        df[temp_diff_col] = df[left_col_name] - df[right_col_name]
-        pd_pair_difference_columns.append(temp_diff_col)
-    else:
-        print(f"Warning: Columns for Pd pair ({left_col_name}, {right_col_name}) not found. This pair will be skipped for Pd calculation.")
+        # 1. Calculate and store MEAN AMPLITUDE
+        # N2ac is negative, so invert for easier interpretation (larger value = larger N2ac)
+        mean_amplitude = np.mean(n2ac_wave) * -1
+        df.loc[trial_idx, ERP_N2AC_AMPLITUDE_COL] = mean_amplitude
 
-if pd_pair_difference_columns:
-    df[ERP_PD_COL] = df[pd_pair_difference_columns].mean(axis=1)
-    print(f"{ERP_PD_COL} calculated as the mean of {len(pd_pair_difference_columns)} electrode pair differences.")
-    # Optionally, drop the temporary difference columns
-    # df = df.drop(columns=pd_pair_difference_columns)
-else:
-    print(f"Warning: No valid electrode pairs found for Pd calculation. {ERP_PD_COL} will remain NaN.")
+        # 2. Calculate and store LATENCY for each percentage
+        for p in PERCENTAGES_TO_TEST:
+            col_name = f'{ERP_N2AC_LATENCY_COL}_{int(p*100)}'
+            latency = calculate_fractional_area_latency(
+                n2ac_wave, n2ac_times, percentage=p, plot=plot_erp_wave, is_target=True
+            )
+            df.loc[trial_idx, col_name] = latency
+
+# --- Pd Calculation Loop ---
+print("\n--- Calculating Pd Latencies & Amplitudes ---")
+for subject_id in pd_analysis_df[SUBJECT_ID_COL].unique():
+    print(f"Processing Pd for subject: {subject_id}...")
+    subject_pd_df = pd_analysis_df[pd_analysis_df[SUBJECT_ID_COL] == subject_id]
+    for trial_idx, trial_row in subject_pd_df.iterrows():
+        jackknife_sample_df = subject_pd_df.drop(index=trial_idx)
+        if jackknife_sample_df.empty: continue
+
+        pd_wave, pd_times = get_jackknife_contra_ipsi_wave(
+            sample_df=jackknife_sample_df, lateral_stim_loc=trial_row[DISTRACTOR_COL],
+            electrode_pairs=PD_ELECTRODES, time_window=PD_TIME_WINDOW, all_times=all_times
+        )
+
+        # 1. Calculate and store MEAN AMPLITUDE
+        # Pd is positive, so no inversion needed.
+        mean_amplitude = np.mean(pd_wave)
+        df.loc[trial_idx, ERP_PD_AMPLITUDE_COL] = mean_amplitude
+
+        # 2. Calculate and store LATENCY for each percentage
+        for p in PERCENTAGES_TO_TEST:
+            col_name = f'{ERP_PD_LATENCY_COL}_{int(p*100)}'
+            latency = calculate_fractional_area_latency(
+                pd_wave, pd_times, percentage=p, plot=plot_erp_wave, is_target=False
+            )
+            df.loc[trial_idx, col_name] = latency
+
+# --- Analysis of Latency Robustness ---
+print("\n--- Analyzing Robustness of Latency Calculation ---")
+
+# --- N2ac Data Preparation ---
+n2ac_latency_cols = [f'{ERP_N2AC_LATENCY_COL}_{int(p*100)}' for p in PERCENTAGES_TO_TEST]
+n2ac_df = df[n2ac_latency_cols].copy()
+n2ac_long_df = n2ac_df.melt(var_name='Threshold (%)', value_name='Latency (s)')
+n2ac_long_df['Threshold (%)'] = n2ac_long_df['Threshold (%)'].str.extract(f'({ERP_N2AC_LATENCY_COL}_(\\d+))')[1].astype(int)
+n2ac_long_df.dropna(inplace=True)
+
+# --- Pd Data Preparation ---
+pd_latency_cols = [f'{ERP_PD_LATENCY_COL}_{int(p*100)}' for p in PERCENTAGES_TO_TEST]
+pd_df = df[pd_latency_cols].copy()
+pd_long_df = pd_df.melt(var_name='Threshold (%)', value_name='Latency (s)')
+pd_long_df['Threshold (%)'] = pd_long_df['Threshold (%)'].str.extract(f'({ERP_PD_LATENCY_COL}_(\\d+))')[1].astype(int)
+pd_long_df.dropna(inplace=True)
+
+# --- Print Statistics and Generate Combined Plot ---
+n2ac_has_data = not n2ac_long_df.empty
+pd_has_data = not pd_long_df.empty
+
+# Plotting logic: create a combined plot if both have data, otherwise plot individually.
+if n2ac_has_data and pd_has_data:
+    # Create a figure with two subplots side-by-side, sharing the y-axis
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8), sharey=True)
+    fig.suptitle('Distribution of ERP Latencies by Fractional Area Threshold', fontsize=18)
+
+    # N2ac Plot on the first axis (ax1)
+    sns.boxplot(data=n2ac_long_df, x='Threshold (%)', y='Latency (s)', ax=ax1)
+    ax1.set_title('N2ac Latencies', fontsize=14)
+    ax1.set_xlabel('Threshold Percentage (%)')
+    ax1.set_ylabel('Calculated Latency (s)')
+    ax1.grid(True, linestyle=':', alpha=0.6)
+
+    # Pd Plot on the second axis (ax2)
+    sns.boxplot(data=pd_long_df, x='Threshold (%)', y='Latency (s)', ax=ax2)
+    ax2.set_title('Pd Latencies', fontsize=14)
+    ax2.set_xlabel('Threshold Percentage (%)')
+    ax2.set_ylabel('')  # Hide y-label as it's shared with the left plot
+    ax2.grid(True, linestyle=':', alpha=0.6)
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust layout to make room for suptitle
+    plt.show(block=False)
+
+# --- Single-Trial Brain-Behavior Analysis (LMM) ---
+print("\n--- Analyzing Single-Trial Brain-Behavior Relationship using LMMs ---")
+
+# Choose a definitive percentage for this analysis. 50% is a standard choice.
+definitive_percentage = 50
+n2ac_definitive_col = f'{ERP_N2AC_LATENCY_COL}_{definitive_percentage}'
+pd_definitive_col = f'{ERP_PD_LATENCY_COL}_{definitive_percentage}'
+
+# --- 1. Prepare single-trial data for N2ac vs. RT ---
+n2ac_trials_df = df.dropna(subset=[n2ac_definitive_col, REACTION_TIME_COL, SUBJECT_ID_COL]).copy()
+n2ac_trials_df.drop(columns=[pd_definitive_col])
+n2ac_trials_df.to_csv('G:\\Meine Ablage\\PhD\\data\\SPACEPRIME\\concatenated\\n2ac_model.csv', index=True)
+
+# --- 2. Prepare single-trial data for Pd vs. RT ---
+pd_trials_df = df.dropna(subset=[pd_definitive_col, REACTION_TIME_COL, SUBJECT_ID_COL]).copy()
+pd_trials_df.drop(columns=[n2ac_definitive_col], inplace=True)
+pd_trials_df.to_csv('G:\\Meine Ablage\\PhD\\data\\SPACEPRIME\\concatenated\\pd_model.csv', index=True)
+
+# Center variables
+#pd_trials_df[pd_definitive_col] = pd_trials_df[pd_definitive_col] - pd_trials_df[pd_definitive_col].mean()
+#n2ac_trials_df[n2ac_definitive_col] = n2ac_trials_df[n2ac_definitive_col] - n2ac_trials_df[n2ac_definitive_col].mean()
+
+# Plot the stuff
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8), sharey=True)
+fig.suptitle('Single-Trial Brain-Behavior Relationship (LMM)', fontsize=18)
+
+# --- N2ac LMM and Plot ---
+try:
+    print("\nFitting LMM for N2ac Latency vs. RT...")
+    n2ac_formula = f"{REACTION_TIME_COL} ~ {n2ac_definitive_col}"
+    n2ac_model = smf.mixedlm(n2ac_formula, n2ac_trials_df, groups=n2ac_trials_df[SUBJECT_ID_COL]).fit(reml=False)
+    print(n2ac_model.summary())
+
+    # Extract results for plotting
+    beta = n2ac_model.fe_params[n2ac_definitive_col]
+    p_val = n2ac_model.pvalues[n2ac_definitive_col]
+
+    # Create regression plot
+    sns.regplot(data=n2ac_trials_df, x=n2ac_definitive_col, y=REACTION_TIME_COL, ax=ax1,
+                scatter_kws={'alpha': 0.1}) # Make points transparent to see density
+    ax1.set_title('N2ac Latency vs. RT', fontsize=14)
+    ax1.set_xlabel(f'N2ac Latency (s) at {definitive_percentage}%')
+    ax1.set_ylabel('Reaction Time (s)')
+    ax1.grid(True, linestyle=':', alpha=0.6)
+    ax1.text(0.05, 0.95, f'β = {beta:.3f}\np = {p_val:.3f}',
+             transform=ax1.transAxes, fontsize=12, verticalalignment='top',
+             bbox=dict(boxstyle='round,pad=0.5', fc='wheat', alpha=0.7))
+except Exception as e:
+    print(f"Could not fit N2ac LMM. Error: {e}")
+    ax1.text(0.5, 0.5, "LMM failed to converge", ha='center', va='center', transform=ax1.transAxes)
 
 
-print(f"\n{ERP_N2AC_COL} Calculation Summary (Trials with calculated {ERP_N2AC_COL} per {TARGET_COL}):")
-if ERP_N2AC_COL in df and TARGET_COL in df:
-    print(df.groupby(TARGET_COL)[ERP_N2AC_COL].apply(lambda x: x.notna().sum()))
-else:
-    print(f"Cannot display N2ac summary; '{ERP_N2AC_COL}' or '{TARGET_COL}' missing.")
+# --- Pd LMM and Plot ---
+try:
+    print("\nFitting LMM for Pd Latency vs. RT...")
+    pd_formula = f"{REACTION_TIME_COL} ~ {pd_definitive_col}"
+    pd_model = smf.mixedlm(pd_formula, pd_trials_df, groups=pd_trials_df[SUBJECT_ID_COL]).fit(reml=False)
+    print(pd_model.summary())
 
-print(f"\n{ERP_PD_COL} Calculation Summary (Trials with calculated {ERP_PD_COL} per {DISTRACTOR_COL}):")
-if ERP_PD_COL in df and DISTRACTOR_COL in df:
-    print(df.groupby(DISTRACTOR_COL)[ERP_PD_COL].apply(lambda x: x.notna().sum()))
-else:
-    print(f"Cannot display Pd summary; '{ERP_PD_COL}' or '{DISTRACTOR_COL}' missing.")
-print("-" * 30)
+    # Extract results for plotting
+    beta = pd_model.fe_params[pd_definitive_col]
+    p_val = pd_model.pvalues[pd_definitive_col]
 
-# --- 6. Statistical Modeling: N2ac and Pd LMMs ---
-n2ac_model_cols = [ERP_N2AC_COL, SUBJECT_ID_COL] + \
-                  LMM_N2AC_PD_CONTINUOUS_PREDICTORS + \
-                  LMM_N2AC_PD_CATEGORICAL_PREDICTORS
-df_n2ac_model = df[list(set(n2ac_model_cols))].dropna()
-df_n2ac_model[SUBJECT_ID_COL] = df_n2ac_model[SUBJECT_ID_COL].astype(int).astype(str)
-# save to csv
-df_n2ac_model.to_csv('G:\\Meine Ablage\\PhD\\data\\SPACEPRIME\\concatenated\\df_n2ac_model.csv', index=True)
+    # Create regression plot
+    sns.regplot(data=pd_trials_df, x=pd_definitive_col, y=REACTION_TIME_COL, ax=ax2, color='green',
+                scatter_kws={'alpha': 0.1})
+    ax2.set_title('Pd Latency vs. RT', fontsize=14)
+    ax2.set_xlabel(f'Pd Latency (s) at {definitive_percentage}%')
+    ax2.set_ylabel('') # Y-axis label is shared
+    ax2.grid(True, linestyle=':', alpha=0.6)
+    ax2.text(0.05, 0.95, f'β = {beta:.3f}\np = {p_val:.3f}',
+             transform=ax2.transAxes, fontsize=12, verticalalignment='top',
+             bbox=dict(boxstyle='round,pad=0.5', fc='wheat', alpha=0.7))
+except Exception as e:
+    print(f"Could not fit Pd LMM. Error: {e}")
+    ax2.text(0.5, 0.5, "LMM failed to converge", ha='center', va='center', transform=ax2.transAxes)
 
 
-if df_n2ac_model.empty or df_n2ac_model[ERP_N2AC_COL].isna().all():
-    print(f"N2ac model dataframe is empty or all '{ERP_N2AC_COL}' are NaN. Check N2ac calculation.")
-else:
-    print(f"Data for N2ac model: {len(df_n2ac_model)} trials")
-    formula_parts_n2ac = [f"{ERP_N2AC_COL} ~"]
-    formula_parts_n2ac.extend(LMM_N2AC_PD_CONTINUOUS_PREDICTORS)
-    for cat_pred in LMM_N2AC_PD_CATEGORICAL_PREDICTORS:
-        if cat_pred == PRIMING_COL:
-            if PRIMING_REF_STR and PRIMING_REF_STR in df_n2ac_model[PRIMING_COL].unique():
-                formula_parts_n2ac.append(f"C({cat_pred}, Treatment(reference='{PRIMING_REF_STR}'))")
-            else:
-                print(f"Warning: Reference '{PRIMING_REF_STR}' not found for {PRIMING_COL} in N2ac model data. Using default.")
-                formula_parts_n2ac.append(f"C({cat_pred})")
-        elif cat_pred == TARGET_COL:
-            if TARGET_REF_STR and TARGET_REF_STR in df_n2ac_model[TARGET_COL].unique():
-                formula_parts_n2ac.append(f"C({cat_pred}, Treatment(reference='{TARGET_REF_STR}'))")
-            else:
-                print(f"Warning: Reference '{TARGET_REF_STR}' not found for {TARGET_COL} in N2ac model data. Using default.")
-                formula_parts_n2ac.append(f"C({cat_pred})")
-        elif cat_pred == DISTRACTOR_COL:
-            if DISTRACTOR_REF_STR and DISTRACTOR_REF_STR in df_n2ac_model[DISTRACTOR_COL].unique():
-                formula_parts_n2ac.append(f"C({cat_pred}, Treatment(reference='{DISTRACTOR_REF_STR}'))")
-            else:
-                print(f"Warning: Reference '{DISTRACTOR_REF_STR}' not found for {DISTRACTOR_COL} in N2ac model data. Using default.")
-                formula_parts_n2ac.append(f"C({cat_pred})")
-        else: # For ACCURACY_INT_COL, which is already 0/1
-            formula_parts_n2ac.append(f"C({cat_pred})")
-    # Add interaction term for ACCURACY_INT_COL and TARGET_COL
-    if TARGET_COL in df_n2ac_model.columns and ACCURACY_INT_COL in df_n2ac_model.columns:
-        target_treatment_for_interaction = ""
-        # Check if the reference level for TARGET_COL is present in the current model's data
-        if TARGET_REF_STR and TARGET_REF_STR in df_n2ac_model[TARGET_COL].unique():
-            target_treatment_for_interaction = f", Treatment(reference='{TARGET_REF_STR}')"
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+plt.show(block=False)
 
-        interaction_term_n2ac = f"C({ACCURACY_INT_COL}):C({TARGET_COL}{target_treatment_for_interaction})"
-        formula_parts_n2ac.append(interaction_term_n2ac)
-        # print(f"Added interaction to N2ac: {interaction_term_n2ac}") # Optional: for confirmation
-    else:
-        print(f"Warning: Could not add {ACCURACY_INT_COL}:{TARGET_COL} interaction to N2ac model, "
-              f"as one or both columns are missing from df_n2ac_model after filtering.")
+# --- Single-Trial Brain-Behavior Analysis: 4 Separate Models ---
+print("\n--- Analyzing Single-Trial Brain-Behavior Relationship: 4 Separate Models ---")
+print("This analysis will build four separate models:")
+print("1. N2ac Latency -> Reaction Time (LMM)")
+print("2. N2ac Latency -> Accuracy (GLMM)")
+print("3. Pd Latency   -> Reaction Time (LMM)")
+print("4. Pd Latency   -> Accuracy (GLMM)")
 
-    n2ac_full_formula = " + ".join(formula_parts_n2ac)
-    print(f"\nN2ac LMM Formula: {n2ac_full_formula}")
-    print("Fitting N2ac LMM...")
+# --- 1. General Setup ---
+# Choose a definitive percentage for this analysis. 50% is a standard choice.
+definitive_percentage = 50
+n2ac_definitive_col = f'{ERP_N2AC_LATENCY_COL}_{definitive_percentage}'
+pd_definitive_col = f'{ERP_PD_LATENCY_COL}_{definitive_percentage}'
+
+# Optional: Center continuous predictors for better model convergence and interpretation.
+# If you uncomment this, use 'df' in the models below, as the changes are in-place.
+# df[n2ac_definitive_col] = df[n2ac_definitive_col].fillna(df[n2ac_definitive_col].mean()) - df[n2ac_definitive_col].mean()
+# df[pd_definitive_col] = df[pd_definitive_col].fillna(df[pd_definitive_col].mean()) - df[pd_definitive_col].mean()
+# df[BLOCK_COL] = df[BLOCK_COL] - df[BLOCK_COL].mean()
+
+
+# --- 2. N2ac Latency Models ---
+print("\n" + "="*25 + " N2ac Latency Models " + "="*25)
+
+# On these trials, SingletonLoc is always 'mid', so it cannot be a predictor.
+# We control for TargetLoc ('left' vs 'right') instead.
+n2ac_formula_predictors = (f"{n2ac_definitive_col} + {BLOCK_COL} + "
+                           f"C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}')) + {ERP_N2AC_AMPLITUDE_COL} + "
+                           f"C({TARGET_COL})")
+
+# --- Model 1: N2ac -> Reaction Time (LMM) ---
+print("\n--- Fitting Model 1: N2ac Latency -> Reaction Time (LMM) ---")
+if not n2ac_trials_df.empty:
     try:
-        n2ac_lmm = smf.mixedlm(formula=n2ac_full_formula, data=df_n2ac_model, groups=SUBJECT_ID_COL)
-        n2ac_lmm_results = n2ac_lmm.fit(reml=True)
-        print("\n--- N2ac LMM Summary (Full Model) ---")
-        print(n2ac_lmm_results.summary())
-        # Calculate and print R-squared
-        r2_n2ac = r_squared_mixed_model(n2ac_lmm_results)
-        if r2_n2ac:
-            print(f"N2ac LMM Marginal R-squared (fixed effects): {r2_n2ac['marginal_r2']:.3f}")
-            print(f"N2ac LMM Conditional R-squared (fixed + random effects): {r2_n2ac['conditional_r2']:.3f}")
+        # We add ACCURACY_INT_COL as a predictor for RT models
+        n2ac_rt_formula = f"{REACTION_TIME_COL} ~ {n2ac_formula_predictors} + C({ACCURACY_INT_COL})"
+        print(f"Formula: {n2ac_rt_formula}")
+
+        n2ac_rt_model = smf.mixedlm(n2ac_rt_formula, n2ac_trials_df,
+                                    groups=n2ac_trials_df[SUBJECT_ID_COL])
+        n2ac_rt_fit = n2ac_rt_model.fit(reml=False)
+        print(n2ac_rt_fit.summary())
+    except Exception as e:
+        print(f"Could not fit N2ac RT LMM. Error: {e}")
+else:
+    print("Skipping N2ac RT model: No data available.")
+
+
+# --- Model 2: N2ac -> Accuracy (GEE) ---
+print("\n--- Fitting Model 2: N2ac Latency -> Accuracy (using GEE) ---")
+if not n2ac_trials_df.empty:
+    try:
+        # We predict accuracy, so it's the dependent variable.
+        n2ac_acc_formula = f"{ACCURACY_INT_COL} ~ {n2ac_formula_predictors}"
+        print(f"Formula: {n2ac_acc_formula}")
+
+        # For binary accuracy (0/1), we use Generalized Estimating Equations (GEE).
+        # This is the standard statsmodels approach for clustered/repeated non-normal data.
+        # - `groups`: Specifies the clustering variable (subject_id).
+        # - `family`: Specifies the distribution (Binomial for 0/1 data).
+        # - `cov_struct`: Defines the assumed correlation structure within groups.
+        #   Exchangeable is a common choice, assuming equal correlation between any
+        #   two trials from the same subject (similar to a random intercept).
+        n2ac_acc_model = smf.gee(n2ac_acc_formula,
+                                 data=n2ac_trials_df,
+                                 groups=n2ac_trials_df[SUBJECT_ID_COL],
+                                 family=sm.families.Binomial(),
+                                 cov_struct=sm.cov_struct.Exchangeable())
+
+        n2ac_acc_fit = n2ac_acc_model.fit()
+        print(n2ac_acc_fit.summary())
 
     except Exception as e:
-        print(f"Error fitting N2ac LMM: {e}")
-        print("Review data for N2ac model (first 5 rows):")
-        print(df_n2ac_model.head())
-        df_n2ac_model.info()
-        for col in LMM_N2AC_PD_CATEGORICAL_PREDICTORS:
-            if col in df_n2ac_model:
-                print(f"Value counts for {col} in N2ac model data:\n{df_n2ac_model[col].value_counts(dropna=False)}")
-
-# Filter for Pd modeling: exclude trials where distractor was "absent"
-df_for_pd_modeling = df.copy()  # Use all trials for Pd modeling
-
-pd_model_cols = [ERP_PD_COL, SUBJECT_ID_COL] + \
-                LMM_N2AC_PD_CONTINUOUS_PREDICTORS + \
-                LMM_N2AC_PD_CATEGORICAL_PREDICTORS
-df_pd_model = df_for_pd_modeling[list(set(pd_model_cols))].dropna()
-df_pd_model[SUBJECT_ID_COL] = df_pd_model[SUBJECT_ID_COL].astype(int).astype(str)
-# save to csv
-df_pd_model.to_csv('G:\\Meine Ablage\\PhD\\data\\SPACEPRIME\\concatenated\\df_pd_model.csv', index=True)
-
-if df_pd_model.empty or df_pd_model[ERP_PD_COL].isna().all():
-    print(f"Pd model dataframe is empty or all '{ERP_PD_COL}' are NaN. Check Pd calculation and filtering.")
+        print(f"Could not fit N2ac Accuracy GEE model. Error: {e}")
 else:
-    print(f"Data for Pd model: {len(df_pd_model)} trials")
-    if DISTRACTOR_COL in df_pd_model:
-        print(f"Info: Unique '{DISTRACTOR_COL}' values in data for Pd model: {df_pd_model[DISTRACTOR_COL].unique()}")
-    else:
-        print(f"Warning: '{DISTRACTOR_COL}' not found in df_pd_model after processing.")
+    print("Skipping N2ac Accuracy model: No data available.")
 
-    formula_parts_pd = [f"{ERP_PD_COL} ~"]
-    formula_parts_pd.extend(LMM_N2AC_PD_CONTINUOUS_PREDICTORS) # TRIAL_NUMBER_COL is in here
-    pd_model_categorical_predictors = LMM_N2AC_PD_CATEGORICAL_PREDICTORS # Use the defined list
 
-    for cat_pred in pd_model_categorical_predictors:
-        if cat_pred == PRIMING_COL:
-            if PRIMING_REF_STR and PRIMING_REF_STR in df_pd_model[PRIMING_COL].unique():
-                formula_parts_pd.append(f"C({cat_pred}, Treatment(reference='{PRIMING_REF_STR}'))")
-            else:
-                print(f"Warning: Reference '{PRIMING_REF_STR}' not found for {PRIMING_COL} in Pd model data. Using default.")
-                formula_parts_pd.append(f"C({cat_pred})")
-        elif cat_pred == TARGET_COL:
-            if TARGET_REF_STR and TARGET_REF_STR in df_pd_model[TARGET_COL].unique():
-                formula_parts_pd.append(f"C({cat_pred}, Treatment(reference='{TARGET_REF_STR}'))")
-            else:
-                print(f"Warning: Reference '{TARGET_REF_STR}' not found for {TARGET_COL} in Pd model data. Using default.")
-                formula_parts_pd.append(f"C({cat_pred})")
-        elif cat_pred == DISTRACTOR_COL:
-            if DISTRACTOR_REF_STR and DISTRACTOR_REF_STR in df_pd_model[DISTRACTOR_COL].unique():
-                formula_parts_pd.append(f"C({cat_pred}, Treatment(reference='{DISTRACTOR_REF_STR}'))")
-            else:
-                print(f"Warning: Reference '{DISTRACTOR_REF_STR}' not found for {DISTRACTOR_COL} in Pd model data (after filtering). Using default.")
-                formula_parts_pd.append(f"C({cat_pred})")
-        else: # For ACCURACY_INT_COL
-            formula_parts_pd.append(f"C({cat_pred})")
-    # Add interaction term for ACCURACY_INT_COL and TARGET_COL
-    if TARGET_COL in df_pd_model.columns and ACCURACY_INT_COL in df_pd_model.columns:
-        target_treatment_for_interaction_pd = ""
-        # Check if the reference level for TARGET_COL is present in the current model's data
-        if TARGET_REF_STR and TARGET_REF_STR in df_pd_model[TARGET_COL].unique():
-            target_treatment_for_interaction_pd = f", Treatment(reference='{TARGET_REF_STR}')"
+# --- 3. Pd Latency Models ---
+print("\n" + "="*25 + " Pd Latency Models " + "="*25)
 
-        interaction_term_pd = f"C({ACCURACY_INT_COL}):C({TARGET_COL}{target_treatment_for_interaction_pd})"
-        formula_parts_pd.append(interaction_term_pd)
-        # print(f"Added interaction to Pd: {interaction_term_pd}") # Optional: for confirmation
-    else:
-        print(f"Warning: Could not add {ACCURACY_INT_COL}:{TARGET_COL} interaction to Pd model, "
-              f"as one or both columns are missing from df_pd_model after filtering.")
+# On these trials, TargetLoc is always 'mid', so it cannot be a predictor.
+# We control for SingletonLoc ('left' vs 'right') and its interaction with block.
+pd_formula_predictors = (f"{pd_definitive_col} + {BLOCK_COL} + "
+                         f"C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}')) + "
+                         f"C({DISTRACTOR_COL}) + {ERP_PD_AMPLITUDE_COL}")
 
-    pd_full_formula = " + ".join(formula_parts_pd)
-    print(f"\nPd LMM Formula: {pd_full_formula}")
-    print("Fitting Pd LMM...")
+# --- Model 3: Pd -> Reaction Time (LMM) ---
+print("\n--- Fitting Model 3: Pd Latency -> Reaction Time (LMM) ---")
+if not pd_trials_df.empty:
     try:
-        pd_lmm = smf.mixedlm(formula=pd_full_formula, data=df_pd_model, groups=SUBJECT_ID_COL)
-        pd_lmm_results = pd_lmm.fit(reml=True)
-        print("\n--- Pd LMM Summary (Full Model) ---")
-        print(pd_lmm_results.summary())
-        # Calculate and print R-squared
-        r2_pd = r_squared_mixed_model(pd_lmm_results)
-        if r2_pd:
-            print(f"Pd LMM Marginal R-squared (fixed effects): {r2_pd['marginal_r2']:.3f}")
-            print(f"Pd LMM Conditional R-squared (fixed + random effects): {r2_pd['conditional_r2']:.3f}")
+        # We add ACCURACY_INT_COL as a predictor for RT models
+        pd_rt_formula = f"{REACTION_TIME_COL} ~ {pd_formula_predictors} + C({ACCURACY_INT_COL})"
+        print(f"Formula: {pd_rt_formula}")
+
+        pd_rt_model = smf.mixedlm(pd_rt_formula, pd_trials_df,
+                                  groups=pd_trials_df[SUBJECT_ID_COL])
+        # For LMMs, it's conventional to use REML (Restricted Maximum Likelihood)
+        pd_rt_fit = pd_rt_model.fit(reml=True)
+        print(pd_rt_fit.summary())
     except Exception as e:
-        print(f"Error fitting Pd LMM: {e}")
-        print("Review data for Pd model (first 5 rows):")
-        print(df_pd_model.head())
-        df_pd_model.info()
-        debug_cols_pd = [col for col in pd_model_categorical_predictors + LMM_N2AC_PD_CONTINUOUS_PREDICTORS if col in df_pd_model]
-        for col in set(debug_cols_pd):
-            if df_pd_model[col].dtype == 'object' or df_pd_model[col].nunique() < 10:
-                print(f"Value counts for {col} in Pd model data:\n{df_pd_model[col].value_counts(dropna=False)}")
-            else:
-                print(f"Summary for {col} in Pd model data:\n{df_pd_model[col].describe()}")
+        print(f"Could not fit Pd RT LMM. Error: {e}")
+else:
+    print("Skipping Pd RT model: No data available.")
+
+
+# --- Model 4: Pd -> Accuracy (GEE) ---
+print("\n--- Fitting Model 4: Pd Latency -> Accuracy (using GEE) ---")
+if not pd_trials_df.empty:
+    try:
+        # We predict accuracy, so it's the dependent variable.
+        pd_acc_formula = f"{ACCURACY_INT_COL} ~ {pd_formula_predictors}"
+        print(f"Formula: {pd_acc_formula}")
+
+        # Use GEE for the binary accuracy outcome
+        pd_acc_model = smf.gee(pd_acc_formula,
+                               data=pd_trials_df,
+                               groups=pd_trials_df[SUBJECT_ID_COL],
+                               family=sm.families.Binomial(),
+                               cov_struct=sm.cov_struct.Exchangeable())
+
+        pd_acc_fit = pd_acc_model.fit()
+        print(pd_acc_fit.summary())
+    except Exception as e:
+        print(f"Could not fit Pd Accuracy GEE model. Error: {e}")
+else:
+    print("Skipping Pd Accuracy model: No data available.")
