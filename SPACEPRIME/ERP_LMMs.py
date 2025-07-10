@@ -522,36 +522,6 @@ else:
     print("Skipping N2ac RT model: No data available.")
 
 
-# --- Model 2: N2ac -> Accuracy (GEE) ---
-print("\n--- Fitting Model 2: N2ac Latency -> Accuracy (using GEE) ---")
-if not n2ac_trials_df.empty:
-    try:
-        # We predict accuracy, so it's the dependent variable.
-        n2ac_acc_formula = f"{ACCURACY_INT_COL} ~ {n2ac_formula_predictors}"
-        print(f"Formula: {n2ac_acc_formula}")
-
-        # For binary accuracy (0/1), we use Generalized Estimating Equations (GEE).
-        # This is the standard statsmodels approach for clustered/repeated non-normal data.
-        # - `groups`: Specifies the clustering variable (subject_id).
-        # - `family`: Specifies the distribution (Binomial for 0/1 data).
-        # - `cov_struct`: Defines the assumed correlation structure within groups.
-        #   Exchangeable is a common choice, assuming equal correlation between any
-        #   two trials from the same subject (similar to a random intercept).
-        n2ac_acc_model = smf.gee(n2ac_acc_formula,
-                                 data=n2ac_trials_df,
-                                 groups=n2ac_trials_df[SUBJECT_ID_COL],
-                                 family=sm.families.Binomial(),
-                                 cov_struct=sm.cov_struct.Exchangeable())
-
-        n2ac_acc_fit = n2ac_acc_model.fit()
-        print(n2ac_acc_fit.summary())
-
-    except Exception as e:
-        print(f"Could not fit N2ac Accuracy GEE model. Error: {e}")
-else:
-    print("Skipping N2ac Accuracy model: No data available.")
-
-
 # --- 3. Pd Latency Models ---
 print("\n" + "="*25 + " Pd Latency Models " + "="*25)
 
@@ -578,26 +548,3 @@ if not pd_trials_df.empty:
         print(f"Could not fit Pd RT LMM. Error: {e}")
 else:
     print("Skipping Pd RT model: No data available.")
-
-
-# --- Model 4: Pd -> Accuracy (GEE) ---
-print("\n--- Fitting Model 4: Pd Latency -> Accuracy (using GEE) ---")
-if not pd_trials_df.empty:
-    try:
-        # We predict accuracy, so it's the dependent variable.
-        pd_acc_formula = f"{ACCURACY_INT_COL} ~ {pd_formula_predictors}"
-        print(f"Formula: {pd_acc_formula}")
-
-        # Use GEE for the binary accuracy outcome
-        pd_acc_model = smf.gee(pd_acc_formula,
-                               data=pd_trials_df,
-                               groups=pd_trials_df[SUBJECT_ID_COL],
-                               family=sm.families.Binomial(),
-                               cov_struct=sm.cov_struct.Exchangeable())
-
-        pd_acc_fit = pd_acc_model.fit()
-        print(pd_acc_fit.summary())
-    except Exception as e:
-        print(f"Could not fit Pd Accuracy GEE model. Error: {e}")
-else:
-    print("Skipping Pd Accuracy model: No data available.")
