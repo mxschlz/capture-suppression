@@ -8,49 +8,35 @@ from scipy.stats import ttest_rel, t
 from SPACEPRIME.subjects import subject_ids
 from SPACEPRIME.plotting import difference_topos # Assuming this function is available and works as expected
 import seaborn as sns
+from stats import remove_outliers # Added for preprocessing
 
 plt.ion()
 
 # --- Script Parameters ---
 
+# --- 1. Preprocessing Parameters (adopted from LMM script) ---
+OUTLIER_RT_THRESHOLD = 2.0
+FILTER_PHASE = 2
+REACTION_TIME_COL = 'rt'
+PHASE_COL = 'phase'
+
+# --- 2. General Script Parameters ---
 # Whether to plot the topographies or not (because that takes a while)
-PLOT_TOPOS = True
+PLOT_TOPOS = False
 
 # Paths
 SETTINGS_PATH = os.path.join(get_data_path(), "settings")
 MONTAGE_FNAME = "CACS-64_NO_REF.bvef" # Relative to SETTINGS_PATH
 
 # ROIs for Contra/Ipsi Calculation
-# Using C3/C4 as in the original script. Adjust if more channels are needed.
-# Example: LEFT_ROI_DISTRACTOR = ['P7', 'PO7', 'O1']
-LEFT_ROI_DISTRACTOR = ["FC3",
-                       "FC5",
-                       "C3",
-                       "C5",
-                       "CP3",
-                       "CP5"]
-RIGHT_ROI_DISTRACTOR = ["FC4",
-                       "FC6",
-                       "C4",
-                       "C6",
-                       "CP4",
-                       "CP6"]
-LEFT_ROI_TARGET = ["FC3",
-                   "FC5",
-                   "C3",
-                   "C5",
-                   "CP3",
-                   "CP5"]
-RIGHT_ROI_TARGET = ["FC4",
-                   "FC6",
-                   "C4",
-                   "C6",
-                   "CP4",
-                   "CP6"]
+LEFT_ROI_DISTRACTOR = ["FC3", "FC5", "C3", "C5", "CP3", "CP5"]
+RIGHT_ROI_DISTRACTOR = ["FC4", "FC6", "C4", "C6", "CP4", "CP6"]
+LEFT_ROI_TARGET = ["FC3", "FC5", "C3", "C5", "CP3", "CP5"]
+RIGHT_ROI_TARGET = ["FC4", "FC6", "C4", "C6", "CP4", "CP6"]
 
 # Epoching and Plotting
 EPOCH_TMIN, EPOCH_TMAX = 0.0, 0.7  # Seconds
-AMPLITUDE_SCALE_FACTOR = 1e7      # Volts to Microvolts for plotting
+AMPLITUDE_SCALE_FACTOR = 1e6      # Volts to Microvolts for plotting (Corrected from 1e7)
 
 # Cluster Permutation Test Parameters
 N_JOBS = 5
@@ -60,7 +46,7 @@ ALPHA_STAT_CLUSTER = 0.05         # Significance level for cluster p-values and 
 CLUSTER_TAIL = 0                  # 0 for two-tailed, 1 for right-tailed, -1 for left-tailed
 
 # Significance Line Plotting Parameters (for ERP plots)
-SIG_LINE_Y_OFFSET = -0.01          # Y-offset in µV (data units) from y=0 for the significance lines
+SIG_LINE_Y_OFFSET = 0.0          # Y-offset in µV (data units) from y=0 for the significance lines
 SIG_LINE_LW = 4                   # Linewidth for significance lines
 SIG_LINE_ALPHA = 0.6              # Alpha for significance lines
 # Color will be matched to the difference wave color
@@ -72,13 +58,12 @@ TOPO_TIME_STEP = 0.05             # Time step for topomap sequence (seconds)
 TOPO_CMAP = 'RdBu_r'              # Colormap for topographies
 
 # --- Parameters for Sensor-Space Cluster Permutation Test ---
-PLOT_SIGNIFICANT_SENSORS_TOPO = True # Whether to run and plot sensor cluster results
+PLOT_SIGNIFICANT_SENSORS_TOPO = False # Whether to run and plot sensor cluster results
 # Define time windows for averaging topo data for cluster analysis (in seconds)
-# These should ideally cover the peak activity of your N2ac and Pd
-N2AC_TOPO_CLUSTER_WINDOW = (0.22, 0.38) # Example: 200-300ms for N2ac-like activity
-PD_TOPO_CLUSTER_WINDOW = (0.29, 0.38)   # Example: 280-380ms for Pd-like activity
+N2AC_TOPO_CLUSTER_WINDOW = (0.22, 0.38) # Example: 220-380ms for N2ac-like activity
+PD_TOPO_CLUSTER_WINDOW = (0.29, 0.38)   # Example: 290-380ms for Pd-like activity
 # Alpha for sensor cluster p-values (can be same as ALPHA_STAT_CLUSTER)
-ALPHA_SENSOR_CLUSTER = 0.01
+ALPHA_SENSOR_CLUSTER = 0.05
 # Mask parameters for plotting significant sensors
 SENSOR_MASK_PARAMS = dict(marker='o', markerfacecolor='w', markeredgecolor='k',
                           linewidth=0, markersize=5, markeredgewidth=1.5)
@@ -99,7 +84,32 @@ processed_subjects = []
 times_vector = None # To be populated from the first subject
 epochs_info = None  # To be populated from the first subject
 
+# --- Load and Preprocess Data ---
+print("--- Loading and Preprocessing Data ---")
 epochs = load_concatenated_epochs().crop(EPOCH_TMIN, EPOCH_TMAX)
+print(f"Original number of trials: {len(epochs)}")
+
+# Get metadata for preprocessing
+df = epochs.metadata.copy().reset_index(drop=True)
+
+# 1. Filter by phase
+if PHASE_COL in df.columns and FILTER_PHASE is not None:
+    print(f"Filtering out trials from phase {FILTER_PHASE}...")
+    df = df[df[PHASE_COL] != FILTER_PHASE]
+    print(f"  Trials remaining after phase filter: {len(df)}")
+
+# 2. Remove RT outliers
+if REACTION_TIME_COL in df.columns:
+    print(f"Removing RT outliers (threshold: {OUTLIER_RT_THRESHOLD} SD)...")
+    df = remove_outliers(df, column_name=REACTION_TIME_COL, threshold=OUTLIER_RT_THRESHOLD)
+    print(f"  Trials remaining after RT outlier removal: {len(df)}")
+
+# 3. Apply the filter back to the epochs object
+# The index of the cleaned dataframe corresponds to the trials to keep
+epochs = epochs[df.index]
+print(f"Final number of trials after preprocessing: {len(epochs)}")
+# --- End of Preprocessing ---
+
 # --- Subject Loop ---
 for subject_id_num in subject_ids:
     subject_str = f"sub-{subject_id_num}" # Assuming subject_ids are numbers like 1, 2, etc.
@@ -196,9 +206,10 @@ for subject_id_num in subject_ids:
         subject_data['distractor_contra'].append(contra_distractor_sub)
         subject_data['distractor_ipsi'].append(ipsi_distractor_sub)
         subject_data['distractor_diff'].append(diff_distractor_sub)
-        subject_data['target_diff_topo'].append(target_diff_topo_sub_arr)
-        subject_data['distractor_diff_topo'].append(distractor_diff_topo_sub_arr)
         processed_subjects.append(subject_id_num)
+        if PLOT_TOPOS:
+            subject_data['target_diff_topo'].append(target_diff_topo_sub_arr)
+            subject_data['distractor_diff_topo'].append(distractor_diff_topo_sub_arr)
 
     except Exception as e_proc:
         print(f"  Error during processing for subject {subject_str}: {e_proc}. Skipping subject for data aggregation.")
