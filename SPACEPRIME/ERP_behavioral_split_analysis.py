@@ -71,11 +71,6 @@ all_times = epochs.times
 # --- 2. Perform Behavioral Splits and Aggregate Data by Subject ---
 print("\n--- Step 2: Performing Behavioral Splits and Aggregating Data ---")
 
-# Perform median split on RT for each subject
-merged_df[RT_SPLIT_COL] = merged_df.groupby(SUBJECT_ID_COL)[REACTION_TIME_COL].transform(
-    lambda x: pd.qcut(x, 2, labels=['fast', 'slow'], duplicates='drop')
-)
-
 # Filter for N2ac and Pd-relevant trials
 is_target_lateral = merged_df[TARGET_COL].isin(['left', 'right'])
 is_distractor_lateral = merged_df[DISTRACTOR_COL].isin(['left', 'right'])
@@ -83,6 +78,12 @@ is_target_central = merged_df[TARGET_COL] == 'mid'
 is_distractor_central = merged_df[DISTRACTOR_COL] == 'mid'
 n2ac_base_df = merged_df[is_target_lateral & is_distractor_central].copy()
 pd_base_df = merged_df[is_distractor_lateral & is_target_central].copy()
+
+print("Performing component-specific median splits...")
+n2ac_base_df[RT_SPLIT_COL] = n2ac_base_df.groupby(SUBJECT_ID_COL)[REACTION_TIME_COL].transform(
+    lambda x: pd.qcut(x, 2, labels=['fast', 'slow'], duplicates='drop'))
+pd_base_df[RT_SPLIT_COL] = pd_base_df.groupby(SUBJECT_ID_COL)[REACTION_TIME_COL].transform(
+    lambda x: pd.qcut(x, 2, labels=['fast', 'slow'], duplicates='drop'))
 
 # --- Loop through subjects and conditions to calculate ERPs ---
 subject_agg_data = []
@@ -205,14 +206,35 @@ for i, comp_info in enumerate(comparisons):
             tail=TAIL, n_jobs=N_JOBS, seed=SEED, out_type="mask"
         )
 
-        # Plot significant clusters
+        # ================================================================= #
+        # === IMPROVED PLOTTING: Show all significant and non-sig clusters === #
+        # ================================================================= #
         y_min, y_max = ax.get_ylim()
-        sig_y_pos = y_min + 0.05 * (y_max - y_min)
+        # Define distinct y-positions for cluster lines to avoid overlap
+        sig_y_pos = y_min + 0.08 * (y_max - y_min)
+        nonsig_y_pos = y_min + 0.03 * (y_max - y_min)
+
+        # Flags to ensure legend entries are only added once
+        plotted_sig = False
+        plotted_nonsig = False
+
         for i_c, cl_mask in enumerate(clusters):
+            cluster_times = all_times[cl_mask]
+
             if cluster_pv[i_c] < CLUSTER_STAT_ALPHA:
-                cluster_times_sig = all_times[cl_mask]
-                ax.hlines(y=sig_y_pos, xmin=cluster_times_sig[0], xmax=cluster_times_sig[-1],
-                          color='black', linewidth=5, alpha=0.7)
+                # Plot significant clusters as thick, dark lines
+                ax.hlines(y=sig_y_pos, xmin=cluster_times[0], xmax=cluster_times[-1],
+                          color='black', linewidth=5, alpha=0.8,
+                          label='Significant Cluster' if not plotted_sig else "")
+                plotted_sig = True
+            else:
+                # Plot non-significant clusters as thinner, gray lines
+                ax.hlines(y=nonsig_y_pos, xmin=cluster_times[0], xmax=cluster_times[-1],
+                          color='gray', linewidth=3, alpha=0.6,
+                          label='Non-sig. Cluster' if not plotted_nonsig else "")
+                plotted_nonsig = True
+        # ================================================================= #
+
 
     # Aesthetics
     ax.axhline(0, color='k', linestyle='--', lw=0.8)
@@ -221,6 +243,7 @@ for i, comp_info in enumerate(comparisons):
     ax.set_xlabel("Time (s)")
     ax.set_ylabel(f"Amplitude ({'Inverted ' if component == 'N2ac' else ''}µV)")
     ax.grid(True, linestyle=':', alpha=0.6)
+
 
 # --- 4. Plot Trial Count Balance (Improved with individual subject lines) ---
 print("\n--- Step 4: Visualizing Trial Count Balance with Individual Subject Data ---")
