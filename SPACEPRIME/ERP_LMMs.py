@@ -232,9 +232,9 @@ DISTRACTOR_REF_STR = DISTRACTOR_LOC_MAP.get(2)
 PRIMING_REF_STR = PRIMING_MAP.get(0)
 
 # --- 3. ERP Component Definitions ---
-PD_TIME_WINDOW = (0.20, 0.4)
+PD_TIME_WINDOW = (0.2, 0.4)
 PD_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4"), ("C5", "C6"), ("CP3", "CP4"), ("CP5", "CP6")]
-N2AC_TIME_WINDOW = (0.18, 0.4)
+N2AC_TIME_WINDOW = (0.2, 0.4)
 N2AC_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4"), ("C5", "C6"), ("CP3", "CP4"), ("CP5", "CP6")]
 
 # --- Latency Robustness Check Configuration ---
