@@ -3,10 +3,9 @@ import SPACEPRIME
 import pandas as pd
 import seaborn as sns
 import numpy as np
-import mne
 from stats import remove_outliers # Assuming this is your custom outlier removal function
 from utils import get_contra_ipsi_diff_wave, calculate_fractional_area_latency
-from scipy.stats import sem, t
+from scipy.stats import sem
 
 plt.ion()
 
@@ -123,6 +122,7 @@ for subject_id in merged_df[SUBJECT_ID_COL].unique():
                 wave, times = get_contra_ipsi_diff_wave(
                     cond_df, params['electrodes'], params['time_window'], all_times, params['stim_col']
                 )
+                wave = wave * 10
                 if wave is not None:
                     # Store the entire wave and trial counts
                     subject_agg_data.append({
@@ -149,7 +149,9 @@ comparisons = [
     {'component': 'Pd', 'split_by': 'Accuracy', 'conds': ['correct', 'incorrect'], 'colors': ['#2ca02c', '#d62728']},
 ]
 
-fig, axes = plt.subplots(2, 2, figsize=(18, 12), sharey=True, constrained_layout=True)
+PERCENTAGE_TO_PLOT = 0.5
+
+fig, axes = plt.subplots(2, 2, figsize=(6, 10), sharey=True, constrained_layout=True)
 axes = axes.flatten()
 fig.suptitle('Grand-Average ERP Difference Waves by Behavioral Split', fontsize=20, y=1.03)
 
@@ -173,68 +175,48 @@ for i, comp_info in enumerate(comparisons):
 
     # Invert N2ac for plotting so positive is up
     if component == 'N2ac':
-        cond1_waves *= -1
-        cond2_waves *= -1
+        cond1_waves *= 1
+        cond2_waves *= 1
 
-    # --- Plotting with Confidence Intervals ---
     n_subjects_in_comp = len(pivot_df)
-    df_ci = n_subjects_in_comp - 1
 
     for j, (cond_name, waves, color) in enumerate(zip(comp_info['conds'], [cond1_waves, cond2_waves], colors)):
+        # --- 1. Calculate Wave Properties ---
         ga_wave = np.mean(waves, axis=0)
-
-        # Calculate confidence interval instead of SEM
-        if df_ci > 0:
+        latency = calculate_fractional_area_latency(ga_wave, all_times, percentage=PERCENTAGE_TO_PLOT, plot=False, is_target=True if component == "N2ac" else False)
+        if n_subjects_in_comp > 1:
             sem_wave = sem(waves, axis=0)
-            t_critical = t.ppf((1 + CONFIDENCE_LEVEL) / 2, df=df_ci)
-            ci_margin = t_critical * sem_wave
         else:
-            ci_margin = np.zeros_like(ga_wave) # No interval if only 1 subject
+            sem_wave = np.zeros_like(ga_wave)
 
-        ax.plot(all_times, ga_wave, label=f"{cond_name} (N={n_subjects_in_comp})", color=color, lw=2)
-        ax.fill_between(all_times, ga_wave - ci_margin, ga_wave + ci_margin, color=color, alpha=0.2)
+        # --- 2. Plot the Main Wave and SEM ---
+        ax.plot(all_times, ga_wave, label=f"{cond_name} (N={n_subjects_in_comp})", color=color, lw=2, alpha=0.5)
+        ax.fill_between(all_times, ga_wave - sem_wave, ga_wave + sem_wave, color=color, alpha=0.1)
 
+        # --- 3. Plot Latency/Amplitude Markers (Your Requested Change) ---
+        if latency is not None:
+            amplitude = np.interp(latency, all_times, ga_wave)
 
-    # --- Statistics ---
-    df_t = len(pivot_df) - 1
-    t_thresh = t.ppf(1 - CLUSTER_STAT_ALPHA / 2, df=df_t) if df_t > 0 else None
+            # Draw partial lines from axes to the wave
+            ax.plot([latency, latency], [0, amplitude], color=color, linestyle='--', lw=1.2)
+            ax.plot([0, latency], [amplitude, amplitude], color=color, linestyle='--', lw=1.2)
 
-    if t_thresh:
-        X_diff = cond1_waves - cond2_waves
-        t_obs, clusters, cluster_pv, _ = mne.stats.permutation_cluster_1samp_test(
-            X_diff, threshold=t_thresh, n_permutations=N_PERMUTATIONS,
-            tail=TAIL, n_jobs=N_JOBS, seed=SEED, out_type="mask"
-        )
-
-        # ================================================================= #
-        # === IMPROVED PLOTTING: Show all significant and non-sig clusters === #
-        # ================================================================= #
-        y_min, y_max = ax.get_ylim()
-        # Define distinct y-positions for cluster lines to avoid overlap
-        sig_y_pos = y_min + 0.08 * (y_max - y_min)
-        nonsig_y_pos = y_min + 0.03 * (y_max - y_min)
-
-        # Flags to ensure legend entries are only added once
-        plotted_sig = False
-        plotted_nonsig = False
-
-        for i_c, cl_mask in enumerate(clusters):
-            cluster_times = all_times[cl_mask]
-
-            if cluster_pv[i_c] < CLUSTER_STAT_ALPHA:
-                # Plot significant clusters as thick, dark lines
-                ax.hlines(y=sig_y_pos, xmin=cluster_times[0], xmax=cluster_times[-1],
-                          color='black', linewidth=5, alpha=0.8,
-                          label='Significant Cluster' if not plotted_sig else "")
-                plotted_sig = True
-            else:
-                # Plot non-significant clusters as thinner, gray lines
-                ax.hlines(y=nonsig_y_pos, xmin=cluster_times[0], xmax=cluster_times[-1],
-                          color='gray', linewidth=3, alpha=0.6,
-                          label='Non-sig. Cluster' if not plotted_nonsig else "")
-                plotted_nonsig = True
-        # ================================================================= #
-
+            # Add a curved arrow pointing to the intersection
+            # Use different offsets for each wave to avoid overlap
+            offset = (30, 30) if j == 0 else (30, -30)
+            ax.annotate(
+                '',  # No text needed, just the arrow
+                xy=(latency, amplitude),
+                xycoords='data',
+                xytext=offset,
+                textcoords='offset points',
+                arrowprops=dict(
+                    arrowstyle="->",
+                    connectionstyle="arc3,rad=.2",
+                    color=color,
+                    lw=1.5
+                )
+            )
 
     # Aesthetics
     ax.axhline(0, color='k', linestyle='--', lw=0.8)
