@@ -3,7 +3,6 @@ import SPACEPRIME
 from utils import get_jackknife_contra_ipsi_wave, calculate_fractional_area_latency
 import pandas as pd
 import statsmodels.formula.api as smf
-import statsmodels.api as sm
 import seaborn as sns
 import numpy as np
 from stats import remove_outliers, r_squared_mixed_model  # Assuming this is your custom outlier removal function
@@ -51,12 +50,13 @@ N2AC_TIME_WINDOW = (0.2, 0.4)
 N2AC_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4"), ("C5", "C6"), ("CP3", "CP4"), ("CP5", "CP6")]
 
 # --- Latency Robustness Check Configuration ---
-PERCENTAGES_TO_TEST = [0.5] # Using 50% as the standard
+PERCENTAGES_TO_TEST = [0.3, 0.5, 0.7] # Using 50% as the standard
 
 # --- Main Script ---
 print("Loading and concatenating epochs...")
 epochs = SPACEPRIME.load_concatenated_epochs()
 df = epochs.metadata.copy()
+sfreq = epochs.info["sfreq"]
 print(f"Original number of trials: {len(df)}")
 
 # --- Preprocessing Steps (unchanged) ---
@@ -98,8 +98,6 @@ print(f"N2ac trials: {len(n2ac_analysis_df)}, Pd trials: {len(pd_analysis_df)}")
 print("\n--- Calculating Single-Trial ERP Latencies and Amplitudes ---")
 
 # Initialize all new columns in the main dataframe `df`
-df[ERP_N2AC_AMPLITUDE_COL] = np.nan
-df[ERP_PD_AMPLITUDE_COL] = np.nan
 for p in PERCENTAGES_TO_TEST:
     p_int = int(p * 100)
     df[f'{ERP_N2AC_LATENCY_COL}_{p_int}'] = np.nan
@@ -119,21 +117,20 @@ for subject_id in n2ac_analysis_df[SUBJECT_ID_COL].unique():
 
         n2ac_wave, n2ac_times = get_jackknife_contra_ipsi_wave(
             sample_df=jackknife_sample_df, lateral_stim_loc=trial_row[TARGET_COL],
-            electrode_pairs=N2AC_ELECTRODES, time_window=N2AC_TIME_WINDOW, all_times=all_times
-        )
-
-        # 1. Calculate and store MEAN AMPLITUDE
-        # N2ac is negative, so invert for easier interpretation (larger value = larger N2ac)
-        mean_amplitude = np.mean(n2ac_wave) * -1
-        df.loc[trial_idx, ERP_N2AC_AMPLITUDE_COL] = mean_amplitude
-
-        # 2. Calculate and store LATENCY for each percentage
+            electrode_pairs=N2AC_ELECTRODES, time_window=N2AC_TIME_WINDOW, all_times=all_times)
+        # Calculate and store LATENCY for each percentage
         for p in PERCENTAGES_TO_TEST:
-            col_name = f'{ERP_N2AC_LATENCY_COL}_{int(p*100)}'
+            col_name_latency = f'{ERP_N2AC_LATENCY_COL}_{int(p*100)}'
             latency = calculate_fractional_area_latency(
-                n2ac_wave, n2ac_times, percentage=p, plot=plot_erp_wave, is_target=True
-            )
-            df.loc[trial_idx, col_name] = latency
+                n2ac_wave, n2ac_times, percentage=p, plot=plot_erp_wave, is_target=True)
+            df.loc[trial_idx, col_name_latency] = latency
+            # Use np.interp for a more precise amplitude estimate between sample points.
+            col_name_amplitude = f'{ERP_N2AC_AMPLITUDE_COL}_{int(p*100)}'
+            # calculate amplitude at exactly that latency
+            amplitude_at_latency = np.interp(latency, n2ac_times, n2ac_wave)
+            # insert into dataframe location
+            df.loc[trial_idx, col_name_amplitude] = amplitude_at_latency
+
 
 # --- Pd Calculation Loop ---
 print("\n--- Calculating Pd Latencies & Amplitudes ---")
@@ -146,21 +143,20 @@ for subject_id in pd_analysis_df[SUBJECT_ID_COL].unique():
 
         pd_wave, pd_times = get_jackknife_contra_ipsi_wave(
             sample_df=jackknife_sample_df, lateral_stim_loc=trial_row[DISTRACTOR_COL],
-            electrode_pairs=PD_ELECTRODES, time_window=PD_TIME_WINDOW, all_times=all_times
-        )
+            electrode_pairs=PD_ELECTRODES, time_window=PD_TIME_WINDOW, all_times=all_times)
 
-        # 1. Calculate and store MEAN AMPLITUDE
-        # Pd is positive, so no inversion needed.
-        mean_amplitude = np.mean(pd_wave)
-        df.loc[trial_idx, ERP_PD_AMPLITUDE_COL] = mean_amplitude
-
-        # 2. Calculate and store LATENCY for each percentage
+        # Calculate and store LATENCY for each percentage
         for p in PERCENTAGES_TO_TEST:
             col_name = f'{ERP_PD_LATENCY_COL}_{int(p*100)}'
             latency = calculate_fractional_area_latency(
-                pd_wave, pd_times, percentage=p, plot=plot_erp_wave, is_target=False
-            )
+                pd_wave, pd_times, percentage=p, plot=plot_erp_wave, is_target=False)
             df.loc[trial_idx, col_name] = latency
+            # Use np.interp for a more precise amplitude estimate between sample points.
+            col_name_amplitude = f'{ERP_PD_AMPLITUDE_COL}_{int(p*100)}'
+            # calculate amplitude at exactly that latency
+            amplitude_at_latency = np.interp(latency, pd_times, pd_wave)
+            # insert into dataframe location
+            df.loc[trial_idx, col_name_amplitude] = amplitude_at_latency
 
 # --- Analysis of Latency Robustness ---
 print("\n--- Analyzing Robustness of Latency Calculation ---")
@@ -216,17 +212,13 @@ pd_definitive_col = f'{ERP_PD_LATENCY_COL}_{definitive_percentage}'
 
 # --- 1. Prepare single-trial data for N2ac vs. RT ---
 n2ac_trials_df = df.dropna(subset=[n2ac_definitive_col, REACTION_TIME_COL, SUBJECT_ID_COL]).copy()
-n2ac_trials_df.drop(columns=[pd_definitive_col])
+# n2ac_trials_df.drop(columns=[pd_definitive_col, ERP_PD_AMPLITUDE_COL], inplace=True)
 n2ac_trials_df.to_csv('G:\\Meine Ablage\\PhD\\data\\SPACEPRIME\\concatenated\\n2ac_model.csv', index=True)
 
 # --- 2. Prepare single-trial data for Pd vs. RT ---
 pd_trials_df = df.dropna(subset=[pd_definitive_col, REACTION_TIME_COL, SUBJECT_ID_COL]).copy()
-pd_trials_df.drop(columns=[n2ac_definitive_col], inplace=True)
+# pd_trials_df.drop(columns=[n2ac_definitive_col, ERP_N2AC_AMPLITUDE_COL], inplace=True)
 pd_trials_df.to_csv('G:\\Meine Ablage\\PhD\\data\\SPACEPRIME\\concatenated\\pd_model.csv', index=True)
-
-# Center variables
-#pd_trials_df[pd_definitive_col] = pd_trials_df[pd_definitive_col] - pd_trials_df[pd_definitive_col].mean()
-#n2ac_trials_df[n2ac_definitive_col] = n2ac_trials_df[n2ac_definitive_col] - n2ac_trials_df[n2ac_definitive_col].mean()
 
 # Plot the stuff
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8), sharey=True)
@@ -287,34 +279,16 @@ except Exception as e:
 plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 plt.show(block=False)
 
-# --- Single-Trial Brain-Behavior Analysis: 4 Separate Models ---
-print("\n--- Analyzing Single-Trial Brain-Behavior Relationship: 4 Separate Models ---")
-print("This analysis will build four separate models:")
-print("1. N2ac Latency -> Reaction Time (LMM)")
-print("2. N2ac Latency -> Accuracy (GLMM)")
-print("3. Pd Latency   -> Reaction Time (LMM)")
-print("4. Pd Latency   -> Accuracy (GLMM)")
-
-# --- 1. General Setup ---
-# Choose a definitive percentage for this analysis. 50% is a standard choice.
-definitive_percentage = 50
-n2ac_definitive_col = f'{ERP_N2AC_LATENCY_COL}_{definitive_percentage}'
-pd_definitive_col = f'{ERP_PD_LATENCY_COL}_{definitive_percentage}'
-
-# Optional: Center continuous predictors for better model convergence and interpretation.
-# If you uncomment this, use 'df' in the models below, as the changes are in-place.
-# df[n2ac_definitive_col] = df[n2ac_definitive_col].fillna(df[n2ac_definitive_col].mean()) - df[n2ac_definitive_col].mean()
-# df[pd_definitive_col] = df[pd_definitive_col].fillna(df[pd_definitive_col].mean()) - df[pd_definitive_col].mean()
-# df[BLOCK_COL] = df[BLOCK_COL] - df[BLOCK_COL].mean()
-
-
+# Define the corresponding definitive amplitude columns
+n2ac_definitive_amplitude_col = f'{ERP_N2AC_AMPLITUDE_COL}_{definitive_percentage}'
+pd_definitive_amplitude_col = f'{ERP_PD_AMPLITUDE_COL}_{definitive_percentage}'
 # --- 2. N2ac Latency Models ---
 print("\n" + "="*25 + " N2ac Latency Models " + "="*25)
 
 # On these trials, SingletonLoc is always 'mid', so it cannot be a predictor.
 # We control for TargetLoc ('left' vs 'right') instead.
 n2ac_formula_predictors = (f"{n2ac_definitive_col} + {BLOCK_COL} + "
-                           f"C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}')) + {ERP_N2AC_AMPLITUDE_COL} + "
+                           f"C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}')) + {n2ac_definitive_amplitude_col} + "
                            f"C({TARGET_COL})")
 
 # --- Model 1: N2ac -> Reaction Time (LMM) ---
@@ -327,7 +301,7 @@ if not n2ac_trials_df.empty:
 
         n2ac_rt_model = smf.mixedlm(n2ac_rt_formula, n2ac_trials_df,
                                     groups=n2ac_trials_df[SUBJECT_ID_COL])
-        n2ac_rt_fit = n2ac_rt_model.fit(reml=False)
+        n2ac_rt_fit = n2ac_rt_model.fit(reml=True)
         print(n2ac_rt_fit.summary())
     except Exception as e:
         print(f"Could not fit N2ac RT LMM. Error: {e}")
@@ -342,7 +316,7 @@ print("\n" + "="*25 + " Pd Latency Models " + "="*25)
 # We control for SingletonLoc ('left' vs 'right') and its interaction with block.
 pd_formula_predictors = (f"{pd_definitive_col} + {BLOCK_COL} + "
                          f"C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}')) + "
-                         f"C({DISTRACTOR_COL}) + {ERP_PD_AMPLITUDE_COL}")
+                         f"C({DISTRACTOR_COL}) + {pd_definitive_amplitude_col}")
 
 # --- Model 3: Pd -> Reaction Time (LMM) ---
 print("\n--- Fitting Model 3: Pd Latency -> Reaction Time (LMM) ---")
