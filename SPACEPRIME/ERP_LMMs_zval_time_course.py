@@ -10,7 +10,7 @@ plt.ion()
 
 # --- Script Configuration Parameters ---
 OUTLIER_RT_THRESHOLD = 2.0
-FILTER_PHASE = None
+FILTER_PHASE = 2
 
 WINDOW_DURATION_S = 0.100  # Duration of the running average window in seconds (e.g., 100ms)
 
