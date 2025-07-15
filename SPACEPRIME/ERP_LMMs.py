@@ -103,6 +103,12 @@ for p in PERCENTAGES_TO_TEST:
     df[f'{ERP_N2AC_LATENCY_COL}_{p_int}'] = np.nan
     df[f'{ERP_PD_LATENCY_COL}_{p_int}'] = np.nan
 
+# NEW: Initialize columns for jackknifed RT
+df['jackknifed_rt_n2ac'] = np.nan
+df['jackknifed_rt_pd'] = np.nan
+df['jackknifed_acc_n2ac'] = np.nan
+df['jackknifed_acc_pd'] = np.nan
+
 all_times = epochs.times
 plot_erp_wave = False  # Set to True to debug/visualize a single trial's calculation
 
@@ -115,24 +121,30 @@ for subject_id in n2ac_analysis_df[SUBJECT_ID_COL].unique():
         jackknife_sample_df = subject_n2ac_df.drop(index=trial_idx)
         if jackknife_sample_df.empty: continue
 
+        # Calculate Jackknifed Reaction Time
+        jackknifed_rt = jackknife_sample_df[REACTION_TIME_COL].mean()
+        df.loc[trial_idx, 'jackknifed_rt_n2ac'] = jackknifed_rt
+
+        # --- NEW: Calculate Jackknifed Accuracy ---
+        # The DV is the mean accuracy (proportion correct) of the n-1 trials.
+        jackknifed_acc = jackknife_sample_df[ACCURACY_INT_COL].mean()
+        df.loc[trial_idx, 'jackknifed_acc_n2ac'] = jackknifed_acc
+
         n2ac_wave, n2ac_times = get_jackknife_contra_ipsi_wave(
             sample_df=jackknife_sample_df, lateral_stim_loc=trial_row[TARGET_COL],
             electrode_pairs=N2AC_ELECTRODES, time_window=N2AC_TIME_WINDOW, all_times=all_times)
-        # Calculate and store LATENCY for each percentage
+
         for p in PERCENTAGES_TO_TEST:
-            col_name_latency = f'{ERP_N2AC_LATENCY_COL}_{int(p*100)}'
+            col_name_latency = f'{ERP_N2AC_LATENCY_COL}_{int(p * 100)}'
             latency = calculate_fractional_area_latency(
                 n2ac_wave, n2ac_times, percentage=p, plot=plot_erp_wave, is_target=True)
             df.loc[trial_idx, col_name_latency] = latency
-            # Use np.interp for a more precise amplitude estimate between sample points.
-            col_name_amplitude = f'{ERP_N2AC_AMPLITUDE_COL}_{int(p*100)}'
-            # calculate amplitude at exactly that latency
+
+            col_name_amplitude = f'{ERP_N2AC_AMPLITUDE_COL}_{int(p * 100)}'
             amplitude_at_latency = np.interp(latency, n2ac_times, n2ac_wave)
-            # insert into dataframe location
             df.loc[trial_idx, col_name_amplitude] = amplitude_at_latency
 
-
-# --- Pd Calculation Loop ---
+# --- Pd Calculation Loop (Apply the same logic) ---
 print("\n--- Calculating Pd Latencies & Amplitudes ---")
 for subject_id in pd_analysis_df[SUBJECT_ID_COL].unique():
     print(f"Processing Pd for subject: {subject_id}...")
@@ -141,21 +153,26 @@ for subject_id in pd_analysis_df[SUBJECT_ID_COL].unique():
         jackknife_sample_df = subject_pd_df.drop(index=trial_idx)
         if jackknife_sample_df.empty: continue
 
+        # Calculate Jackknifed Reaction Time
+        jackknifed_rt = jackknife_sample_df[REACTION_TIME_COL].mean()
+        df.loc[trial_idx, 'jackknifed_rt_pd'] = jackknifed_rt
+
+        # --- Calculate Jackknifed Accuracy ---
+        jackknifed_acc = jackknife_sample_df[ACCURACY_INT_COL].mean()
+        df.loc[trial_idx, 'jackknifed_acc_pd'] = jackknifed_acc
+
         pd_wave, pd_times = get_jackknife_contra_ipsi_wave(
             sample_df=jackknife_sample_df, lateral_stim_loc=trial_row[DISTRACTOR_COL],
             electrode_pairs=PD_ELECTRODES, time_window=PD_TIME_WINDOW, all_times=all_times)
 
-        # Calculate and store LATENCY for each percentage
         for p in PERCENTAGES_TO_TEST:
-            col_name = f'{ERP_PD_LATENCY_COL}_{int(p*100)}'
+            col_name_latency = f'{ERP_PD_LATENCY_COL}_{int(p * 100)}'
             latency = calculate_fractional_area_latency(
                 pd_wave, pd_times, percentage=p, plot=plot_erp_wave, is_target=False)
-            df.loc[trial_idx, col_name] = latency
-            # Use np.interp for a more precise amplitude estimate between sample points.
-            col_name_amplitude = f'{ERP_PD_AMPLITUDE_COL}_{int(p*100)}'
-            # calculate amplitude at exactly that latency
+            df.loc[trial_idx, col_name_latency] = latency
+
+            col_name_amplitude = f'{ERP_PD_AMPLITUDE_COL}_{int(p * 100)}'
             amplitude_at_latency = np.interp(latency, pd_times, pd_wave)
-            # insert into dataframe location
             df.loc[trial_idx, col_name_amplitude] = amplitude_at_latency
 
 # --- Analysis of Latency Robustness ---
@@ -227,7 +244,7 @@ fig.suptitle('Single-Trial Brain-Behavior Relationship (LMM)', fontsize=18)
 # --- N2ac LMM and Plot ---
 try:
     print("\nFitting LMM for N2ac Latency vs. RT...")
-    n2ac_formula = f"{REACTION_TIME_COL} ~ {n2ac_definitive_col}"
+    n2ac_formula = f"jackknifed_rt_n2ac ~ {n2ac_definitive_col}"
     n2ac_model = smf.mixedlm(n2ac_formula, n2ac_trials_df, groups=n2ac_trials_df[SUBJECT_ID_COL]).fit(reml=False)
     print(n2ac_model.summary())
 
@@ -253,7 +270,7 @@ except Exception as e:
 # --- Pd LMM and Plot ---
 try:
     print("\nFitting LMM for Pd Latency vs. RT...")
-    pd_formula = f"{REACTION_TIME_COL} ~ {pd_definitive_col}"
+    pd_formula = f"jackknifed_rt_pd ~ {pd_definitive_col}"
     pd_model = smf.mixedlm(pd_formula, pd_trials_df, groups=pd_trials_df[SUBJECT_ID_COL]).fit(reml=False)
     print(pd_model.summary())
 
@@ -279,24 +296,39 @@ except Exception as e:
 plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 plt.show(block=False)
 
-# Define the corresponding definitive amplitude columns
-n2ac_definitive_amplitude_col = f'{ERP_N2AC_AMPLITUDE_COL}_{definitive_percentage}'
-pd_definitive_amplitude_col = f'{ERP_PD_AMPLITUDE_COL}_{definitive_percentage}'
-# --- 2. N2ac Latency Models ---
-print("\n" + "="*25 + " N2ac Latency Models " + "="*25)
+# --- LMM analysis with jackknifed variables ---
 
-# On these trials, SingletonLoc is always 'mid', so it cannot be a predictor.
-# We control for TargetLoc ('left' vs 'right') instead.
-n2ac_formula_predictors = (f"{n2ac_definitive_col} + {BLOCK_COL} + "
-                           f"C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}')) + {n2ac_definitive_amplitude_col} + "
-                           f"C({TARGET_COL})")
+# Choose definitive percentage and get column names
+definitive_percentage = 70
+n2ac_definitive_col = f'{ERP_N2AC_LATENCY_COL}_{definitive_percentage}'
+n2ac_definitive_amp_col = f'{ERP_N2AC_AMPLITUDE_COL}_{definitive_percentage}'
+n2ac_jk_rt_col = 'jackknifed_rt_n2ac'
 
-# --- Model 1: N2ac -> Reaction Time (LMM) ---
-print("\n--- Fitting Model 1: N2ac Latency -> Reaction Time (LMM) ---")
+pd_definitive_col = f'{ERP_PD_LATENCY_COL}_{definitive_percentage}'
+pd_definitive_amp_col = f'{ERP_PD_AMPLITUDE_COL}_{definitive_percentage}'
+pd_jk_rt_col = 'jackknifed_rt_pd'
+
+# --- Prepare N2ac data ---
+n2ac_model_cols = [n2ac_definitive_col, n2ac_definitive_amp_col, n2ac_jk_rt_col, SUBJECT_ID_COL, PRIMING_COL,
+                   TARGET_COL, BLOCK_COL]
+n2ac_trials_df = df.dropna(subset=n2ac_model_cols).copy()
+
+# --- Prepare Pd data ---
+pd_model_cols = [pd_definitive_col, pd_definitive_amp_col, pd_jk_rt_col, SUBJECT_ID_COL, PRIMING_COL, DISTRACTOR_COL,
+                 BLOCK_COL]
+pd_trials_df = df.dropna(subset=pd_model_cols).copy()
+
+# --- Model 1: N2ac Latency -> Reaction Time (LMM) ---
+print("\n--- Fitting Model 1: N2ac Latency -> Jackknifed RT (LMM) ---")
 if not n2ac_trials_df.empty:
     try:
-        # We add ACCURACY_INT_COL as a predictor for RT models
-        n2ac_rt_formula = f"{REACTION_TIME_COL} ~ {n2ac_formula_predictors} + C({ACCURACY_INT_COL})"
+        # Model how the brain-behavior link is modulated by experimental factors
+        # Note: We don't include Accuracy here, as it belongs to the left-out trial.
+        n2ac_rt_formula = (
+            f"{n2ac_jk_rt_col} ~ {n2ac_definitive_col} * C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}'))"
+            f" + {n2ac_definitive_col} * C({TARGET_COL})"
+            f" + {n2ac_definitive_amp_col} + {BLOCK_COL}")  # Amplitude and Block as covariates
+
         print(f"Formula: {n2ac_rt_formula}")
 
         n2ac_rt_model = smf.mixedlm(n2ac_rt_formula, n2ac_trials_df,
@@ -308,30 +340,77 @@ if not n2ac_trials_df.empty:
 else:
     print("Skipping N2ac RT model: No data available.")
 
-
-# --- 3. Pd Latency Models ---
-print("\n" + "="*25 + " Pd Latency Models " + "="*25)
-
-# On these trials, TargetLoc is always 'mid', so it cannot be a predictor.
-# We control for SingletonLoc ('left' vs 'right') and its interaction with block.
-pd_formula_predictors = (f"{pd_definitive_col} + {BLOCK_COL} + "
-                         f"C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}')) + "
-                         f"C({DISTRACTOR_COL}) + {pd_definitive_amplitude_col}")
-
-# --- Model 3: Pd -> Reaction Time (LMM) ---
-print("\n--- Fitting Model 3: Pd Latency -> Reaction Time (LMM) ---")
+# --- Model 2: Pd Latency -> Reaction Time (LMM) ---
+print("\n--- Fitting Model 2: Pd Latency -> Jackknifed RT (LMM) ---")
 if not pd_trials_df.empty:
     try:
-        # We add ACCURACY_INT_COL as a predictor for RT models
-        pd_rt_formula = f"{REACTION_TIME_COL} ~ {pd_formula_predictors} + C({ACCURACY_INT_COL})"
+        pd_rt_formula = (f"{pd_jk_rt_col} ~ {pd_definitive_col} * C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}'))"
+                         f" + {pd_definitive_col} * C({DISTRACTOR_COL})"
+                         f" + {pd_definitive_amp_col} + {BLOCK_COL}")
+
         print(f"Formula: {pd_rt_formula}")
 
         pd_rt_model = smf.mixedlm(pd_rt_formula, pd_trials_df,
                                   groups=pd_trials_df[SUBJECT_ID_COL])
-        # For LMMs, it's conventional to use REML (Restricted Maximum Likelihood)
         pd_rt_fit = pd_rt_model.fit(reml=True)
         print(pd_rt_fit.summary())
     except Exception as e:
         print(f"Could not fit Pd RT LMM. Error: {e}")
 else:
     print("Skipping Pd RT model: No data available.")
+
+# Get new column names
+n2ac_jk_acc_col = 'jackknifed_acc_n2ac'
+pd_jk_acc_col = 'jackknifed_acc_pd'
+
+# --- Model 3: N2ac Latency -> Jackknifed Accuracy (LMM) ---
+print("\n--- Fitting Model 3: N2ac Latency -> Jackknifed Accuracy (LMM) ---")
+
+# Prepare data, making sure the new accuracy column doesn't have NaNs
+n2ac_acc_model_cols = n2ac_model_cols + [n2ac_jk_acc_col]
+n2ac_acc_trials_df = df.dropna(subset=n2ac_acc_model_cols).copy()
+
+if not n2ac_acc_trials_df.empty:
+    try:
+        # The formula is the same structure as the RT model, just with a new DV
+        n2ac_acc_formula = (
+            f"{n2ac_jk_acc_col} ~ {n2ac_definitive_col} * C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}'))"
+            f" + {n2ac_definitive_col} * C({TARGET_COL})"
+            f" + {n2ac_definitive_amp_col} + {BLOCK_COL}"
+        )
+        print(f"Formula: {n2ac_acc_formula}")
+
+        n2ac_acc_model = smf.mixedlm(n2ac_acc_formula, n2ac_acc_trials_df,
+                                     groups=n2ac_acc_trials_df[SUBJECT_ID_COL])
+        n2ac_acc_fit = n2ac_acc_model.fit(reml=True)
+        print(n2ac_acc_fit.summary())
+    except Exception as e:
+        print(f"Could not fit N2ac Accuracy LMM. Error: {e}")
+else:
+    print("Skipping N2ac Accuracy model: No data available.")
+
+# --- Model 4: Pd Latency -> Jackknifed Accuracy (LMM) ---
+print("\n--- Fitting Model 3: Pd Latency -> Jackknifed Accuracy (LMM) ---")
+
+# Prepare data, making sure the new accuracy column doesn't have NaNs
+pd_acc_model_cols = pd_model_cols + [pd_jk_acc_col]
+pd_acc_trials_df = df.dropna(subset=pd_acc_model_cols).copy()
+
+if not pd_acc_trials_df.empty:
+    try:
+        # The formula is the same structure as the RT model, just with a new DV
+        pd_acc_formula = (
+            f"{pd_jk_acc_col} ~ {pd_definitive_col} * C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}'))"
+            f" + {pd_definitive_col} * C({DISTRACTOR_COL})"
+            f" + {pd_definitive_amp_col} + {BLOCK_COL}"
+        )
+        print(f"Formula: {pd_acc_formula}")
+
+        pd_acc_model = smf.mixedlm(pd_acc_formula, pd_acc_trials_df,
+                                     groups=pd_acc_trials_df[SUBJECT_ID_COL])
+        pd_acc_fit = pd_acc_model.fit(reml=True)
+        print(pd_acc_fit.summary())
+    except Exception as e:
+        print(f"Could not fit Pd Accuracy LMM. Error: {e}")
+else:
+    print("Skipping Pd Accuracy model: No data available.")
