@@ -6,11 +6,19 @@ import glob
 import numpy as np # Needed for _create_and_save_concatenated_tfr
 import pandas as pd # Added for load_concatenated_csv
 
-# --- Configuration for filenames ---
-# These define the expected names for your processed data files.
-CONCATENATED_EPOCHS_FILENAME = "concatenated_epochs-epo.fif"
-CONCATENATED_TFR_FILENAME = "concatenated_tfr-tfr.h5"  # Adjust if using different TFR file type or naming
+SUPPORTED_PARADIGMS = ['spaceprime', 'passive', 'flanker']
 
+# --- Configuration for filenames (functions to generate names based on paradigm) ---
+
+def _get_concatenated_epochs_filename(paradigm):
+    """Generates the filename for a concatenated epochs file for a given paradigm."""
+    # Using a consistent naming scheme, e.g., "concatenated_spaceprime-epo.fif"
+    return f"concatenated_{paradigm}-epo.fif"
+
+
+def _get_concatenated_tfr_filename(paradigm):
+    """Generates the filename for a concatenated TFR file for a given paradigm."""
+    return f"concatenated_{paradigm}-tfr.h5"
 
 # --- Path Utilities ---
 def get_data_path():
@@ -47,11 +55,13 @@ def _get_concatenated_folder_path(create_if_not_exists=True):
 
 
 # --- Data Existence Check ---
-def check_if_concatenated_eeg_exists():
+def check_if_concatenated_eeg_exists(paradigm):
     """
     Checks for the existence of the 'concatenated' directory and
-    the pre-defined concatenated epochs and TFR data files within it.
+    the concatenated epochs and TFR data files for a given paradigm.
 
+    Args:
+        paradigm (str): The paradigm to check for (e.g., 'spaceprime', 'passive').
     Returns:
         tuple: (
             concatenated_folder_exists (bool),
@@ -61,12 +71,17 @@ def check_if_concatenated_eeg_exists():
             tfr_file_path (str)
         )
     """
+    if paradigm not in SUPPORTED_PARADIGMS:
+        raise ValueError(f"Paradigm '{paradigm}' is not supported. Choose from: {SUPPORTED_PARADIGMS}")
+
     data_path = get_data_path()
     concatenated_eeg_folder = os.path.join(data_path, "concatenated")
 
     # Define file paths regardless of folder existence for consistent return
-    epochs_file_path = os.path.join(concatenated_eeg_folder, CONCATENATED_EPOCHS_FILENAME)
-    tfr_file_path = os.path.join(concatenated_eeg_folder, CONCATENATED_TFR_FILENAME)
+    epochs_filename = _get_concatenated_epochs_filename(paradigm)
+    tfr_filename = _get_concatenated_tfr_filename(paradigm)
+    epochs_file_path = os.path.join(concatenated_eeg_folder, epochs_filename)
+    tfr_file_path = os.path.join(concatenated_eeg_folder, tfr_filename)
 
     folder_exists = os.path.isdir(concatenated_eeg_folder)
     epochs_exist = os.path.exists(epochs_file_path)
@@ -76,16 +91,16 @@ def check_if_concatenated_eeg_exists():
 
 
 # --- Data Creation Logic ---
-def _create_and_save_concatenated_epochs(epochs_output_path):
+def _create_and_save_concatenated_epochs(paradigm, epochs_output_path):
     """Internal function to create and save concatenated epochs."""
-    print(f"INFO: Attempting to create and save concatenated epochs to {epochs_output_path}...")
+    print(f"INFO: Attempting to create and save concatenated '{paradigm}' epochs to {epochs_output_path}...")
     all_epochs = list()
     for subject in subject_ids:
-        print(f"\n--- Loading Subject: {subject} ---")
+        print(f"\n--- Loading Subject: {subject} for paradigm: {paradigm} ---")
         try:
             # Adjust path pattern if needed based on your processing pipeline output
             epoch_file_pattern = os.path.join(get_data_path(), "derivatives", "epoching", f"sub-{subject}", "eeg",
-                                              f"sub-{subject}_task-spaceprime-epo.fif")
+                                              f"sub-{subject}_task-{paradigm}-epo.fif")
             epoch_files = glob.glob(epoch_file_pattern)
             if not epoch_files:
                 print(f"  Epoch file not found for subject {subject} using pattern: {epoch_file_pattern}. Skipping.")
@@ -149,12 +164,13 @@ def _create_and_save_concatenated_tfr(tfr_output_path, source_epochs_path):
         return False # Indicate failure
 
 
-def concatenate_eeg_and_save(create_epochs_if_missing=True, create_tfr_if_missing=True):
+def concatenate_eeg_and_save(paradigm, create_epochs_if_missing=True, create_tfr_if_missing=True):
     """
     Creates and saves concatenated EEG epochs and/or TFR data if they are missing.
     Saves them into the 'concatenated' folder.
 
     Args:
+        paradigm (str): The paradigm to process (e.g., 'spaceprime', 'passive').
         create_epochs_if_missing (bool): If True, create epochs if they don't exist.
         create_tfr_if_missing (bool): If True, create TFR if it doesn't exist.
 
@@ -162,47 +178,47 @@ def concatenate_eeg_and_save(create_epochs_if_missing=True, create_tfr_if_missin
         tuple: (
             epochs_file_path (str),
             tfr_file_path (str),
-            epochs_available_after_op (bool),
-            tfr_available_after_op (bool)
+            epochs_available (bool),
+            tfr_available (bool)
         )
     """
+    if paradigm not in SUPPORTED_PARADIGMS:
+        raise ValueError(f"Paradigm '{paradigm}' is not supported. Choose from: {SUPPORTED_PARADIGMS}")
+
     # Ensure the target folder exists
     _get_concatenated_folder_path(create_if_not_exists=True)
 
     # Get current status
     _, epochs_available_before, tfr_available_before, \
-        epochs_fpath, tfr_fpath = check_if_concatenated_eeg_exists()
+        epochs_fpath, tfr_fpath = check_if_concatenated_eeg_exists(paradigm)
 
     epochs_available_after = epochs_available_before
     tfr_available_after = tfr_available_before
 
     if create_epochs_if_missing and not epochs_available_before:
-        print(f"INFO: Concatenated epochs file ('{CONCATENATED_EPOCHS_FILENAME}') not found. Attempting creation.")
-        epochs_available_after = _create_and_save_concatenated_epochs(epochs_fpath)
+        print(f"INFO: Concatenated epochs file for paradigm '{paradigm}' ('{os.path.basename(epochs_fpath)}') not found. Attempting creation.")
+        epochs_available_after = _create_and_save_concatenated_epochs(paradigm, epochs_fpath)
         if not epochs_available_after:
-             print(f"ERROR: Concatenated epochs creation failed.")
+             print(f"ERROR: Concatenated epochs creation for paradigm '{paradigm}' failed.")
 
 
     # Check epochs availability again before attempting TFR creation
     # This is important if epochs creation failed above
-    _, epochs_available_now, _, _, _ = check_if_concatenated_eeg_exists()
-
+    _, epochs_available_now, _, _, _ = check_if_concatenated_eeg_exists(paradigm)
 
     if create_tfr_if_missing and not tfr_available_before:
-        print(f"INFO: Concatenated TFR file ('{CONCATENATED_TFR_FILENAME}') not found. Attempting creation.")
+        print(f"INFO: Concatenated TFR file for paradigm '{paradigm}' ('{os.path.basename(tfr_fpath)}') not found. Attempting creation.")
         if not epochs_available_now:  # Check dependency on epochs
             print(
-                f"WARNING: Cannot create TFRs because the concatenated epochs file ('{CONCATENATED_EPOCHS_FILENAME}') is missing or failed to create. Skipping TFR creation.")
+                f"WARNING: Cannot create TFRs for paradigm '{paradigm}' because its concatenated epochs file is missing or failed to create. Skipping TFR creation.")
             tfr_available_after = False # Ensure TFR is marked unavailable
         else:
             tfr_available_after = _create_and_save_concatenated_tfr(tfr_fpath, epochs_fpath)
             if not tfr_available_after:
-                 print(f"ERROR: Concatenated TFR creation failed.")
-
+                 print(f"ERROR: Concatenated TFR creation for paradigm '{paradigm}' failed.")
 
     # Final check after operations
-    _, epochs_available_final, tfr_available_final, _, _ = check_if_concatenated_eeg_exists()
-
+    _, epochs_available_final, tfr_available_final, _, _ = check_if_concatenated_eeg_exists(paradigm)
 
     return epochs_fpath, tfr_fpath, epochs_available_final, tfr_available_final
 
@@ -242,40 +258,52 @@ def _load_concatenated_tfr_data(tfr_file_path):
 
 
 # --- Public Loading Functions ---
-def load_concatenated_epochs():
+def load_concatenated_epochs(paradigm):
     """
-    Loads the concatenated epochs data if available.
+    Loads the concatenated epochs data for a given paradigm, if available.
 
     Checks for the file's existence before attempting to load.
+
+    Args:
+        paradigm (str): The paradigm to load (e.g., 'spaceprime', 'passive').
 
     Returns:
         mne.Epochs or None: The loaded epochs object, or None if the file is not available or loading fails.
     """
+    if paradigm not in SUPPORTED_PARADIGMS:
+        raise ValueError(f"Paradigm '{paradigm}' is not supported. Choose from: {SUPPORTED_PARADIGMS}")
+
     # Use the check function to get the current status and path
-    _, epochs_available, _, epochs_file_path, _ = check_if_concatenated_eeg_exists()
+    _, epochs_available, _, epochs_file_path, _ = check_if_concatenated_eeg_exists(paradigm)
 
     if not epochs_available:
-        print(f"WARNING: Concatenated epochs data ('{CONCATENATED_EPOCHS_FILENAME}') is not available for loading at {epochs_file_path}. Cannot load.")
+        print(f"WARNING: Concatenated epochs data for paradigm '{paradigm}' is not available for loading at {epochs_file_path}. Cannot load.")
         return None
 
     # Reuse the internal loading logic
     return _load_concatenated_epochs_data(epochs_file_path)
 
 
-def load_concatenated_tfr():
+def load_concatenated_tfr(paradigm):
     """
-    Loads the concatenated TFR data if available.
+    Loads the concatenated TFR data for a given paradigm, if available.
 
     Checks for the file's existence before attempting to load.
+
+    Args:
+        paradigm (str): The paradigm to load (e.g., 'spaceprime', 'passive').
 
     Returns:
         mne.time_frequency.AverageTFR or None: The loaded TFR object, or None if the file is not available or loading fails.
     """
+    if paradigm not in SUPPORTED_PARADIGMS:
+        raise ValueError(f"Paradigm '{paradigm}' is not supported. Choose from: {SUPPORTED_PARADIGMS}")
+
     # Use the check function to get the current status and path
-    _, _, tfr_available, _, tfr_file_path = check_if_concatenated_eeg_exists()
+    _, _, tfr_available, _, tfr_file_path = check_if_concatenated_eeg_exists(paradigm)
 
     if not tfr_available:
-        print(f"WARNING: Concatenated TFR data ('{CONCATENATED_TFR_FILENAME}') is not available for loading at {tfr_file_path}. Cannot load.")
+        print(f"WARNING: Concatenated TFR data for paradigm '{paradigm}' is not available for loading at {tfr_file_path}. Cannot load.")
         return None
 
     # Reuse the internal loading logic
@@ -314,24 +342,15 @@ def load_concatenated_csv(filename, **kwargs):
 
 print(f"INFO: Initializing SPACEPRIME package...")
 
-# 1. Determine initial state of concatenated data and store paths/availability
-# These variables are now package-level and accessible after import
-# They reflect the state *at the time of import*.
-_conc_folder_exists, are_epochs_available, is_tfr_available, \
-    final_epochs_file_path, final_tfr_file_path = check_if_concatenated_eeg_exists()
+# On import, this package does not automatically create or load any data.
+# You must explicitly call the creation or loading functions.
+print(f"INFO: SPACEPRIME package initialization complete.")
+print(f"INFO: Supported paradigms are: {SUPPORTED_PARADIGMS}")
 
-# 2. Do NOT automatically create or load data upon import.
-# The user will call concatenate_eeg_and_save() to create files if missing,
-# and load_concatenated_epochs() or load_concatenated_tfr() to load data when needed.
-
-print(f"INFO: SPACEPRIME package initialization complete. Data files checked.")
-print(f"INFO: Epochs file availability: {are_epochs_available}")
-print(f"INFO: TFR file availability: {is_tfr_available}")
-print(f"INFO: Epochs file path: {final_epochs_file_path}")
-print(f"INFO: TFR file path: {final_tfr_file_path}")
-print("\nINFO: To load data, use:")
-print("INFO:   epochs = SPACEPRIME.load_concatenated_epochs()")
-print("INFO:   tfr = SPACEPRIME.load_concatenated_tfr()")
+print("\nINFO: To load data for a specific paradigm (e.g., 'passive'), use:")
+print("INFO:   epochs = SPACEPRIME.load_concatenated_epochs('passive')")
+print("INFO:   tfr = SPACEPRIME.load_concatenated_tfr('passive')")
 print("INFO:   my_dataframe = SPACEPRIME.load_concatenated_csv('your_file.csv')")
-print("\nINFO: To create missing files, use:")
-print("INFO:   SPACEPRIME.concatenate_eeg_and_save()")
+
+print("\nINFO: To create missing files for a paradigm, use:")
+print("INFO:   SPACEPRIME.concatenate_eeg_and_save('flanker')")
