@@ -72,6 +72,8 @@ if ACCURACY_COL in df.columns:
 df[TARGET_COL] = pd.to_numeric(df[TARGET_COL], errors='coerce').map(TARGET_LOC_MAP)
 df[DISTRACTOR_COL] = pd.to_numeric(df[DISTRACTOR_COL], errors='coerce').map(DISTRACTOR_LOC_MAP)
 df[PRIMING_COL] = pd.to_numeric(df[PRIMING_COL], errors='coerce').map(PRIMING_MAP)
+df[SUBJECT_ID_COL] = df[SUBJECT_ID_COL].astype(str)
+
 print("Preprocessing and column mapping complete.")
 
 # --- ERP Data Reshaping (unchanged) ---
