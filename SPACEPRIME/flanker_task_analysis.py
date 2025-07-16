@@ -30,9 +30,6 @@ plot_individual_lines(ax=plot, data=df_mean, x_col="congruency", y_col="rt")
 # plot performance accuracy
 plot = sns.barplot(data=df_mean, x="congruency", y="correct")
 plot_individual_lines(ax=plot, data=df_mean, x_col="congruency", y_col="correct")
-# transform categories into integers for statistics
-mapping = dict(congruent=1, incongruent=0, neutral=2)
-df_mean["congruency_int"] = df_mean["congruency"].map(mapping)
 # do t test
 # ad hoc stats
 # some stats on behavior
