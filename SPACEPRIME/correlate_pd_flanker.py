@@ -11,7 +11,7 @@ plt.ion()
 # --- Script Configuration Parameters ---
 
 # --- 1. Data Loading & Preprocessing ---
-OUTLIER_RT_THRESHOLD = 2.0
+OUTLIER_RT_THRESHOLD = 2
 FILTER_PHASE = 2
 
 # --- 2. Column Names ---
@@ -21,11 +21,8 @@ DISTRACTOR_COL = 'SingletonLoc'
 REACTION_TIME_COL = 'rt'
 PHASE_COL = 'phase'
 TRIAL_NUMBER_COL = 'total_trial_nr'
-ACCURACY_INT_COL = 'select_target_int'
+ACCURACY_COL = 'correct'
 
-# --- MERGED: ERP component columns for both Latency and Amplitude ---
-ERP_PD_LATENCY_COL = 'Pd_latency'
-ERP_PD_AMPLITUDE_COL = 'Pd_amplitude'
 
 # --- Mappings and Reference Levels ---
 TARGET_LOC_MAP = {1: "left", 2: "mid", 3: "right"}
@@ -156,8 +153,14 @@ raw_pd_area = _calculate_signed_area(diff_wave[:, pd_times_idx[0]:pd_times_idx[1
 # Calculate the signed area of the baseline to subtract as noise
 baseline_noise_area = _calculate_signed_area(diff_wave[:, baseline_times_idx[0]:baseline_times_idx[1]], polarity='positive')
 
-# The "Pd pure area" is the baseline-subtracted signed area
-pd_pure_area = raw_pd_area - baseline_noise_area
+# The "Pd pure area" is the baseline-subtracted signed area.
+# This gives a result in (µV * samples).
+pd_pure_area_samples = raw_pd_area - baseline_noise_area
+
+# Convert from (µV * samples) to (µV * ms) for physically meaningful units.
+# This is a linear scaling and does not affect the correlation result, but makes the values reportable.
+sampling_interval_ms = (1 / epochs.info['sfreq']) * 1000
+pd_pure_area = pd_pure_area_samples * sampling_interval_ms
 
 # 7. Add the calculated Pd area to our metadata and aggregate by subject
 # Note on units: The 'area' is the sum of voltage points over a time window.
@@ -168,7 +171,7 @@ print("\n--- Sanity Check for Signed Area Calculation (First 5 Trials) ---")
 print(f"{'Trial #':<8} | {'Raw PD Area':<15} | {'Baseline Noise Area':<20} | {'Pure PD Area'}")
 print("-" * 70)
 for i in range(min(5, len(pd_trials_meta))):
-    print(f"{i:<8} | {raw_pd_area[i]:<15.4e} | {baseline_noise_area[i]:<20.4e} | {pd_pure_area[i]:.4e}")
+    print(f"{i:<8} | {raw_pd_area[i]:<15.4e} | {baseline_noise_area[i]:<20.4e} | {pd_pure_area_samples[i]:.4e}")
 
 
 pd_trials_meta['pd_pure_area'] = pd_pure_area
@@ -248,9 +251,7 @@ flanker_df[SUBJECT_ID_COL] = flanker_df[SUBJECT_ID_COL].astype(float).astype(str
 # As requested, we will calculate the mean RT on all trials, not just correct ones.
 # You are right that groupby().unstack() can create a DataFrame with a "weird shape".
 # This is because it creates a named index for the columns. The code below handles this robustly.
-flanker_rt_by_subject = flanker_df.groupby(
-    [SUBJECT_ID_COL, FLANKER_CONGRUENCY_COL]
-)[REACTION_TIME_COL].mean().unstack()
+flanker_rt_by_subject = flanker_df.groupby([SUBJECT_ID_COL, FLANKER_CONGRUENCY_COL])[REACTION_TIME_COL].mean().unstack()
 
 # Calculate the flanker effect
 flanker_rt_by_subject['flanker_effect'] = (
@@ -282,8 +283,7 @@ print("\nCorrelating Pd pure area with Flanker effect...")
 correlation_df = pd.merge(
     pd_subject_df,
     flanker_subject_df[[SUBJECT_ID_COL, 'flanker_effect']],
-    on=SUBJECT_ID_COL
-)
+    on=SUBJECT_ID_COL)
 
 # Drop any subjects who might be missing data in one of the tasks
 correlation_df.dropna(inplace=True)
@@ -308,13 +308,12 @@ for idx, row in correlation_df.iterrows():
         ha='left',          # Horizontal alignment
         va='bottom',        # Vertical alignment
         fontsize=8,
-        color='dimgray'
-    )
+        color='dimgray')
 
 plt.title(f"Correlation between Pd Area and Flanker Effect\n"
           f"r = {corr_coef:.3f}, p = {p_value:.3f}",
           fontweight='bold')
-plt.xlabel("Pd Pure Area (µV)", fontsize=12)
+plt.xlabel("Pd Pure Area (µV*ms)", fontsize=12)
 plt.ylabel("Flanker Effect (RT difference ms)", fontsize=12)
 plt.grid(True, linestyle='--', alpha=0.6)
 plt.tight_layout()
@@ -329,3 +328,74 @@ if p_value < 0.05:
     print("The correlation is statistically significant.")
 else:
     print("The correlation is not statistically significant.")
+
+
+# --- Final Analysis: Plot Waveforms by Flanker Effect Group ---
+print("\n--- Final Analysis: Splitting by Flanker Effect ---")
+
+# 1. Split subjects into tertiles based on their flanker effect
+if len(correlation_df) >= 3:
+    correlation_df['flanker_group'] = pd.qcut(
+        correlation_df['flanker_effect'],
+        q=3,
+        labels=['Low Flanker Effect', 'Middle Flanker Effect', 'High Flanker Effect'],
+        duplicates='drop'  # Handle cases with identical flanker scores
+    )
+    print("Subjects split into groups based on flanker effect:")
+    print(correlation_df.groupby('flanker_group')[SUBJECT_ID_COL].apply(list).to_string())
+
+    # 2. Create the 2x2 visualization grid
+    fig, axes = plt.subplots(4, 1, figsize=(10, 18), sharey=True)
+    colors = {'Low Flanker Effect': 'green', 'Middle Flanker Effect': 'orange', 'High Flanker Effect': 'firebrick'}
+    group_names = ['Low Flanker Effect', 'Middle Flanker Effect', 'High Flanker Effect']
+    
+    # Map groups to specific subplots
+    ax_map = {
+        'Low Flanker Effect': axes[0],
+        'Middle Flanker Effect': axes[1],
+        'High Flanker Effect': axes[2]
+    }
+    diff_ax = axes[3]
+
+    for group_name in group_names:
+        if group_name in correlation_df['flanker_group'].values:
+            # Get the list of subjects in the current group
+            subjects_in_group = correlation_df[correlation_df['flanker_group'] == group_name][SUBJECT_ID_COL].tolist()
+            # Create a boolean mask to select trials from these subjects
+            trial_mask = pd_trials_meta[SUBJECT_ID_COL].isin(subjects_in_group)
+
+            # Calculate the grand average contra, ipsi, and difference waves for the group
+            ga_contra = contra_wave[trial_mask].mean(axis=0)
+            ga_ipsi = ipsi_wave[trial_mask].mean(axis=0)
+            ga_diff = ga_contra - ga_ipsi
+
+            # Plot contra and ipsi on the group's dedicated subplot
+            ax = ax_map[group_name]
+            ax.set_title(f'{group_name} (n={len(subjects_in_group)})', fontweight='bold')
+            ax.plot(times_ms, ga_contra, color='red', linestyle='--', linewidth=2, label='Contralateral')
+            ax.plot(times_ms, ga_ipsi, color='blue', linestyle='--', linewidth=2, label='Ipsilateral')
+
+            # Plot the group's difference wave on the summary subplot
+            diff_ax.plot(times_ms, ga_diff, color=colors[group_name], linewidth=2.5, label=f'{group_name}')
+
+    # 3. Finalize plot aesthetics
+    diff_ax.set_title('Difference Waves by Group', fontweight='bold')
+
+    # Highlight the Pd analysis window on the difference wave plot
+    diff_ax.axvspan(PD_TIME_WINDOW[0] * 1000, PD_TIME_WINDOW[1] * 1000,
+                    color='lightcoral', alpha=0.3, label=f'Pd Analysis Window')
+
+    for ax in axes:
+        ax.axhline(0, color='black', linestyle='--', linewidth=0.8)
+        ax.axvline(0, color='black', linestyle=':', linewidth=0.8)
+        ax.set_xlabel('Time from Stimulus Onset (ms)', fontsize=12)
+        ax.grid(True, linestyle=':', alpha=0.6)
+        ax.legend()
+
+    axes[0].set_ylabel('Amplitude (µV)', fontsize=12)
+    fig.suptitle('Grand Average Pd Waveforms by Flanker Effect Group', fontsize=16, fontweight='bold')
+    plt.tight_layout(rect=[0, 0, 1, 0.96])  # Adjust for suptitle
+    plt.show()
+
+else:
+    print("Skipping flanker group analysis: not enough subjects (need at least 3).")
