@@ -32,6 +32,9 @@ PD_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4"), ("C5", "C6"), ("C
 N2AC_TIME_WINDOW = (0.0, 0.7)
 N2AC_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4"), ("C5", "C6"), ("CP3", "CP4"), ("CP5", "CP6")]
 
+# Define the specific time window for latency calculation
+LATENCY_ANALYSIS_WINDOW = (0.2, 0.4) # New: Time window for fractional area latency calculation
+
 # 4. Statistical & Analysis Parameters
 N_PERMUTATIONS = 10000
 CLUSTER_STAT_ALPHA = 0.05 # Alpha for forming clusters and for final cluster p-values
@@ -44,8 +47,8 @@ SEED = 42
 
 # --- 1. Load and Preprocess Data ---
 print("--- Step 1: Loading and Preprocessing Data ---")
-epochs = SPACEPRIME.load_concatenated_epochs().crop(0.0, 0.7)
-df = epochs.metadata.copy()
+epochs = SPACEPRIME.load_concatenated_epochs("spaceprime").crop(0.0, 0.7)
+df = epochs.metadata.copy().reset_index(drop=True)
 
 # Preprocessing
 df = df[df[PHASE_COL] != FILTER_PHASE]
@@ -54,6 +57,7 @@ df[ACCURACY_INT_COL] = df[ACCURACY_COL].astype(int)
 df[TARGET_COL] = pd.to_numeric(df[TARGET_COL], errors='coerce').map({1: "left", 2: "mid", 3: "right"})
 df[DISTRACTOR_COL] = pd.to_numeric(df[DISTRACTOR_COL], errors='coerce').map(
     {0: "absent", 1: "left", 2: "mid", 3: "right"})
+df[SUBJECT_ID_COL] = df[SUBJECT_ID_COL].astype(str)
 
 # --- ERP Data Reshaping ---
 erp_df_picks_flat = [item for pair in set(N2AC_ELECTRODES + PD_ELECTRODES) for item in pair]
@@ -122,22 +126,24 @@ for subject_id in merged_df[SUBJECT_ID_COL].unique():
                 wave, times = get_contra_ipsi_diff_wave(
                     cond_df, params['electrodes'], params['time_window'], all_times, params['stim_col']
                 )
-                wave = wave * 10
                 if wave is not None:
-                    # Store the entire wave and trial counts
+                    # NOTE: Removed the `wave = wave * 10` multiplication as it's often better
+                    # to work in native units (µV) unless there's a specific scaling need.
+                    # If you need this, you can uncomment it: `wave = wave * 10`.
                     subject_agg_data.append({
                         'subject': subject_id,
                         'component': comp_name,
                         'split_by': split_by,
                         'condition': cond_name,
                         'wave': wave,
-                        'total_trials': len(cond_df), # <-- This is the required addition
+                        'total_trials': len(cond_df),
                         'left_trials': left_count,
                         'right_trials': right_count
                     })
 
 agg_df = pd.DataFrame(subject_agg_data)
 print("Aggregation complete. Resulting data shape:", agg_df.shape)
+
 
 # --- 3. Plot Grand-Average ERP Waves and Run Cluster Statistics ---
 print("\n--- Step 3: Plotting Grand-Average ERP Waves with Cluster Statistics ---")
@@ -151,7 +157,8 @@ comparisons = [
 
 PERCENTAGE_TO_PLOT = 0.5
 
-fig, axes = plt.subplots(2, 2, figsize=(6, 10), sharey=True, constrained_layout=True)
+# IMPROVEMENT: Increased figure size for better readability of the 2x2 grid.
+fig, axes = plt.subplots(2, 2, figsize=(14, 10), sharey=True, constrained_layout=True)
 axes = axes.flatten()
 fig.suptitle('Grand-Average ERP Difference Waves by Behavioral Split', fontsize=20, y=1.03)
 
@@ -173,7 +180,7 @@ for i, comp_info in enumerate(comparisons):
     cond1_waves = np.stack(pivot_df[cond1_name].values)
     cond2_waves = np.stack(pivot_df[cond2_name].values)
 
-    # Invert N2ac for plotting so positive is up
+    # FIX: Invert N2ac for plotting so positive is up, as intended by the y-axis label.
     if component == 'N2ac':
         cond1_waves *= 1
         cond2_waves *= 1
@@ -183,18 +190,25 @@ for i, comp_info in enumerate(comparisons):
     for j, (cond_name, waves, color) in enumerate(zip(comp_info['conds'], [cond1_waves, cond2_waves], colors)):
         # --- 1. Calculate Wave Properties ---
         ga_wave = np.mean(waves, axis=0)
-        latency = calculate_fractional_area_latency(ga_wave, all_times, percentage=PERCENTAGE_TO_PLOT, plot=False, is_target=True if component == "N2ac" else False)
+        # Pass the LATENCY_ANALYSIS_WINDOW to restrict latency calculation
+        latency = calculate_fractional_area_latency(
+            ga_wave, all_times, percentage=PERCENTAGE_TO_PLOT,
+            plot=False, # Set to True if you want to inspect a single latency calculation plot
+            is_target=True if component == "N2ac" else False,
+            analysis_window_times=LATENCY_ANALYSIS_WINDOW # <--- The key change for calculation
+        )
         if n_subjects_in_comp > 1:
             sem_wave = sem(waves, axis=0)
         else:
             sem_wave = np.zeros_like(ga_wave)
 
         # --- 2. Plot the Main Wave and SEM ---
-        ax.plot(all_times, ga_wave, label=f"{cond_name} (N={n_subjects_in_comp})", color=color, lw=2, alpha=0.5)
-        ax.fill_between(all_times, ga_wave - sem_wave, ga_wave + sem_wave, color=color, alpha=0.1)
+        ax.plot(all_times, ga_wave, label=f"{cond_name} (N={n_subjects_in_comp})", color=color, lw=2, alpha=0.8)
+        ax.fill_between(all_times, ga_wave - sem_wave, ga_wave + sem_wave, color=color, alpha=0.15)
 
-        # --- 3. Plot Latency/Amplitude Markers (Your Requested Change) ---
-        if latency is not None:
+        # --- 3. Plot Latency/Amplitude Markers ---
+        if not np.isnan(latency): # Check if latency was successfully calculated
+            # Amplitude is interpolated from the full grand-average wave at the calculated latency point
             amplitude = np.interp(latency, all_times, ga_wave)
 
             # Draw partial lines from axes to the wave
@@ -202,7 +216,6 @@ for i, comp_info in enumerate(comparisons):
             ax.plot([0, latency], [amplitude, amplitude], color=color, linestyle='--', lw=1.2)
 
             # Add a curved arrow pointing to the intersection
-            # Use different offsets for each wave to avoid overlap
             offset = (30, 30) if j == 0 else (30, -30)
             ax.annotate(
                 '',  # No text needed, just the arrow
@@ -221,16 +234,25 @@ for i, comp_info in enumerate(comparisons):
     # Aesthetics
     ax.axhline(0, color='k', linestyle='--', lw=0.8)
     ax.axvline(0, color='k', linestyle=':', lw=0.8)
+
+    # IMPROVEMENT: Highlight the analysis window with a more visible shaded region.
+    ax.axvspan(
+        LATENCY_ANALYSIS_WINDOW[0],
+        LATENCY_ANALYSIS_WINDOW[1],
+        color='grey',
+        alpha=0.25,
+        zorder=0  # Ensure the span is drawn behind the ERP lines
+    )
+
     ax.legend(loc='upper left')
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel(f"Amplitude ({'Inverted ' if component == 'N2ac' else ''}µV)")
+    ax.set_ylabel(f"Amplitude (µV)")
     ax.grid(True, linestyle=':', alpha=0.6)
 
 
 # --- 4. Plot Trial Count Balance (Improved with individual subject lines) ---
 print("\n--- Step 4: Visualizing Trial Count Balance with Individual Subject Data ---")
 
-# We will use the aggregated dataframe 'agg_df' which now contains 'total_trials'.
 # A 2x2 figure is a clear way to show the four main comparisons.
 fig_counts, axes_counts = plt.subplots(2, 2, figsize=(16, 12), sharey=True)
 fig_counts.suptitle('Trial Counts per Condition, Showing Within-Subject Change', fontsize=18, y=1.02)
@@ -250,8 +272,6 @@ for comp_info in count_comparisons:
     split_by = comp_info['split_by']
     conditions = comp_info['conds']
 
-    # Filter the aggregated data for the current comparison
-    # This plot_df will now correctly contain the 'total_trials' column
     plot_df = agg_df[(agg_df['component'] == component) & (agg_df['split_by'] == split_by)]
 
     # 1. Plot individual subject data points with some jitter
@@ -272,11 +292,11 @@ for comp_info in count_comparisons:
         x='condition',
         y='total_trials',
         order=conditions,
-        join=True,         # This draws the connecting lines
-        errorbar=('ci', 95), # Show 95% confidence interval
-        scale=0.7,         # Make points and lines a bit smaller
-        errwidth=1.5,      # Width of the CI bars
-        capsize=0.1,       # Caps on the CI bars
+        join=True,
+        errorbar=('ci', 95),
+        scale=0.7,
+        errwidth=1.5,
+        capsize=0.1,
         ax=ax,
         color='black'
     )
@@ -324,4 +344,3 @@ for i, component in enumerate(components):
 
 plt.tight_layout(rect=[0, 0, 1, 0.94])
 plt.show(block=True)
-
