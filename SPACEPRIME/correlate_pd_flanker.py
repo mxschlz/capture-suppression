@@ -20,7 +20,6 @@ TARGET_COL = 'TargetLoc'
 DISTRACTOR_COL = 'SingletonLoc'
 REACTION_TIME_COL = 'rt'
 PHASE_COL = 'phase'
-TRIAL_NUMBER_COL = 'total_trial_nr'
 ACCURACY_COL = 'correct'
 
 
@@ -33,7 +32,7 @@ DISTRACTOR_REF_STR = DISTRACTOR_LOC_MAP.get(2)
 
 # --- 3. ERP Component Definitions ---
 # Baseline window for correction (e.g., -150ms to 0ms)
-BASELINE_WINDOW = (-0.15, 0.0)
+BASELINE_WINDOW = (-0.2, 0.0)
 
 # Flanker task configuration (ASSUMPTIONS - PLEASE VERIFY)
 FLANKER_EXPERIMENT_NAME = 'flanker_data.csv'  # The key for load_concatenated_csv
@@ -54,8 +53,6 @@ if PHASE_COL in df.columns and FILTER_PHASE is not None:
     df = df[df[PHASE_COL] != FILTER_PHASE]
 if REACTION_TIME_COL in df.columns:
     df = remove_outliers(df, column_name=REACTION_TIME_COL, threshold=OUTLIER_RT_THRESHOLD)
-if SUBJECT_ID_COL in df.columns:
-    df[TRIAL_NUMBER_COL] = df.groupby(SUBJECT_ID_COL).cumcount()
 # Map categorical variables to strings
 df[TARGET_COL] = pd.to_numeric(df[TARGET_COL], errors='coerce').map(TARGET_LOC_MAP)
 df[DISTRACTOR_COL] = pd.to_numeric(df[DISTRACTOR_COL], errors='coerce').map(DISTRACTOR_LOC_MAP)
@@ -120,63 +117,78 @@ ipsi_wave[is_right_dist] = ipsi_mean_right
 diff_wave[is_right_dist] = contra_mean_right - ipsi_mean_right
 
 # 6. Calculate "Pure Signed Area" based on the provided paragraph's methodology
+# The new approach computes this on subject-averaged ERPs for better SNR.
 pd_times_idx = pd_epochs.time_as_index(PD_TIME_WINDOW)
 baseline_times_idx = pd_epochs.time_as_index(BASELINE_WINDOW)
+sampling_interval_ms = (1 / epochs.info['sfreq']) * 1000
 
 
 def _calculate_signed_area(data_window, polarity='positive'):
     """
     Calculates the signed area by summing only positive or negative values.
+    Works on 1D (time) or 2D (trials, time) arrays.
 
     Args:
-        data_window (np.ndarray): The data slice for the time window (trials, times).
+        data_window (np.ndarray): The data slice for the time window.
         polarity (str): 'positive' to sum positive values, 'negative' to sum negative.
 
     Returns:
-        np.ndarray: A 1D array of the signed area for each trial.
+        np.ndarray or float: The signed area.
     """
-    # Make a copy to avoid modifying the original data
     area_data = data_window.copy()
     if polarity == 'positive':
-        # Set all negative values to zero
         area_data[area_data < 0] = 0
     elif polarity == 'negative':
-        # Set all positive values to zero
         area_data[area_data > 0] = 0
-    # Sum across the time dimension to get the area
-    return area_data.sum(axis=1)
+    # Sum across the last dimension (time) to get the area
+    return area_data.sum(axis=-1)
 
 
-# Calculate the "raw" signed area for the Pd component (sum of positive values)
-raw_pd_area = _calculate_signed_area(diff_wave[:, pd_times_idx[0]:pd_times_idx[1]], polarity='positive')
+unique_subjects = pd_trials_meta[SUBJECT_ID_COL].unique()
+subject_results = []
 
-# Calculate the signed area of the baseline to subtract as noise
-baseline_noise_area = _calculate_signed_area(diff_wave[:, baseline_times_idx[0]:baseline_times_idx[1]], polarity='positive')
+print("Averaging ERPs and calculating Pd area for each subject...")
+for subject in unique_subjects:
+    # Find trial indices for the current subject
+    subject_trial_mask = (pd_trials_meta[SUBJECT_ID_COL] == subject).values
 
-# The "Pd pure area" is the baseline-subtracted signed area.
-# This gives a result in (µV * samples).
-pd_pure_area_samples = raw_pd_area - baseline_noise_area
+    # Get all difference waves for this subject
+    subject_diff_waves_for_avg = diff_wave[subject_trial_mask]
 
-# Convert from (µV * samples) to (µV * ms) for physically meaningful units.
-# This is a linear scaling and does not affect the correlation result, but makes the values reportable.
-sampling_interval_ms = (1 / epochs.info['sfreq']) * 1000
-pd_pure_area = pd_pure_area_samples * sampling_interval_ms
+    if subject_diff_waves_for_avg.shape[0] == 0:
+        print(f"Warning: No Pd-eliciting trials found for subject {subject}. Skipping.")
+        continue
 
-# 7. Add the calculated Pd area to our metadata and aggregate by subject
-# Note on units: The 'area' is the sum of voltage points over a time window.
-# The physical unit is technically (Volts * samples). To get a true area in (Volts * seconds),
-# one would need to multiply by the sampling interval (1/sfreq). However, since this
-# scaling is linear, it does not affect the correlation result. We treat it as arbitrary units (a.u.).
-print("\n--- Sanity Check for Signed Area Calculation (First 5 Trials) ---")
-print(f"{'Trial #':<8} | {'Raw PD Area':<15} | {'Baseline Noise Area':<20} | {'Pure PD Area'}")
-print("-" * 70)
-for i in range(min(5, len(pd_trials_meta))):
-    print(f"{i:<8} | {raw_pd_area[i]:<15.4e} | {baseline_noise_area[i]:<20.4e} | {pd_pure_area_samples[i]:.4e}")
+    # Average the difference waves to get the subject's ERP
+    subject_avg_diff_wave = subject_diff_waves_for_avg.mean(axis=0)
 
+    # Slice the averaged wave for the time windows of interest
+    avg_wave_pd_window = subject_avg_diff_wave[pd_times_idx[0]:pd_times_idx[1]]
+    avg_wave_baseline_window = subject_avg_diff_wave[baseline_times_idx[0]:baseline_times_idx[1]]
 
-pd_trials_meta['pd_pure_area'] = pd_pure_area
-pd_subject_df = pd_trials_meta.groupby(SUBJECT_ID_COL)['pd_pure_area'].mean().reset_index()
-print("Pd pure area calculated and averaged per subject.")
+    # Calculate areas from the averaged ERP
+    raw_pd_area = _calculate_signed_area(avg_wave_pd_window, polarity='positive')
+    baseline_noise_area = _calculate_signed_area(avg_wave_baseline_window, polarity='positive')
+    pd_pure_area_samples = raw_pd_area - baseline_noise_area
+
+    subject_results.append({
+        SUBJECT_ID_COL: subject,
+        'pd_pure_area_samples': pd_pure_area_samples,
+        'raw_pd_area': raw_pd_area,
+        'baseline_noise_area': baseline_noise_area
+    })
+
+# 7. Create per-subject DataFrame and convert area to physical units
+pd_subject_df = pd.DataFrame(subject_results)
+pd_subject_df['pd_pure_area'] = pd_subject_df['pd_pure_area_samples'] * sampling_interval_ms
+
+print("\n--- Sanity Check for Signed Area Calculation (First 5 Subjects) ---")
+print(f"{SUBJECT_ID_COL:<10} | {'Raw PD Area':<15} | {'Baseline Noise Area':<20} | {'Pure PD Area (samples)'}")
+print("-" * 80)
+for i, row in pd_subject_df.head(5).iterrows():
+    print(f"{str(row[SUBJECT_ID_COL]):<10} | {row['raw_pd_area']:<15.4e} | {row['baseline_noise_area']:<20.4e} | {row['pd_pure_area_samples']:.4e}")
+
+print("\nPd pure area calculated from subject-averaged ERPs.")
 
 # --- Sanity-Check Visualization: Difference Wave ---
 print("\nGenerating sanity-check plot for Pd difference wave...")
@@ -276,58 +288,124 @@ print(f"Found {len(pd_subjects)} subjects in EEG data: {sorted(list(pd_subjects)
 print(f"Found {len(flanker_subjects)} subjects in Flanker data: {sorted(list(flanker_subjects))}")
 print(f"Found {len(common_subjects)} common subjects for correlation: {sorted(list(common_subjects))}")
 
-# --- Correlate Pd with Flanker Effect ---
-print("\nCorrelating Pd pure area with Flanker effect...")
 
-# Merge the two dataframes on subject_id
+# --- Multivariate Correlation Analysis ---
+print("\n--- Multivariate Correlation Analysis ---")
+correlation_df = pd.DataFrame() # Initialize empty dataframe
+# --- 1. Load and Merge All Data Sources ---
+print("Loading questionnaire data...")
+questionnaire_data = SPACEPRIME.load_concatenated_csv("combined_questionnaire_results.csv")
+# Ensure subject ID is a string for robust merging. astype(str) is safer than astype(float).astype(str).
+questionnaire_data[SUBJECT_ID_COL] = questionnaire_data[SUBJECT_ID_COL].astype(float).astype(str)
+
+# Merge all three data sources (EEG, Flanker, Questionnaires) using 'inner' joins
+print("Merging EEG, Flanker, and Questionnaire data...")
 correlation_df = pd.merge(
-    pd_subject_df,
-    flanker_subject_df[[SUBJECT_ID_COL, 'flanker_effect']],
-    on=SUBJECT_ID_COL)
+    pd_subject_df[['subject_id', 'pd_pure_area']],
+    flanker_subject_df[['subject_id', 'flanker_effect']],
+    on=SUBJECT_ID_COL, how='inner'
+)
+correlation_df = pd.merge(
+    correlation_df,
+    questionnaire_data,  # This should contain the WNSS and SSQ scores
+    on=SUBJECT_ID_COL, how='inner'
+)
 
-# Drop any subjects who might be missing data in one of the tasks
-correlation_df.dropna(inplace=True)
+# This hardcoded outlier removal was in the original script.
+# A more robust approach would be to identify outliers and remove by subject_id.
+if 10 in correlation_df.index:
+    print("Warning: Removing subject at hardcoded index 10 from correlation analysis.")
+    correlation_df = correlation_df.drop(index=10).reset_index(drop=True)
 
-# correlation_df = correlation_df.drop(index=10)
+# --- 2. Perform Correlation Analysis ---
+cols_to_correlate = [
+    'pd_pure_area', 'flanker_effect', 'wnss_noise_resistance', 'ssq_speech_mean', "ssq_spatial_mean",
+    "ssq_quality_mean"
+]
+existing_cols = [col for col in cols_to_correlate if col in correlation_df.columns]
 
-# Calculate Pearson correlation
-corr_coef, p_value = stats.pearsonr(
-    correlation_df['pd_pure_area'],
-    correlation_df['flanker_effect'])
+if len(existing_cols) < 2:
+    raise ValueError("Fewer than two variables found for correlation.")
 
-# --- Visualization ---
-plt.figure(figsize=(9, 7))
-sns.regplot(data=correlation_df, x='pd_pure_area', y='flanker_effect', color='royalblue')
+print(f"\nFound {len(correlation_df)} subjects with complete data for correlation.")
+print(f"Analyzing correlations between: {existing_cols}")
 
-# Add subject ID labels to each point
-for idx, row in correlation_df.iterrows():
-    plt.text(
-        x=row['pd_pure_area'],
-        y=row['flanker_effect'],
-        s=row[SUBJECT_ID_COL],
-        ha='left',          # Horizontal alignment
-        va='bottom',        # Vertical alignment
-        fontsize=8,
-        color='dimgray')
+# --- 3. Visualization: Pair Plot ---
+print("Generating pair plot to visualize all pairwise relationships...")
+pair_plot = sns.pairplot(
+    correlation_df[existing_cols],
+    kind='reg',
+    plot_kws={'line_kws': {'color': 'crimson', 'linewidth': 2}, 'scatter_kws': {'alpha': 0.6, 'edgecolor': 'w'}},
+    diag_kind='kde'
+)
 
-plt.title(f"Correlation between Pd Area and Flanker Effect\n"
-          f"r = {corr_coef:.3f}, p = {p_value:.3f}",
-          fontweight='bold')
-plt.xlabel("Pd Pure Area (µV*ms)", fontsize=12)
-plt.ylabel("Flanker Effect (RT difference ms)", fontsize=12)
-plt.grid(True, linestyle='--', alpha=0.6)
+# Hide the upper triangle to remove redundant information, making the plot cleaner
+for i, j in zip(*np.triu_indices_from(pair_plot.axes, k=1)):
+    pair_plot.axes[i, j].set_visible(False)
+
+pair_plot.fig.suptitle('Pairwise Relationships Between Key Variables', y=1.02, fontweight='bold')
 plt.tight_layout()
 plt.show()
 
-print("\n--- Correlation Results ---")
-print(f"Number of subjects in analysis: {len(correlation_df)}")
-print(f"Pearson Correlation Coefficient: {corr_coef:.4f}")
-print(f"P-value: {p_value:.4f}")
+# --- 4. Visualization: Correlation Heatmap ---
+print("Generating correlation matrix heatmap with p-values...")
 
-if p_value < 0.05:
-    print("The correlation is statistically significant.")
-else:
-    print("The correlation is not statistically significant.")
+# Calculate correlation matrix (r-values)
+corr_matrix = correlation_df[existing_cols].corr()
+
+# Calculate the p-values. The .corr() method can take a callable.
+# We use a lambda function to extract the p-value from scipy.stats.pearsonr.
+p_values = correlation_df[existing_cols].corr(method=lambda x, y: stats.pearsonr(x, y)[1])
+
+# Create a mask for the upper triangle to hide redundant information.
+# Using k=1 keeps the diagonal (correlation of a variable with itself) visible.
+mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
+
+# Create figure and axes for more control
+fig, ax = plt.subplots(figsize=(12, 10))  # Increased figure size for legend
+
+# Draw the heatmap without annotations first
+sns.heatmap(
+    corr_matrix,
+    mask=mask,          # Apply the mask to hide the upper triangle
+    cmap='vlag',
+    linewidths=.5,
+    vmin=-1, vmax=1,
+    ax=ax               # Draw on our specific axes
+)
+
+# Manually iterate over the data and add text annotations with significance.
+for i in range(len(corr_matrix)):
+    for j in range(len(corr_matrix)):
+        if not mask[i, j]:  # Only annotate the visible cells
+            r_val = corr_matrix.iloc[i, j]
+            p_val = p_values.iloc[i, j]
+            
+            # Format the r-value and add asterisks for significance
+            text = f"{r_val:.2f}"
+            if p_val < 0.001:
+                text += "***"
+            elif p_val < 0.01:
+                text += "**"
+            elif p_val < 0.05:
+                text += "*"
+            
+            text_color = 'white' if abs(r_val) > 0.6 else 'black'
+            ax.text(j + 0.5, i + 0.5, text, ha="center", va="center", color=text_color, fontsize=10)
+
+ax.set_title('Correlation Matrix with Significance', fontsize=15, fontweight='bold')
+# Place legend inside the plot in the empty top-right corner for better layout
+ax.text(0.95, 0.95, "Significance:\n*   p < 0.05\n**  p < 0.01\n*** p < 0.001",
+        transform=ax.transAxes, fontsize=10,
+        verticalalignment='top', horizontalalignment='right',
+        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+plt.tight_layout()  # tight_layout now works without manual adjustments
+plt.show()
+
+print("\n--- Correlation Matrix (r-values) ---")
+print(corr_matrix)
+print("\n--- P-Values ---")
+print(p_values)
 
 
 # --- Final Analysis: Plot Waveforms by Flanker Effect Group ---
