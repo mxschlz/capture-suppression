@@ -31,7 +31,7 @@ TARGET_REF_STR = TARGET_LOC_MAP.get(2)
 
 # --- 3. ERP Component Definitions ---
 # Baseline window for correction (e.g., -150ms to 0ms)
-BASELINE_WINDOW = (-0.15, 0.0)
+BASELINE_WINDOW = (-0.2, 0.0)
 
 # Flanker task configuration
 FLANKER_EXPERIMENT_NAME = 'flanker_data.csv'  # The key for load_concatenated_csv
@@ -119,48 +119,76 @@ ipsi_wave[is_right_target] = ipsi_mean_right
 diff_wave[is_right_target] = contra_mean_right - ipsi_mean_right
 
 # 6. Calculate "Pure Signed Area" based on the provided paragraph's methodology
+# The new approach computes this on subject-averaged ERPs for better SNR.
 n2ac_times_idx = n2ac_epochs.time_as_index(N2AC_TIME_WINDOW)
 baseline_times_idx = n2ac_epochs.time_as_index(BASELINE_WINDOW)
+sampling_interval_ms = (1 / epochs.info['sfreq']) * 1000
 
 
 def _calculate_signed_area(data_window, polarity='positive'):
     """
     Calculates the signed area by summing only positive or negative values.
+    Works on 1D (time) or 2D (trials, time) arrays.
 
     Args:
-        data_window (np.ndarray): The data slice for the time window (trials, times).
+        data_window (np.ndarray): The data slice for the time window.
         polarity (str): 'positive' to sum positive values, 'negative' to sum negative.
 
     Returns:
-        np.ndarray: A 1D array of the signed area for each trial.
+        np.ndarray or float: The signed area.
     """
     area_data = data_window.copy()
     if polarity == 'positive':
         area_data[area_data < 0] = 0
     elif polarity == 'negative':
         area_data[area_data > 0] = 0
-    return area_data.sum(axis=1)
+    # Sum across the last dimension (time) to get the area
+    return area_data.sum(axis=-1)
 
 
-# Calculate the "raw" signed area for the N2ac component (sum of NEGATIVE values)
-raw_n2ac_area = _calculate_signed_area(diff_wave[:, n2ac_times_idx[0]:n2ac_times_idx[1]], polarity='negative')
+unique_subjects = n2ac_trials_meta[SUBJECT_ID_COL].unique()
+subject_results = []
 
-# Calculate the signed area of the baseline to subtract as noise (sum of NEGATIVE values)
-baseline_noise_area = _calculate_signed_area(diff_wave[:, baseline_times_idx[0]:baseline_times_idx[1]], polarity='negative')
+print("Averaging ERPs and calculating N2ac area for each subject...")
+for subject in unique_subjects:
+    # Find trial indices for the current subject
+    subject_trial_mask = (n2ac_trials_meta[SUBJECT_ID_COL] == subject).values
+    subject_diff_waves_for_avg = diff_wave[subject_trial_mask]
 
-# The "N2ac pure area" is the baseline-subtracted signed area
-n2ac_pure_area = raw_n2ac_area - baseline_noise_area
+    if subject_diff_waves_for_avg.shape[0] == 0:
+        print(f"Warning: No N2ac-eliciting trials found for subject {subject}. Skipping.")
+        continue
 
-# 7. Add the calculated N2ac area to our metadata and aggregate by subject
-print("\n--- Sanity Check for Signed Area Calculation (First 5 Trials) ---")
-print(f"{'Trial #':<8} | {'Raw N2ac Area':<15} | {'Baseline Noise Area':<20} | {'Pure N2ac Area'}")
-print("-" * 70)
-for i in range(min(5, len(n2ac_trials_meta))):
-    print(f"{i:<8} | {raw_n2ac_area[i]:<15.4e} | {baseline_noise_area[i]:<20.4e} | {n2ac_pure_area[i]:.4e}")
+    # Average the difference waves to get the subject's ERP
+    subject_avg_diff_wave = subject_diff_waves_for_avg.mean(axis=0)
 
-n2ac_trials_meta['n2ac_pure_area'] = n2ac_pure_area
-n2ac_subject_df = n2ac_trials_meta.groupby(SUBJECT_ID_COL)['n2ac_pure_area'].mean().reset_index()
-print("N2ac pure area calculated and averaged per subject.")
+    # Slice the averaged wave for the time windows of interest
+    avg_wave_n2ac_window = subject_avg_diff_wave[n2ac_times_idx[0]:n2ac_times_idx[1]]
+    avg_wave_baseline_window = subject_avg_diff_wave[baseline_times_idx[0]:baseline_times_idx[1]]
+
+    # Calculate areas from the averaged ERP (polarity is 'negative' for N2ac)
+    raw_n2ac_area = _calculate_signed_area(avg_wave_n2ac_window, polarity='negative')
+    baseline_noise_area = _calculate_signed_area(avg_wave_baseline_window, polarity='negative')
+    n2ac_pure_area_samples = raw_n2ac_area - baseline_noise_area
+
+    subject_results.append({
+        SUBJECT_ID_COL: subject,
+        'n2ac_pure_area_samples': n2ac_pure_area_samples,
+        'raw_n2ac_area': raw_n2ac_area,
+        'baseline_noise_area': baseline_noise_area
+    })
+
+# 7. Create per-subject DataFrame and convert area to physical units
+n2ac_subject_df = pd.DataFrame(subject_results)
+n2ac_subject_df['n2ac_pure_area'] = n2ac_subject_df['n2ac_pure_area_samples'] * sampling_interval_ms
+
+print("\n--- Sanity Check for Signed Area Calculation (First 5 Subjects) ---")
+print(f"{SUBJECT_ID_COL:<10} | {'Raw N2ac Area':<15} | {'Baseline Noise Area':<20} | {'Pure N2ac Area (samples)'}")
+print("-" * 80)
+for i, row in n2ac_subject_df.head(5).iterrows():
+    print(f"{str(row[SUBJECT_ID_COL]):<10} | {row['raw_n2ac_area']:<15.4e} | {row['baseline_noise_area']:<20.4e} | {row['n2ac_pure_area_samples']:.4e}")
+
+print("\nN2ac pure area calculated from subject-averaged ERPs.")
 
 # --- Sanity-Check Visualization: Difference Wave ---
 print("\nGenerating sanity-check plot for N2ac difference wave...")
@@ -302,3 +330,192 @@ else:
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.tight_layout()
     plt.show()
+
+# --- Multivariate Correlation Analysis ---
+print("\n--- Multivariate Correlation Analysis ---")
+correlation_df = pd.DataFrame()  # Initialize empty dataframe
+# --- 1. Load and Merge All Data Sources ---
+print("Loading questionnaire data...")
+questionnaire_data = SPACEPRIME.load_concatenated_csv("combined_questionnaire_results.csv")
+# Ensure subject ID is a string for robust merging. astype(str) is safer than astype(float).astype(str).
+questionnaire_data[SUBJECT_ID_COL] = questionnaire_data[SUBJECT_ID_COL].astype(float).astype(str)
+
+# Merge all three data sources (EEG, Flanker, Questionnaires) using 'inner' joins
+print("Merging EEG, Flanker, and Questionnaire data...")
+correlation_df = pd.merge(
+    n2ac_subject_df[['subject_id', 'n2ac_pure_area']],
+    flanker_subject_df[['subject_id', 'flanker_effect']],
+    on=SUBJECT_ID_COL, how='inner'
+)
+correlation_df = pd.merge(
+    correlation_df,
+    questionnaire_data,  # This should contain the WNSS and SSQ scores
+    on=SUBJECT_ID_COL, how='inner'
+)
+
+# This hardcoded outlier removal was in the original script.
+# A more robust approach would be to identify outliers and remove by subject_id.
+if 10 in correlation_df.index:
+    print("Warning: Removing subject at hardcoded index 10 from correlation analysis.")
+    correlation_df = correlation_df.drop(index=10).reset_index(drop=True)
+
+# --- 2. Perform Correlation Analysis ---
+cols_to_correlate = [
+    'n2ac_pure_area', 'flanker_effect', 'wnss_noise_resistance', 'ssq_speech_mean', "ssq_spatial_mean",
+    "ssq_quality_mean", "ssq_overall_mean"
+]
+existing_cols = [col for col in cols_to_correlate if col in correlation_df.columns]
+
+if len(existing_cols) < 2:
+    raise ValueError("Fewer than two variables found for correlation.")
+
+print(f"\nFound {len(correlation_df)} subjects with complete data for correlation.")
+print(f"Analyzing correlations between: {existing_cols}")
+
+# --- 3. Visualization: Pair Plot ---
+print("Generating pair plot to visualize all pairwise relationships...")
+pair_plot = sns.pairplot(
+    correlation_df[existing_cols],
+    kind='reg',
+    plot_kws={'line_kws': {'color': 'crimson', 'linewidth': 2}, 'scatter_kws': {'alpha': 0.6, 'edgecolor': 'w'}},
+    diag_kind='kde'
+)
+
+# Hide the upper triangle to remove redundant information, making the plot cleaner
+for i, j in zip(*np.triu_indices_from(pair_plot.axes, k=1)):
+    pair_plot.axes[i, j].set_visible(False)
+
+pair_plot.fig.suptitle('Pairwise Relationships Between Key Variables', y=1.02, fontweight='bold')
+plt.tight_layout()
+plt.show()
+
+# --- 4. Visualization: Correlation Heatmap ---
+print("Generating correlation matrix heatmap with p-values...")
+
+# Calculate correlation matrix (r-values)
+corr_matrix = correlation_df[existing_cols].corr()
+
+# Calculate the p-values. The .corr() method can take a callable.
+# We use a lambda function to extract the p-value from scipy.stats.pearsonr.
+p_values = correlation_df[existing_cols].corr(method=lambda x, y: stats.pearsonr(x, y)[1])
+
+# Create a mask for the upper triangle to hide redundant information.
+# Using k=1 keeps the diagonal (correlation of a variable with itself) visible.
+mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
+
+# Create figure and axes for more control
+fig, ax = plt.subplots(figsize=(12, 10))  # Increased figure size for legend
+
+# Draw the heatmap without annotations first
+sns.heatmap(
+    corr_matrix,
+    mask=mask,  # Apply the mask to hide the upper triangle
+    cmap='vlag',
+    linewidths=.5,
+    vmin=-1, vmax=1,
+    ax=ax  # Draw on our specific axes
+)
+
+# Manually iterate over the data and add text annotations with significance.
+for i in range(len(corr_matrix)):
+    for j in range(len(corr_matrix)):
+        if not mask[i, j]:  # Only annotate the visible cells
+            r_val = corr_matrix.iloc[i, j]
+            p_val = p_values.iloc[i, j]
+
+            # Format the r-value and add asterisks for significance
+            text = f"{r_val:.2f}"
+            if p_val < 0.001:
+                text += "***"
+            elif p_val < 0.01:
+                text += "**"
+            elif p_val < 0.05:
+                text += "*"
+
+            text_color = 'white' if abs(r_val) > 0.6 else 'black'
+            ax.text(j + 0.5, i + 0.5, text, ha="center", va="center", color=text_color, fontsize=10)
+
+ax.set_title('Correlation Matrix with Significance', fontsize=15, fontweight='bold')
+# Place legend inside the plot in the empty top-right corner for better layout
+ax.text(0.95, 0.95, "Significance:\n*   p < 0.05\n**  p < 0.01\n*** p < 0.001",
+        transform=ax.transAxes, fontsize=10,
+        verticalalignment='top', horizontalalignment='right',
+        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+plt.tight_layout()  # tight_layout now works without manual adjustments
+plt.show()
+
+print("\n--- Correlation Matrix (r-values) ---")
+print(corr_matrix)
+print("\n--- P-Values ---")
+print(p_values)
+
+
+# --- Final Analysis: Plot Waveforms by Flanker Effect Group ---
+print("\n--- Final Analysis: Splitting by Flanker Effect ---")
+
+# 1. Split subjects into tertiles based on their flanker effect
+if len(correlation_df) >= 3:
+    correlation_df['flanker_group'] = pd.qcut(
+        correlation_df['flanker_effect'],
+        q=3,
+        labels=['Low Flanker Effect', 'Middle Flanker Effect', 'High Flanker Effect'],
+        duplicates='drop'  # Handle cases with identical flanker scores
+    )
+    print("Subjects split into groups based on flanker effect:")
+    print(correlation_df.groupby('flanker_group')[SUBJECT_ID_COL].apply(list).to_string())
+
+    # 2. Create the 2x2 visualization grid
+    fig, axes = plt.subplots(4, 1, figsize=(10, 18), sharey=True)
+    colors = {'Low Flanker Effect': 'green', 'Middle Flanker Effect': 'orange', 'High Flanker Effect': 'firebrick'}
+    group_names = ['Low Flanker Effect', 'Middle Flanker Effect', 'High Flanker Effect']
+
+    # Map groups to specific subplots
+    ax_map = {
+        'Low Flanker Effect': axes[0],
+        'Middle Flanker Effect': axes[1],
+        'High Flanker Effect': axes[2]
+    }
+    diff_ax = axes[3]
+
+    for group_name in group_names:
+        if group_name in correlation_df['flanker_group'].values:
+            # Get the list of subjects in the current group
+            subjects_in_group = correlation_df[correlation_df['flanker_group'] == group_name][SUBJECT_ID_COL].tolist()
+            # Create a boolean mask to select trials from these subjects
+            trial_mask = n2ac_trials_meta[SUBJECT_ID_COL].isin(subjects_in_group)
+
+            # Calculate the grand average contra, ipsi, and difference waves for the group
+            ga_contra = contra_wave[trial_mask].mean(axis=0)
+            ga_ipsi = ipsi_wave[trial_mask].mean(axis=0)
+            ga_diff = ga_contra - ga_ipsi
+
+            # Plot contra and ipsi on the group's dedicated subplot
+            ax = ax_map[group_name]
+            ax.set_title(f'{group_name} (n={len(subjects_in_group)})', fontweight='bold')
+            ax.plot(times_ms, ga_contra, color='red', linestyle='--', linewidth=2, label='Contralateral')
+            ax.plot(times_ms, ga_ipsi, color='blue', linestyle='--', linewidth=2, label='Ipsilateral')
+
+            # Plot the group's difference wave on the summary subplot
+            diff_ax.plot(times_ms, ga_diff, color=colors[group_name], linewidth=2.5, label=f'{group_name}')
+
+    # 3. Finalize plot aesthetics
+    diff_ax.set_title('Difference Waves by Group', fontweight='bold')
+
+    # Highlight the Pd analysis window on the difference wave plot
+    diff_ax.axvspan(N2AC_TIME_WINDOW[0] * 1000, N2AC_TIME_WINDOW[1] * 1000,
+                    color='lightcoral', alpha=0.3, label=f'Pd Analysis Window')
+
+    for ax in axes:
+        ax.axhline(0, color='black', linestyle='--', linewidth=0.8)
+        ax.axvline(0, color='black', linestyle=':', linewidth=0.8)
+        ax.set_xlabel('Time from Stimulus Onset (ms)', fontsize=12)
+        ax.grid(True, linestyle=':', alpha=0.6)
+        ax.legend()
+
+    axes[0].set_ylabel('Amplitude (µV)', fontsize=12)
+    fig.suptitle('Grand Average Pd Waveforms by Flanker Effect Group', fontsize=16, fontweight='bold')
+    plt.tight_layout(rect=[0, 0, 1, 0.96])  # Adjust for suptitle
+    plt.show()
+
+else:
+    print("Skipping flanker group analysis: not enough subjects (need at least 3).")
