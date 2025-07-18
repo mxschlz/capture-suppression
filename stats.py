@@ -594,5 +594,95 @@ def r_squared_mixed_model(lmm_results):
     print(f"Conditional R²: {r2_conditional:.3f}")
 
 
+def balanced_integration_score(df, subject_col='subject_id', rt_col='rt', acc_col='select_target'):
+    """
+    Calculates the Balanced Integration Score (BIS) for each trial.
+
+    The BIS is a measure that combines reaction time (RT) and accuracy (ACC)
+    into a single score, balancing their contributions. It is calculated by
+    first standardizing (z-scoring) RT and ACC within each subject, and then
+    subtracting the standardized RT from the standardized ACC.
+
+    BIS = z(ACC) - z(RT)
+
+    A higher BIS indicates better performance (higher accuracy and/or faster RT).
+    This function adds the BIS score as a new column to the DataFrame.
+
+    Args:
+        df (pd.DataFrame):
+            The input DataFrame containing trial-level data.
+        subject_col (str, optional):
+            The name of the column identifying subjects. Defaults to 'subject_id'.
+        rt_col (str, optional):
+            The name of the column containing reaction times. Defaults to 'rt'.
+        acc_col (str, optional):
+            The name of the column containing accuracy (e.g., 0 for incorrect,
+            1 for correct). Defaults to 'correct'.
+
+    Returns:
+        pd.DataFrame:
+            A new DataFrame with an added 'bis' column containing the
+            Balanced Integration Score for each trial.
+
+    Raises:
+        ValueError: If required columns are not found in the DataFrame.
+        TypeError: If RT or accuracy columns are not numeric.
+
+    Notes:
+        - Z-scores are calculated on a per-subject basis using the sample standard
+          deviation (ddof=1).
+        - If a subject has zero variance in their reaction times or accuracy
+          (e.g., all RTs are identical, or accuracy is 100% or 0%), the
+          standard deviation is zero. In such cases, the resulting z-scores
+          and the final BIS for that subject's trials will be `NaN` (Not a Number),
+          as a z-score is not mathematically defined.
+
+    Example:
+        >>> data = {
+        ...     'subject_id': [1, 1, 1, 1, 2, 2, 2, 2],
+        ...     'rt': [500, 550, 480, 520, 600, 610, 800, 650],
+        ...     'correct': [1, 1, 0, 1, 1, 1, 0, 0]
+        ... }
+        >>> df = pd.DataFrame(data)
+        >>> df_with_bis = balanced_integration_score(df)
+        >>> print(df_with_bis[['subject_id', 'bis']].round(2))
+           subject_id   bis
+        0           1  0.92
+        1           1 -0.76
+        2           1 -0.41
+        3           1  0.25
+        4           2  1.07
+        5           2  0.96
+        6           2 -2.59
+        7           2 -0.34
+    """
+    # --- Input Validation ---
+    required_cols = [subject_col, rt_col, acc_col]
+    for col in required_cols:
+        if col not in df.columns:
+            raise ValueError(f"Column '{col}' not found in the DataFrame.")
+
+    if not pd.api.types.is_numeric_dtype(df[rt_col]):
+        raise TypeError(f"Reaction time column '{rt_col}' must be numeric.")
+    if not pd.api.types.is_numeric_dtype(df[acc_col]):
+        raise TypeError(f"Accuracy column '{acc_col}' must be numeric.")
+
+    df_out = df.copy()
+
+    # --- Z-score Calculation within each subject ---
+    # Use transform to apply the z-score calculation per group and align the
+    # result back to the original DataFrame's index.
+    grouped = df_out.groupby(subject_col)
+
+    z_rt = grouped[rt_col].transform(lambda x: (x - x.mean()) / x.std(ddof=1))
+    z_acc = grouped[acc_col].transform(lambda x: (x - x.mean()) / x.std(ddof=1))
+
+    # --- Calculate BIS ---
+    # BIS = z(ACC) - z(RT)
+    df_out['bis'] = z_acc - z_rt
+
+    return df_out
+
+
 if __name__ == "__main__":
     pass
