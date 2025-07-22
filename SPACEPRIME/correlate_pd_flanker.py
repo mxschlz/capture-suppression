@@ -18,9 +18,10 @@ FILTER_PHASE = 2
 SUBJECT_ID_COL = 'subject_id'
 TARGET_COL = 'TargetLoc'
 DISTRACTOR_COL = 'SingletonLoc'
+SINGLETON_PRESENT_COL = 'SingletonPresent'
 REACTION_TIME_COL = 'rt'
 PHASE_COL = 'phase'
-ACCURACY_COL = 'correct'
+ACCURACY_COL = 'select_target'
 
 
 # --- Mappings and Reference Levels ---
@@ -276,6 +277,32 @@ flanker_subject_df.columns.name = None
 
 print("Flanker effect calculated per subject.")
 
+# --- Calculate Singleton Presence Effect (RT and Accuracy) ---
+print("\nCalculating singleton presence effect (RT & Accuracy) per subject...")
+
+# The main 'df' contains the trial-by-trial data from the spaceprime task
+# Ensure SingletonPresent is numeric for calculations
+df[SINGLETON_PRESENT_COL] = pd.to_numeric(df[SINGLETON_PRESENT_COL], errors='coerce')
+
+# Group by subject and singleton presence, then calculate mean RT and Accuracy
+singleton_perf = df.groupby([SUBJECT_ID_COL, SINGLETON_PRESENT_COL])[[REACTION_TIME_COL, ACCURACY_COL]].mean()
+
+# Unstack to get singleton present (1) / absent (0) as columns
+singleton_perf_unstacked = singleton_perf.unstack(level=SINGLETON_PRESENT_COL)
+
+# Flatten the multi-level column index (e.g., from ('rt', 0) to 'rt_0')
+singleton_perf_unstacked.columns = [f'{col}_{int(level)}' for col, level in singleton_perf_unstacked.columns]
+
+# Calculate the difference (Present - Absent).
+# We multiply RT by 1000 to get ms, and accuracy by 100 to get percentage points.
+singleton_perf_unstacked['singleton_rt_effect'] = (singleton_perf_unstacked[f'{REACTION_TIME_COL}_1'] - singleton_perf_unstacked[f'{REACTION_TIME_COL}_0']) * 1000
+singleton_perf_unstacked['singleton_acc_effect'] = (singleton_perf_unstacked[f'{ACCURACY_COL}_1'] - singleton_perf_unstacked[f'{ACCURACY_COL}_0']).astype(float) * 100
+
+# Reset index to make 'subject_id' a column for merging
+singleton_effect_df = singleton_perf_unstacked.reset_index()
+
+print("Singleton presence effect calculated.")
+
 # --- DIAGNOSTIC STEP: Check for matching subjects before merging ---
 # An empty correlation_df usually means the subject IDs do not match between the two data files.
 # The following lines will print the subjects found in each dataset to help you debug.
@@ -291,18 +318,22 @@ print(f"Found {len(common_subjects)} common subjects for correlation: {sorted(li
 
 # --- Multivariate Correlation Analysis ---
 print("\n--- Multivariate Correlation Analysis ---")
-correlation_df = pd.DataFrame() # Initialize empty dataframe
 # --- 1. Load and Merge All Data Sources ---
 print("Loading questionnaire data...")
 questionnaire_data = SPACEPRIME.load_concatenated_csv("combined_questionnaire_results.csv")
 # Ensure subject ID is a string for robust merging. astype(str) is safer than astype(float).astype(str).
 questionnaire_data[SUBJECT_ID_COL] = questionnaire_data[SUBJECT_ID_COL].astype(float).astype(str)
 
-# Merge all three data sources (EEG, Flanker, Questionnaires) using 'inner' joins
-print("Merging EEG, Flanker, and Questionnaire data...")
+# Merge all four data sources (EEG, Flanker, Singleton Effect, Questionnaires) using 'inner' joins
+print("Merging EEG, Flanker, Singleton Effect, and Questionnaire data...")
 correlation_df = pd.merge(
     pd_subject_df[['subject_id', 'pd_pure_area']],
     flanker_subject_df[['subject_id', 'flanker_effect']],
+    on=SUBJECT_ID_COL, how='inner'
+)
+correlation_df = pd.merge(
+    correlation_df,
+    singleton_effect_df[['subject_id', 'singleton_rt_effect', 'singleton_acc_effect']],
     on=SUBJECT_ID_COL, how='inner'
 )
 correlation_df = pd.merge(
@@ -319,7 +350,8 @@ if 10 in correlation_df.index:
 
 # --- 2. Perform Correlation Analysis ---
 cols_to_correlate = [
-    'pd_pure_area', 'flanker_effect', 'wnss_noise_resistance', 'ssq_speech_mean', "ssq_spatial_mean",
+    'pd_pure_area', 'flanker_effect', 'singleton_rt_effect', 'singleton_acc_effect',
+    'wnss_noise_resistance', 'ssq_speech_mean', "ssq_spatial_mean",
     "ssq_quality_mean"
 ]
 existing_cols = [col for col in cols_to_correlate if col in correlation_df.columns]
@@ -341,7 +373,7 @@ pair_plot = sns.pairplot(
 
 # Hide the upper triangle to remove redundant information, making the plot cleaner
 for i, j in zip(*np.triu_indices_from(pair_plot.axes, k=1)):
-    pair_plot.axes[i, j].set_visible(False)
+    pair_plot.axes[i, j].set_visible(True)
 
 pair_plot.fig.suptitle('Pairwise Relationships Between Key Variables', y=1.02, fontweight='bold')
 plt.tight_layout()
@@ -380,7 +412,7 @@ for i in range(len(corr_matrix)):
         if not mask[i, j]:  # Only annotate the visible cells
             r_val = corr_matrix.iloc[i, j]
             p_val = p_values.iloc[i, j]
-            
+
             # Format the r-value and add asterisks for significance
             text = f"{r_val:.2f}"
             if p_val < 0.001:
@@ -389,7 +421,7 @@ for i in range(len(corr_matrix)):
                 text += "**"
             elif p_val < 0.05:
                 text += "*"
-            
+
             text_color = 'white' if abs(r_val) > 0.6 else 'black'
             ax.text(j + 0.5, i + 0.5, text, ha="center", va="center", color=text_color, fontsize=10)
 
