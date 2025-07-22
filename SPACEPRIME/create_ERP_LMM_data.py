@@ -5,7 +5,7 @@ import pandas as pd
 import statsmodels.formula.api as smf
 import seaborn as sns
 import numpy as np
-from stats import remove_outliers, r_squared_mixed_model  # Assuming this is your custom outlier removal function
+from stats import remove_outliers  # Assuming this is your custom outlier removal function
 from patsy.contrasts import Treatment # Import Treatment for specifying reference levels
 
 plt.ion()
@@ -26,7 +26,7 @@ PHASE_COL = 'phase'
 PRIMING_COL = 'Priming'
 TRIAL_NUMBER_COL = 'total_trial_nr'
 ACCURACY_INT_COL = 'select_target_int'
-BLOCK_COL = 'block'
+BLOCK_COL = 'total_trial_nr'
 
 
 # --- MERGED: ERP component columns for both Latency and Amplitude ---
@@ -54,7 +54,7 @@ PERCENTAGES_TO_TEST = [0.3, 0.5, 0.7] # Using 50% as the standard
 
 # --- Main Script ---
 print("Loading and concatenating epochs...")
-epochs = SPACEPRIME.load_concatenated_epochs()
+epochs = SPACEPRIME.load_concatenated_epochs("spaceprime")
 df = epochs.metadata.copy()
 sfreq = epochs.info["sfreq"]
 print(f"Original number of trials: {len(df)}")
@@ -110,12 +110,21 @@ df['jackknifed_rt_n2ac'] = np.nan
 df['jackknifed_rt_pd'] = np.nan
 df['jackknifed_acc_n2ac'] = np.nan
 df['jackknifed_acc_pd'] = np.nan
+df['jackknifed_bis_n2ac'] = np.nan
+df['jackknifed_bis_pd'] = np.nan
 
 all_times = epochs.times
 plot_erp_wave = False  # Set to True to debug/visualize a single trial's calculation
 
 # --- N2ac Calculation Loop ---
 print("\n--- Calculating N2ac Latencies & Amplitudes ---")
+
+# These are the reference means and standard deviations for the entire N2ac dataset.
+grand_mean_rt_n2ac = n2ac_analysis_df[REACTION_TIME_COL].mean()
+grand_std_rt_n2ac = n2ac_analysis_df[REACTION_TIME_COL].std(ddof=1)
+grand_mean_acc_n2ac = n2ac_analysis_df[ACCURACY_INT_COL].mean()
+grand_std_acc_n2ac = n2ac_analysis_df[ACCURACY_INT_COL].std(ddof=1)
+
 for subject_id in n2ac_analysis_df[SUBJECT_ID_COL].unique():
     print(f"Processing N2ac for subject: {subject_id}...")
     subject_n2ac_df = n2ac_analysis_df[n2ac_analysis_df[SUBJECT_ID_COL] == subject_id]
@@ -131,6 +140,12 @@ for subject_id in n2ac_analysis_df[SUBJECT_ID_COL].unique():
         # The DV is the mean accuracy (proportion correct) of the n-1 trials.
         jackknifed_acc = jackknife_sample_df[ACCURACY_INT_COL].mean()
         df.loc[trial_idx, 'jackknifed_acc_n2ac'] = jackknifed_acc
+
+        # --- NEW: Calculate Jackknifed Balanced Integration Score (BIS) ---
+        # Z-score the jackknifed RT and Accuracy against the pre-calculated grand means.
+        z_rt = (jackknifed_rt - grand_mean_rt_n2ac) / grand_std_rt_n2ac
+        z_acc = (jackknifed_acc - grand_mean_acc_n2ac) / grand_std_acc_n2ac
+        df.loc[trial_idx, 'jackknifed_bis_n2ac'] = z_acc - z_rt
 
         n2ac_wave, n2ac_times = get_jackknife_contra_ipsi_wave(
             sample_df=jackknife_sample_df, lateral_stim_loc=trial_row[TARGET_COL],
@@ -148,6 +163,13 @@ for subject_id in n2ac_analysis_df[SUBJECT_ID_COL].unique():
 
 # --- Pd Calculation Loop (Apply the same logic) ---
 print("\n--- Calculating Pd Latencies & Amplitudes ---")
+
+# These are the reference means and standard deviations for the entire Pd dataset.
+grand_mean_rt_pd = pd_analysis_df[REACTION_TIME_COL].mean()
+grand_std_rt_pd = pd_analysis_df[REACTION_TIME_COL].std(ddof=1)
+grand_mean_acc_pd = pd_analysis_df[ACCURACY_INT_COL].mean()
+grand_std_acc_pd = pd_analysis_df[ACCURACY_INT_COL].std(ddof=1)
+
 for subject_id in pd_analysis_df[SUBJECT_ID_COL].unique():
     print(f"Processing Pd for subject: {subject_id}...")
     subject_pd_df = pd_analysis_df[pd_analysis_df[SUBJECT_ID_COL] == subject_id]
@@ -162,6 +184,11 @@ for subject_id in pd_analysis_df[SUBJECT_ID_COL].unique():
         # --- Calculate Jackknifed Accuracy ---
         jackknifed_acc = jackknife_sample_df[ACCURACY_INT_COL].mean()
         df.loc[trial_idx, 'jackknifed_acc_pd'] = jackknifed_acc
+
+        # Z-score the jackknifed RT and Accuracy against the pre-calculated grand means.
+        z_rt = (jackknifed_rt - grand_mean_rt_pd) / grand_std_rt_pd
+        z_acc = (jackknifed_acc - grand_mean_acc_pd) / grand_std_acc_pd
+        df.loc[trial_idx, 'jackknifed_bis_pd'] = z_acc - z_rt
 
         pd_wave, pd_times = get_jackknife_contra_ipsi_wave(
             sample_df=jackknife_sample_df, lateral_stim_loc=trial_row[DISTRACTOR_COL],
@@ -301,7 +328,7 @@ plt.show(block=False)
 # --- LMM analysis with jackknifed variables ---
 
 # Choose definitive percentage and get column names
-definitive_percentage = 70
+definitive_percentage = 50
 n2ac_definitive_col = f'{ERP_N2AC_LATENCY_COL}_{definitive_percentage}'
 n2ac_definitive_amp_col = f'{ERP_N2AC_AMPLITUDE_COL}_{definitive_percentage}'
 n2ac_jk_rt_col = 'jackknifed_rt_n2ac'
@@ -327,8 +354,8 @@ if not n2ac_trials_df.empty:
         # Model how the brain-behavior link is modulated by experimental factors
         # Note: We don't include Accuracy here, as it belongs to the left-out trial.
         n2ac_rt_formula = (
-            f"{n2ac_jk_rt_col} ~ {n2ac_definitive_col} * C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}'))"
-            f" + {n2ac_definitive_col} * C({TARGET_COL})"
+            f"{n2ac_jk_rt_col} ~ {n2ac_definitive_col} + C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}'))"
+            f" + {n2ac_definitive_col} + C({TARGET_COL})"
             f" + {n2ac_definitive_amp_col} + {BLOCK_COL}")  # Amplitude and Block as covariates
 
         print(f"Formula: {n2ac_rt_formula}")
@@ -346,8 +373,8 @@ else:
 print("\n--- Fitting Model 2: Pd Latency -> Jackknifed RT (LMM) ---")
 if not pd_trials_df.empty:
     try:
-        pd_rt_formula = (f"{pd_jk_rt_col} ~ {pd_definitive_col} * C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}'))"
-                         f" + {pd_definitive_col} * C({DISTRACTOR_COL})"
+        pd_rt_formula = (f"{pd_jk_rt_col} ~ {pd_definitive_col} + C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}'))"
+                         f" + {pd_definitive_col} + C({DISTRACTOR_COL})"
                          f" + {pd_definitive_amp_col} + {BLOCK_COL}")
 
         print(f"Formula: {pd_rt_formula}")
@@ -376,8 +403,8 @@ if not n2ac_acc_trials_df.empty:
     try:
         # The formula is the same structure as the RT model, just with a new DV
         n2ac_acc_formula = (
-            f"{n2ac_jk_acc_col} ~ {n2ac_definitive_col} * C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}'))"
-            f" + {n2ac_definitive_col} * C({TARGET_COL})"
+            f"{n2ac_jk_acc_col} ~ {n2ac_definitive_col} + C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}'))"
+            f" + {n2ac_definitive_col} + C({TARGET_COL})"
             f" + {n2ac_definitive_amp_col} + {BLOCK_COL}"
         )
         print(f"Formula: {n2ac_acc_formula}")
@@ -402,8 +429,8 @@ if not pd_acc_trials_df.empty:
     try:
         # The formula is the same structure as the RT model, just with a new DV
         pd_acc_formula = (
-            f"{pd_jk_acc_col} ~ {pd_definitive_col} * C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}'))"
-            f" + {pd_definitive_col} * C({DISTRACTOR_COL})"
+            f"{pd_jk_acc_col} ~ {pd_definitive_col} + C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}'))"
+            f" + {pd_definitive_col} + C({DISTRACTOR_COL})"
             f" + {pd_definitive_amp_col} + {BLOCK_COL}"
         )
         print(f"Formula: {pd_acc_formula}")
@@ -416,3 +443,58 @@ if not pd_acc_trials_df.empty:
         print(f"Could not fit Pd Accuracy LMM. Error: {e}")
 else:
     print("Skipping Pd Accuracy model: No data available.")
+
+# --- Add new column names for BIS ---
+n2ac_jk_bis_col = 'jackknifed_bis_n2ac'
+pd_jk_bis_col = 'jackknifed_bis_pd'
+
+# --- Model 5: N2ac Latency -> Jackknifed BIS (LMM) ---
+print("\n--- Fitting Model 5: N2ac Latency -> Jackknifed BIS (LMM) ---")
+
+# Prepare data, making sure the new BIS column doesn't have NaNs
+n2ac_bis_model_cols = n2ac_model_cols + [n2ac_jk_bis_col]
+n2ac_bis_trials_df = df.dropna(subset=n2ac_bis_model_cols).copy()
+
+if not n2ac_bis_trials_df.empty:
+    try:
+        n2ac_bis_formula = (
+            f"{n2ac_jk_bis_col} ~ {n2ac_definitive_col} + C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}'))"
+            f" + {n2ac_definitive_col} + C({TARGET_COL})"
+            f" + {n2ac_definitive_amp_col} + {BLOCK_COL}"
+        )
+        print(f"Formula: {n2ac_bis_formula}")
+
+        n2ac_bis_model = smf.mixedlm(n2ac_bis_formula, n2ac_bis_trials_df,
+                                     groups=n2ac_bis_trials_df[SUBJECT_ID_COL])
+        n2ac_bis_fit = n2ac_bis_model.fit(reml=True)
+        print(n2ac_bis_fit.summary())
+    except Exception as e:
+        print(f"Could not fit N2ac BIS LMM. Error: {e}")
+else:
+    print("Skipping N2ac BIS model: No data available.")
+
+
+# --- Model 6: Pd Latency -> Jackknifed BIS (LMM) ---
+print("\n--- Fitting Model 6: Pd Latency -> Jackknifed BIS (LMM) ---")
+
+# Prepare data, making sure the new BIS column doesn't have NaNs
+pd_bis_model_cols = pd_model_cols + [pd_jk_bis_col]
+pd_bis_trials_df = df.dropna(subset=pd_bis_model_cols).copy()
+
+if not pd_bis_trials_df.empty:
+    try:
+        pd_bis_formula = (
+            f"{pd_jk_bis_col} ~ {pd_definitive_col} + C({PRIMING_COL}, Treatment('{PRIMING_REF_STR}'))"
+            f" + {pd_definitive_col} + C({DISTRACTOR_COL})"
+            f" + {pd_definitive_amp_col} + {BLOCK_COL}"
+        )
+        print(f"Formula: {pd_bis_formula}")
+
+        pd_bis_model = smf.mixedlm(pd_bis_formula, pd_bis_trials_df,
+                                   groups=pd_bis_trials_df[SUBJECT_ID_COL])
+        pd_bis_fit = pd_bis_model.fit(reml=True)
+        print(pd_bis_fit.summary())
+    except Exception as e:
+        print(f"Could not fit Pd BIS LMM. Error: {e}")
+else:
+    print("Skipping Pd BIS model: No data available.")
