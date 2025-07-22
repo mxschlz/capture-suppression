@@ -1,12 +1,10 @@
 import matplotlib.pyplot as plt
 import SPACEPRIME
-from utils import get_jackknife_contra_ipsi_wave, calculate_fractional_area_latency
 import pandas as pd
 import statsmodels.formula.api as smf
 import seaborn as sns
-import numpy as np
-from stats import remove_outliers, balanced_integration_score  # Assuming this is your custom outlier removal function
-from patsy.contrasts import Treatment # Import Treatment for specifying reference levels
+from stats import remove_outliers, calculate_bis  # Assuming this is your custom outlier removal function
+from scipy.stats import ttest_rel
 
 plt.ion()
 
@@ -80,25 +78,56 @@ print("Preprocessing and column mapping complete.")
 df[RT_SPLIT_COL] = df.groupby(SUBJECT_ID_COL)[REACTION_TIME_COL].transform(
     lambda x: pd.qcut(x, 2, labels=['fast', 'slow'], duplicates='drop'))
 
-df = balanced_integration_score(df=df, acc_col="select_target_int")
-
-data_plot = df.groupby([SUBJECT_ID_COL, PRIMING_COL])["bis"].mean().reset_index()
+priming_df = df.groupby([SUBJECT_ID_COL, PRIMING_COL])[["rt", "select_target_int"]].mean().reset_index()
+priming_df_bis = calculate_bis(priming_df, rt_col="rt", pc_col="select_target_int")
 
 # 3. Now, create the plot using the 'df' DataFrame, which has all the columns we need.
 print("Generating plot...")
 plt.figure(figsize=(8, 6)) # Create a new figure for the plot
-sns.barplot(data=data_plot, x="Priming", y="bis", order=["np", "no-p", "pp"])
+sns.barplot(data=priming_df_bis, x="Priming", y="bis", order=["np", "no-p", "pp"], errorbar=("se", 1))
 plt.title("Balanced Integration Score by Priming Condition")
 plt.ylabel("Balanced Integration Score (BIS)")
 plt.xlabel("Priming Condition")
 plt.tight_layout()
 plt.show()
 
-# You can still plot the original RT data as well
 plt.figure(figsize=(8, 6))
-sns.barplot(data=df, x="Priming", y="rt", order=["np", "no-p", "pp"])
+sns.barplot(data=priming_df_bis, x="Priming", y="rt", order=["np", "no-p", "pp"], errorbar=("se", 1))
 plt.title("Reaction Time by Priming Condition")
 plt.ylabel("Reaction Time (s)")
 plt.xlabel("Priming Condition")
 plt.tight_layout()
 plt.show()
+
+plt.figure(figsize=(8, 6))
+sns.barplot(data=priming_df_bis, x="Priming", y="select_target_int", order=["np", "no-p", "pp"], errorbar=("se", 1))
+plt.title("Reaction Time by Priming Condition")
+plt.ylabel("PC")
+plt.xlabel("Priming Condition")
+plt.tight_layout()
+plt.show()
+
+rt_split_df = df.groupby([SUBJECT_ID_COL, RT_SPLIT_COL])[["rt", "select_target_int"]].mean().reset_index()
+rt_split_df_bis = calculate_bis(rt_split_df, rt_col="rt", pc_col="select_target_int")
+
+plt.figure(figsize=(8, 6))
+sns.barplot(data=rt_split_df_bis, x="RT_split", y="bis", errorbar=("se", 1))
+plt.title("Reaction Time by Priming Condition")
+plt.ylabel("BIS")
+plt.xlabel("Priming Condition")
+plt.tight_layout()
+plt.show()
+
+# run ttest
+ttest_rel(priming_df_bis.query("Priming=='no-p'")["bis"], priming_df_bis.query("Priming=='pp'")["bis"])
+ttest_rel(priming_df_bis.query("Priming=='no-p'")["bis"], priming_df_bis.query("Priming=='np'")["bis"])
+
+# Now, run a Linear Mixed-Effects Model
+# This models 'bis' as a function of 'Priming',
+# while accounting for random variations between subjects.
+# The (1 | subject_id) part tells the model that trials are nested within subjects.
+model = smf.mixedlm("bis ~ Priming", data=priming_df_bis, groups=priming_df_bis[SUBJECT_ID_COL])
+result = model.fit()
+
+# Print the summary of the statistical model
+print(result.summary())
