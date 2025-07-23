@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D # Import for creating custom legend handles
 import SPACEPRIME
 import pandas as pd
 import seaborn as sns
@@ -142,6 +143,7 @@ for subject_id in merged_df[SUBJECT_ID_COL].unique():
 agg_df = pd.DataFrame(subject_agg_data)
 print("Aggregation complete. Resulting data shape:", agg_df.shape)
 
+
 # --- 3. Analyze and Plot ERP Metrics with Permutation Tests ---
 print("\n--- Step 3: Analyzing and Plotting ERP Metrics ---")
 
@@ -152,72 +154,84 @@ comparisons = [
     {'title': 'Pd by Accuracy', 'component': 'Pd', 'split_by': 'Accuracy', 'conds': ['correct', 'incorrect']},
 ]
 
-fig, axes = plt.subplots(2, 4, figsize=(22, 10), constrained_layout=True)
-fig.suptitle('ERP Metric Analysis by Behavioral Split (Paired Permutation Test)', fontsize=20, y=1.05)
+# REFACTORED: Create a 2x2 grid of plots with a more balanced size
+fig, axes = plt.subplots(2, 2, figsize=(18, 10), constrained_layout=True)
+fig.suptitle('ERP Metric Analysis by Behavioral Split (Paired Permutation Test)', fontsize=20, y=1.06)
+axes = axes.flatten()
 
-# Set titles for rows
-axes[0, 0].set_ylabel(f'{int(LATENCY_PERCENTAGE*100)}% Latency (s)', fontsize=14)
-axes[1, 0].set_ylabel('Amplitude at Latency (µV)', fontsize=14)
+# Define colors for clarity
+LATENCY_COLOR = 'C0'  # Blue
+AMPLITUDE_COLOR = 'C1' # Orange
 
 for i, comp_info in enumerate(comparisons):
-    ax_lat = axes[0, i]
-    ax_amp = axes[1, i]
-    ax_lat.set_title(comp_info['title'], fontsize=16)
+    ax = axes[i]
+    ax.set_title(comp_info['title'], fontsize=16)
 
     plot_df = agg_df[(agg_df['component'] == comp_info['component']) & (agg_df['split_by'] == comp_info['split_by'])].copy()
     cond1_name, cond2_name = comp_info['conds']
 
-    # --- Latency Analysis & Plot ---
+    legend_handles = []
+
+    # --- Latency Analysis & Plot (Left Y-axis) ---
     pivot_lat = plot_df.pivot(index='subject', columns='condition', values='latency').dropna()
     if len(pivot_lat) > 2:
-        sns.stripplot(data=plot_df, x='condition', y='latency', order=comp_info['conds'], ax=ax_lat, color='gray', alpha=0.5)
-        sns.pointplot(data=plot_df, x='condition', y='latency', order=comp_info['conds'], ax=ax_lat,
-                      join=True, errorbar=('ci', 95), scale=0.8, errwidth=1.5, capsize=0.1, color='black')
-        # 1. Calculate the differences for the paired test
-        diffs_lat = pivot_lat[cond1_name].values - pivot_lat[cond2_name].values
-        # 2. Reshape to (n_subjects, 1) for the MNE function
-        X_lat = diffs_lat[:, np.newaxis]
+        sns.pointplot(data=plot_df, x='condition', y='latency', order=comp_info['conds'], ax=ax,
+                      join=True, errorbar=('ci', 95), scale=0.8, errwidth=1.5, capsize=0.1, color=LATENCY_COLOR)
 
-        # Call MNE function correctly and access p-value by index [1]
+        diffs_lat = pivot_lat[cond1_name].values - pivot_lat[cond2_name].values
+        X_lat = diffs_lat[:, np.newaxis]
         _, p_val_lat, _ = permutation_t_test(X_lat, n_permutations=N_PERMUTATIONS, seed=SEED)
 
-        p_val_text = f"p = {p_val_lat[0]}"
-        ax_lat.text(0.5, 0.9, p_val_text, ha='center', transform=ax_lat.transAxes,
-                    fontsize=12, weight='bold' if p_val_lat < P_VAL_ALPHA else 'normal')
+        # Create the legend label for latency with p-value
+        p_text = f"p={p_val_lat[0]:.3f}"
+        if p_val_lat[0] < P_VAL_ALPHA:
+            p_text += "*" # Add significance marker
+        lat_label = f'Latency ({p_text})'
+        legend_handles.append(Line2D([0], [0], color=LATENCY_COLOR, lw=2, label=lat_label))
     else:
-        ax_lat.text(0.5, 0.5, "Not enough data", ha='center', va='center')
-    ax_lat.set_xlabel('')
-    ax_lat.set_ylabel('')
+        ax.text(0.5, 0.75, "No Latency Data", ha='center', va='center', color=LATENCY_COLOR)
 
-    # --- Amplitude Analysis & Plot ---
-    # For N2ac, invert amplitude so "larger" effect is a more positive value
+    ax.set_xlabel('Condition', fontsize=14)
+    ax.set_ylabel(f'{int(LATENCY_PERCENTAGE*100)}% Latency (s)', fontsize=14, color=LATENCY_COLOR)
+    ax.tick_params(axis='y', labelcolor=LATENCY_COLOR)
+    ax.grid(axis='x', linestyle=':', alpha=0.7)
+
+    # --- Amplitude Analysis & Plot (Right Y-axis) ---
+    ax_amp = ax.twinx()  # Create the second y-axis
+
+    # Invert N2ac amplitude for plotting and set the correct label
     if comp_info['component'] == 'N2ac':
         plot_df['amplitude'] *= -1
-        ax_amp.set_ylabel('Inverted Amplitude (µV)' if i == 0 else '')
+        amp_label = 'Inverted Amplitude (µV)'
     else:
-        ax_amp.set_ylabel('Amplitude (µV)' if i == 0 else '')
-
+        amp_label = 'Amplitude (µV)'
 
     pivot_amp = plot_df.pivot(index='subject', columns='condition', values='amplitude').dropna()
     if len(pivot_amp) > 2:
-        sns.stripplot(data=plot_df, x='condition', y='amplitude', order=comp_info['conds'], ax=ax_amp, color='gray', alpha=0.5)
         sns.pointplot(data=plot_df, x='condition', y='amplitude', order=comp_info['conds'], ax=ax_amp,
-                      join=True, errorbar=('ci', 95), scale=0.8, errwidth=1.5, capsize=0.1, color='black')
+                      join=True, errorbar=('ci', 95), scale=0.8, errwidth=1.5, capsize=0.1,
+                      color=AMPLITUDE_COLOR, linestyles='--') # Use a different linestyle
 
-        # FIX: Use MNE function consistently and reshape data correctly
         diffs_amp = pivot_amp[cond1_name].values - pivot_amp[cond2_name].values
         X_amp = diffs_amp[:, np.newaxis]
-
-        # FIX: Call MNE function correctly and access p-value by index [1]
         _, p_val_amp, _ = permutation_t_test(X_amp, n_permutations=N_PERMUTATIONS, seed=SEED)
 
-        p_val_text = f"p = {p_val_amp[0]}"
-        ax_amp.text(0.5, 0.9, p_val_text, ha='center', transform=ax_amp.transAxes,
-                    fontsize=12, weight='bold' if p_val_amp < P_VAL_ALPHA else 'normal')
+        # Create the legend label for amplitude with p-value
+        p_text = f"p={p_val_amp[0]:.3f}"
+        if p_val_amp[0] < P_VAL_ALPHA:
+            p_text += "*" # Add significance marker
+        amp_label_legend = f'Amplitude ({p_text})'
+        legend_handles.append(Line2D([0], [0], color=AMPLITUDE_COLOR, lw=2, linestyle='--', label=amp_label_legend))
     else:
-        ax_amp.text(0.5, 0.5, "Not enough data", ha='center', va='center')
-    ax_amp.set_xlabel('Condition', fontsize=12)
-    ax_amp.set_ylabel('')
+        ax.text(0.5, 0.25, "No Amplitude Data", ha='center', va='center', color=AMPLITUDE_COLOR)
+
+    ax_amp.set_ylabel(amp_label, fontsize=14, color=AMPLITUDE_COLOR)
+    ax_amp.tick_params(axis='y', labelcolor=AMPLITUDE_COLOR)
+    ax_amp.grid(False) # Turn off grid for the secondary axis to avoid clutter
+
+    # Add the combined legend to the plot
+    if legend_handles:
+        ax.legend(handles=legend_handles, loc='best')
 
 
 # --- 4. Plot Trial Count Balance ---
@@ -238,10 +252,17 @@ for comp_info in count_comparisons:
     ax = axes_counts[comp_info['ax_idx']]
     plot_df = agg_df[(agg_df['component'] == comp_info['component']) & (agg_df['split_by'] == comp_info['split_by'])]
 
-    sns.stripplot(data=plot_df, x='condition', y='total_trials', order=comp_info['conds'],
-                  jitter=0.1, alpha=0.4, color='gray', ax=ax)
+    # Use stripplot to show individual subject lines, which is better for within-subject designs
+    # This requires pivoting the data to get one row per subject
+    pivot_counts = plot_df.pivot(index='subject', columns='condition', values='total_trials')
+    if not pivot_counts.empty:
+        # Plot lines connecting paired points for each subject
+        for subject_id, row in pivot_counts.iterrows():
+            ax.plot(comp_info['conds'], row[comp_info['conds']], marker='o', color='gray', alpha=0.3, linestyle='-')
+
+    # Overlay the pointplot to show the mean and CI
     sns.pointplot(data=plot_df, x='condition', y='total_trials', order=comp_info['conds'],
-                  join=True, errorbar=('ci', 95), scale=0.7, errwidth=1.5,
+                  join=False, errorbar=('ci', 95), scale=1.2, errwidth=2,
                   capsize=0.1, ax=ax, color='black')
 
     ax.set_title(f"{comp_info['component']} by {comp_info['split_by']} Split", fontsize=14)
