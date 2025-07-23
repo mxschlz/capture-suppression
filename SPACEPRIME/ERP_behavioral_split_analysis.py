@@ -1,12 +1,11 @@
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D # Import for creating custom legend handles
-from matplotlib.patches import Rectangle # Import for creating custom rectangles
 import SPACEPRIME
 import pandas as pd
 import seaborn as sns
 import numpy as np
 from stats import remove_outliers # Assuming this is your custom outlier removal function
-from utils import get_contra_ipsi_diff_wave, calculate_fractional_area_latency
+from utils import calculate_fractional_area_latency
 from mne.stats import permutation_t_test
 from scipy.stats import sem
 
@@ -16,7 +15,7 @@ plt.ion()
 
 # 1. Data Loading & Preprocessing
 OUTLIER_RT_THRESHOLD = 2.0
-FILTER_PHASE = 2
+FILTER_PHASE = None
 
 # 2. Column Names
 SUBJECT_ID_COL = 'subject_id'
@@ -184,7 +183,10 @@ for subject_id in merged_df[SUBJECT_ID_COL].unique():
 
 agg_df = pd.DataFrame(subject_agg_data)
 print("Aggregation complete. Resulting data shape:", agg_df.shape)
-
+# save the stuff
+df_save = agg_df.groupby(["subject", "component"])[["latency", "amplitude"]].mean()
+output_path = f'{SPACEPRIME.get_data_path()}concatenated\\erp_latency_amplitude_subject_mean.csv'
+df_save.to_csv(output_path, index=True)
 
 # --- 3. Analyze and Plot ERP Metrics with Permutation Tests ---
 print("\n--- Step 3: Analyzing and Plotting ERP Metrics ---")
@@ -344,7 +346,6 @@ for i, comp_info in enumerate(comparisons):
         ga_wave = np.mean(np.stack(cond_df['wave'].values), axis=0)
         sem_wave = sem(np.stack(cond_df['wave'].values), axis=0)
 
-        # <<< FIX IS HERE >>>
         # Calculate latency and amplitude ON THE GRAND-AVERAGE WAVE for visualization
         is_target_comp = comp_info['component'] == 'N2ac'
         ga_latency = calculate_fractional_area_latency(
