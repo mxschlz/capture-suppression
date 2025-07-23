@@ -303,6 +303,45 @@ singleton_effect_df = singleton_perf_unstacked.reset_index()
 
 print("Singleton presence effect calculated.")
 
+# --- Load, Reshape, and Merge ERP Latency/Amplitude Data ---
+print("\nLoading and reshaping ERP latency/amplitude data...")
+erp_long_df = SPACEPRIME.load_concatenated_csv("erp_latency_amplitude_subject_mean.csv")
+
+# The goal is to transform the data from a "long" format (2 rows per subject)
+# to a "wide" format (1 row per subject with dedicated columns for each metric).
+
+# Based on the old code, the subject identifier might be 'subject'. Let's standardize it.
+if 'subject' in erp_long_df.columns and SUBJECT_ID_COL not in erp_long_df.columns:
+    erp_long_df.rename(columns={'subject': SUBJECT_ID_COL}, inplace=True)
+
+# Ensure the subject ID is a string for consistent merging
+erp_long_df[SUBJECT_ID_COL] = erp_long_df[SUBJECT_ID_COL].astype(str)
+
+# Use pivot_table to reshape the data.
+# This will make 'component' values into new columns.
+# I'm assuming your columns are 'subject_id', 'component', 'latency', and 'amplitude'.
+erp_wide_df = erp_long_df.pivot_table(
+    index=SUBJECT_ID_COL,
+    columns='component',
+    values=['latency', 'amplitude']
+)
+
+# The pivot creates a multi-level column index, e.g., ('latency', 'N2pc').
+# We'll flatten this into a single-level index, e.g., 'latency_N2pc' for clarity.
+erp_wide_df.columns = [f'{value}_{component}' for value, component in erp_wide_df.columns]
+
+# Reset the index to make 'subject_id' a column again, ready for merging.
+erp_wide_df.reset_index(inplace=True)
+
+# Merge the new wide-format ERP data with the main subject dataframe.
+# An 'inner' merge ensures we only analyze subjects present in both datasets.
+pd_subject_df = pd.merge(
+    pd_subject_df,
+    erp_wide_df,
+    on=SUBJECT_ID_COL,
+    how='inner'
+)
+
 # --- DIAGNOSTIC STEP: Check for matching subjects before merging ---
 # An empty correlation_df usually means the subject IDs do not match between the two data files.
 # The following lines will print the subjects found in each dataset to help you debug.
@@ -315,7 +354,6 @@ print(f"Found {len(pd_subjects)} subjects in EEG data: {sorted(list(pd_subjects)
 print(f"Found {len(flanker_subjects)} subjects in Flanker data: {sorted(list(flanker_subjects))}")
 print(f"Found {len(common_subjects)} common subjects for correlation: {sorted(list(common_subjects))}")
 
-
 # --- Multivariate Correlation Analysis ---
 print("\n--- Multivariate Correlation Analysis ---")
 # --- 1. Load and Merge All Data Sources ---
@@ -327,7 +365,7 @@ questionnaire_data[SUBJECT_ID_COL] = questionnaire_data[SUBJECT_ID_COL].astype(f
 # Merge all four data sources (EEG, Flanker, Singleton Effect, Questionnaires) using 'inner' joins
 print("Merging EEG, Flanker, Singleton Effect, and Questionnaire data...")
 correlation_df = pd.merge(
-    pd_subject_df[['subject_id', 'pd_pure_area']],
+    pd_subject_df[['subject_id', 'pd_pure_area', "latency_N2ac", "latency_Pd", "amplitude_N2ac", "amplitude_Pd"]],
     flanker_subject_df[['subject_id', 'flanker_effect']],
     on=SUBJECT_ID_COL, how='inner'
 )
@@ -350,7 +388,7 @@ if 10 in correlation_df.index:
 
 # --- 2. Perform Correlation Analysis ---
 cols_to_correlate = [
-    'pd_pure_area', 'flanker_effect', 'singleton_rt_effect', 'singleton_acc_effect',
+    'pd_pure_area', 'latency_N2ac', 'latency_Pd', 'amplitude_N2ac', 'amplitude_Pd', 'flanker_effect', 'singleton_rt_effect', 'singleton_acc_effect',
     'wnss_noise_resistance', 'ssq_speech_mean', "ssq_spatial_mean",
     "ssq_quality_mean"
 ]
@@ -373,7 +411,7 @@ pair_plot = sns.pairplot(
 
 # Hide the upper triangle to remove redundant information, making the plot cleaner
 for i, j in zip(*np.triu_indices_from(pair_plot.axes, k=1)):
-    pair_plot.axes[i, j].set_visible(True)
+    pair_plot.axes[i, j].set_visible(False)
 
 pair_plot.fig.suptitle('Pairwise Relationships Between Key Variables', y=1.02, fontweight='bold')
 plt.tight_layout()
