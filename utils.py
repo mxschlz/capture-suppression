@@ -383,3 +383,62 @@ def get_contra_ipsi_diff_wave(trials_df, electrode_pairs, time_window, all_times
 
     diff_wave = mean_contra_wave - mean_ipsi_wave
     return diff_wave, window_times
+
+
+def get_single_trial_contra_ipsi_wave(trial_row, electrode_pairs, time_window, all_times, lateral_stim_loc):
+    """
+    Calculates the contralateral-ipsilateral difference wave for a single trial.
+
+    Args:
+        trial_row (pd.Series): A single row from the merged dataframe, containing ERP data
+                               across time for all channels as a MultiIndex.
+        electrode_pairs (list): List of tuples, where each tuple is a (left_hemi_el, right_hemi_el) pair.
+        time_window (tuple): The (start, end) time in seconds for the analysis.
+        all_times (np.ndarray): Array of all time points in the epoch.
+        lateral_stim_loc (str): Location of the lateralized stimulus ('left' or 'right').
+
+    Returns:
+        tuple: A tuple containing:
+            - np.ndarray: The final averaged contra-ipsi difference wave for the single trial.
+            - np.ndarray: The time points corresponding to the wave.
+            Returns (None, None) if data is invalid.
+    """
+    # Create a boolean mask for the desired time window
+    time_mask = (all_times >= time_window[0]) & (all_times <= time_window[1])
+    window_times = all_times[time_mask]
+
+    if len(window_times) == 0:
+        return None, None
+
+    diff_waves_for_pairs = []
+    for left_el, right_el in electrode_pairs:
+        try:
+            # For a single trial_row (a Series), the index is a MultiIndex of (channel, time).
+            # We select the channel, which returns a new Series indexed by time.
+            # Then we apply the time mask to get the waveform for the window.
+            left_el_wave = trial_row[left_el][time_mask].values
+            right_el_wave = trial_row[right_el][time_mask].values
+
+            # Calculate contralateral - ipsilateral difference
+            if lateral_stim_loc == 'left':
+                # Contralateral is Right Hemisphere, Ipsilateral is Left Hemisphere
+                diff_wave = right_el_wave - left_el_wave
+            else:  # lateral_stim_loc == 'right'
+                # Contralateral is Left Hemisphere, Ipsilateral is Right Hemisphere
+                diff_wave = left_el_wave - right_el_wave
+
+            diff_waves_for_pairs.append(diff_wave)
+
+        except KeyError as e:
+            # This can happen if a channel was marked as bad for a specific subject
+            # print(f"Warning: Could not find channel {e} for a trial. Skipping this electrode pair for the trial.")
+            continue
+
+    if not diff_waves_for_pairs:
+        # This happens if all electrode pairs failed (e.g., all channels were bad)
+        return None, None
+
+    # Average the difference waves across all specified electrode pairs for this single trial
+    mean_diff_wave = np.mean(diff_waves_for_pairs, axis=0)
+
+    return mean_diff_wave, window_times
