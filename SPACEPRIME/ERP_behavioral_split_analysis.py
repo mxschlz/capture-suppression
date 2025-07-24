@@ -331,7 +331,7 @@ for i, comp_info in enumerate(comparisons):
     # Create a static legend entry for the crosshair marker
     legend_handles = [
         Line2D([0], [0], marker='o', color='w', markeredgecolor='k',
-               label='GA Wave Latency/Amplitude', markersize=8, linestyle='None')
+               label='Metric on GA Wave', markersize=8, linestyle='None') # Changed label for clarity
     ]
 
     for j, cond_name in enumerate(comp_info['conds']):
@@ -347,35 +347,36 @@ for i, comp_info in enumerate(comparisons):
         sem_wave = sem(np.stack(cond_df['wave'].values), axis=0)
 
         # Calculate latency and amplitude ON THE GRAND-AVERAGE WAVE for visualization
+        # Using more explicit variable names to avoid confusion with the mean of subject-level metrics
         is_target_comp = comp_info['component'] == 'N2ac'
-        ga_latency = calculate_fractional_area_latency(
+        latency_on_ga = calculate_fractional_area_latency(
             ga_wave, times_for_plot,
             percentage=LATENCY_PERCENTAGE,
             is_target=is_target_comp,
             analysis_window_times=LATENCY_ANALYSIS_WINDOW
         )
-        ga_amplitude = np.interp(ga_latency, times_for_plot, ga_wave) if not np.isnan(ga_latency) else np.nan
+        amplitude_on_ga = np.interp(latency_on_ga, times_for_plot, ga_wave) if not np.isnan(latency_on_ga) else np.nan
 
         # Invert N2ac wave AND its amplitude metric for plotting consistency
-        inversion_factor = -1 if is_target_comp else 1
-        ga_wave *= inversion_factor
-        sem_wave *= inversion_factor
-        ga_amplitude *= inversion_factor
+        #inversion_factor = -1 if is_target_comp else 1
+        #ga_wave *= inversion_factor
+        #sem_wave *= inversion_factor
+        #amplitude_on_ga *= inversion_factor
 
         # Plot the difference wave
         ax.plot(times_for_plot, ga_wave, color=color, lw=2.5, label=f'{cond_name} (N={n_subjects})')
         ax.fill_between(times_for_plot, ga_wave - sem_wave, ga_wave + sem_wave, color=color, alpha=0.2)
 
         # Plot crosshair lines
-        if not np.isnan(ga_latency) and not np.isnan(ga_amplitude):
+        if not np.isnan(latency_on_ga) and not np.isnan(amplitude_on_ga):
             # Vertical line from x-axis to the point
-            ax.plot([ga_latency, ga_latency], [0, ga_amplitude],
+            ax.plot([latency_on_ga, latency_on_ga], [0, amplitude_on_ga],
                     color=color, linestyle=':', linewidth=1.5, zorder=10)
             # Horizontal line from y-axis to the point
-            ax.plot([ax.get_xlim()[0], ga_latency], [ga_amplitude, ga_amplitude],
+            ax.plot([ax.get_xlim()[0], latency_on_ga], [amplitude_on_ga, amplitude_on_ga],
                     color=color, linestyle=':', linewidth=1.5, zorder=10)
             # Plot the central point itself
-            ax.plot(ga_latency, ga_amplitude, 'o',
+            ax.plot(latency_on_ga, amplitude_on_ga, 'o',
                     markerfacecolor=color, markeredgecolor='k', markersize=8, zorder=11)
 
     # Aesthetics
@@ -393,7 +394,6 @@ for i, comp_info in enumerate(comparisons):
     ax.set_xlabel("Time (s)", fontsize=12)
     ax.set_ylabel("Amplitude (µV)", fontsize=12)
     ax.grid(True, linestyle=':', alpha=0.6)
-
 
 # --- 6. Plot Trial Count Balance ---
 print("\n--- Step 5: Visualizing Trial Count Balance ---")
