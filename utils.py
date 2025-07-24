@@ -4,6 +4,9 @@ import glob
 from SPACEPRIME import get_data_path
 from SPACEPRIME.subjects import subject_ids
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+import pandas as pd
+import random
 
 
 def _get_subject_lateralized_data(epochs, condition_keyword, ch_left="C3", ch_right="C4"):
@@ -442,3 +445,357 @@ def get_single_trial_contra_ipsi_wave(trial_row, electrode_pairs, time_window, a
     mean_diff_wave = np.mean(diff_waves_for_pairs, axis=0)
 
     return mean_diff_wave, window_times
+
+
+# Define some functions
+def degrees_va_to_pixels(degrees, screen_pixels, screen_size_cm, viewing_distance_cm):
+    """
+    Converts degrees visual angle to pixels.
+
+    Args:
+        degrees: The visual angle in degrees.
+        screen_pixels: The number of pixels on the screen (horizontal or vertical).
+        screen_size_cm: The physical size of the screen in centimeters (width or height).
+        viewing_distance_cm: The viewing distance in centimeters.
+
+    Returns:
+        The number of pixels corresponding to the given visual angle.
+    """
+
+    pixels = degrees * (screen_pixels / screen_size_cm) * (viewing_distance_cm * np.tan(np.radians(1)))
+    return pixels
+
+
+def calculate_trial_path_length(trial_group):
+    """
+    Calculates the total Euclidean path length for a single trial's trajectory.
+    Assumes trial_group is a DataFrame with 'x_pixels' and 'y_pixels' columns
+    sorted chronologically.
+    """
+    if len(trial_group) < 2:
+        return 0.0  # Path length is 0 if less than 2 points
+
+    # Get x and y coordinates for the current trial
+    x_coords = trial_group['x_pixels'].to_numpy()
+    y_coords = trial_group['y_pixels'].to_numpy()
+
+    # Calculate the differences between consecutive points (dx, dy)
+    dx = np.diff(x_coords)
+    dy = np.diff(y_coords)
+
+    # Calculate the Euclidean distance for each segment: sqrt(dx^2 + dy^2)
+    segment_lengths = np.sqrt(dx**2 + dy**2)
+
+    # Total path length is the sum of segment lengths
+    total_path_length = np.sum(segment_lengths)
+    return total_path_length
+
+
+def angle_between_vectors(v1, v2):
+    """Calculates the absolute angle in degrees between two 2D vectors."""
+    # Ensure vectors are numpy arrays
+    v1 = np.array(v1)
+    v2 = np.array(v2)
+
+    # Handle zero vectors to avoid division by zero
+    if np.linalg.norm(v1) == 0 or np.linalg.norm(v2) == 0:
+        return 180.0  # Max angle if one vector is zero
+
+    unit_v1 = v1 / np.linalg.norm(v1)
+    unit_v2 = v2 / np.linalg.norm(v2)
+    dot_product = np.dot(unit_v1, unit_v2)
+
+    # Clip the value to handle potential floating point inaccuracies
+    dot_product = np.clip(dot_product, -1.0, 1.0)
+
+    angle_rad = np.arccos(dot_product)
+    return np.degrees(angle_rad)
+
+
+def classify_initial_movement(row, locations_map, start_vec):
+    """
+    Classifies the initial movement direction for a single trial (row).
+    Categories are 'target', 'distractor', 'neutral', and 'other'.
+    """
+    # Define the initial movement vector
+    initial_point = np.array([row['initial_x_dva'], row['initial_y_dva']])
+    movement_vector = initial_point - start_vec
+
+    try:
+        roi_locations = {
+            'target': row['TargetDigit'],
+            'distractor': row['SingletonDigit'],
+            'neutral': row['Non-Singleton2Digit']
+        }
+    except KeyError:
+        print("Warning: Columns for ROI locations (e.g., 'TargetLoc') not found. Skipping classification.")
+        return None
+
+    # --- NEW: Identify "other" locations ---
+    # Get all possible response locations, excluding the center (5)
+    all_locations = set(loc for loc in locations_map if loc != 5)
+    # Get the locations used by the main ROIs in this trial
+    used_locations = {int(loc) for loc in roi_locations.values() if pd.notna(loc) and loc != 5}
+    # "other" locations are the ones that are not used
+    other_locations = all_locations - used_locations
+
+    angles = {}
+    # Calculate angles for the primary ROIs
+    for roi_name, roi_digit in roi_locations.items():
+        if pd.isna(roi_digit):
+            continue  # Skip if the location is not defined
+
+        roi_coord = np.array(locations_map.get(int(roi_digit)))
+        roi_vector = roi_coord - start_vec
+        angles[roi_name] = angle_between_vectors(movement_vector, roi_vector)
+
+    # --- NEW: Calculate the angle for the "other" category ---
+    # This is the *smallest* angle to any of the available "other" locations
+    if other_locations:
+        other_angles = []
+        for other_digit in other_locations:
+            other_coord = np.array(locations_map.get(other_digit))
+            other_vector = other_coord - start_vec
+            other_angles.append(angle_between_vectors(movement_vector, other_vector))
+
+        if other_angles:
+            angles['other'] = min(other_angles)
+
+    # Find the ROI with the overall minimum angle
+    if not angles:
+        return None
+
+    closest_roi = min(angles, key=angles.get)
+    return closest_roi
+
+
+def plot_trial_vectors(trial_row, locations_map):
+    """
+    Generates a detailed plot visualizing the initial movement vector, ROI vectors,
+    and classification for a single trial, including "other" locations.
+
+    Args:
+        trial_row (pd.Series): A single row from the analysis_df DataFrame.
+        locations_map (dict): The dictionary mapping numpad digits to their
+                              (x, y) coordinates in degrees of visual angle.
+    """
+    # --- 1. Extract Data and Define Vectors ---
+    start_point_vec = np.array([0, 0])
+    movement_vector = np.array([trial_row['initial_x_dva'], trial_row['initial_y_dva']])
+
+    # Get primary ROI locations for this specific trial
+    roi_info = {
+        'Target': trial_row.get('TargetDigit'),
+        'Distractor': trial_row.get('SingletonDigit'),
+        'Neutral': trial_row.get('Non-Singleton2Digit')
+    }
+
+    roi_vectors = {}
+    for name, digit in roi_info.items():
+        if pd.notna(digit):
+            roi_vectors[name] = np.array(locations_map.get(int(digit))) - start_point_vec
+
+    # --- NEW: Identify and process "other" locations ---
+    all_locations = set(locations_map.keys()) - {5}  # Exclude center
+    used_locations = {int(digit) for digit in roi_info.values() if pd.notna(digit)}
+    other_locations = all_locations - used_locations
+
+    other_vectors = {digit: np.array(locations_map.get(digit)) - start_point_vec for digit in other_locations}
+
+    # --- 2. Calculate Angles ---
+    angles = {name: angle_between_vectors(movement_vector, vec) for name, vec in roi_vectors.items()}
+    other_angles = {digit: angle_between_vectors(movement_vector, vec) for digit, vec in other_vectors.items()}
+
+    # --- 3. Create Plot ---
+    fig, ax = plt.subplots(figsize=(9, 9))
+
+    # Plot the numpad background
+    for digit, (x, y) in locations_map.items():
+        ax.plot(x, y, 'o', color='lightgray', markersize=30, zorder=1)
+        ax.text(x, y, str(digit), color='black', ha='center', va='center', fontweight='bold', fontsize=12)
+
+    # Plot the actual initial movement vector
+    ax.arrow(0, 0, movement_vector[0], movement_vector[1], head_width=0.05, head_length=0.1,
+             fc='blue', ec='blue', length_includes_head=True, zorder=10, lw=2)
+    ax.text(movement_vector[0] * 1.3, movement_vector[1] * 1.3, 'Initial\nMovement',
+             color='blue', ha='center', va='center', fontweight='bold')
+
+    # Plot the ideal primary ROI vectors
+    colors = {'Target': 'green', 'Distractor': 'red', 'Neutral': 'dimgray'}
+    for name, vec in roi_vectors.items():
+        ax.arrow(0, 0, vec[0], vec[1], head_width=0.05, head_length=0.1,
+                 fc=colors[name], ec=colors[name], linestyle='--', length_includes_head=True, zorder=5, lw=1.5)
+        angle_text = f'{name}\nAngle: {angles.get(name, 0):.1f}°'
+        ax.text(vec[0] * 1.3, vec[1] * 1.3, angle_text, color=colors[name], ha='center', va='center',
+                bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'))
+
+    # --- NEW: Plot the "other" ROI vectors ---
+    min_other_angle = min(other_angles.values()) if other_angles else float('inf')
+    for digit, vec in other_vectors.items():
+        angle = other_angles[digit]
+        # Highlight the closest "other" vector if the trial was classified as such
+        is_closest_other = (trial_row['initial_movement_direction'] == 'other' and np.isclose(angle, min_other_angle))
+
+        color = 'purple' if is_closest_other else '#AAAAAA'
+        linestyle = '--'
+        zorder = 6 if is_closest_other else 4
+        linewidth = 2.0 if is_closest_other else 1.0
+
+        ax.arrow(0, 0, vec[0], vec[1], head_width=0.05, head_length=0.1,
+                 fc=color, ec=color, linestyle=linestyle, length_includes_head=True, zorder=zorder, lw=linewidth)
+
+        angle_text = f'Angle: {angle:.1f}°'
+        # Only show text for the winning "other" to avoid clutter
+        if is_closest_other:
+            ax.text(vec[0] * 1.3, vec[1] * 1.3, angle_text, color=color, ha='center', va='center',
+                    bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'))
+
+    # --- 4. Final Formatting ---
+    ax.set_xlim(-1.5, 1.5)
+    ax.set_ylim(-1.5, 1.5)
+    ax.grid(True, linestyle=':')
+    ax.axhline(0, color='black', linewidth=0.5)
+    ax.axvline(0, color='black', linewidth=0.5)
+    ax.set_aspect('equal', adjustable='box')
+    ax.set_title(f"Trial Classification Breakdown (sub-{int(trial_row['subject_id'])})", fontsize=16)
+    ax.set_xlabel('X coordinate (degrees visual angle)')
+    ax.set_ylabel('Y coordinate (degrees visual angle)')
+
+    # Add a conclusion text at the bottom
+    conclusion = f"Conclusion: Movement classified as '{trial_row['initial_movement_direction']}'"
+    fig.text(0.5, 0.02, conclusion, ha='center', fontsize=12,
+             bbox=dict(facecolor='lightyellow', alpha=0.8))
+
+    plt.show()
+
+
+def visualize_full_trajectory(trial_row, raw_df, movement_threshold, target_hz=60):
+    """
+    Plots a resampled and re-centered trajectory for a single trial,
+    highlighting the start of movement and the time of response.
+
+    Args:
+        trial_row (pd.Series): A single row from the analysis_df, containing
+                               subject_id, block, trial_nr, and rt.
+        raw_df (pd.DataFrame): The raw mouse-tracking DataFrame ('df' in your script).
+        movement_threshold (float): The movement threshold in dva.
+        target_hz (int): The target sampling rate for resampling.
+    """
+    # --- 1. Get Trial Info and Data ---
+    sub = trial_row['subject_id']
+    block = trial_row['block']
+    trial = trial_row['trial_nr']
+    rt = trial_row['rt']  # Reaction time in seconds
+
+    # Isolate the raw trajectory data for this specific trial
+    trial_trajectory_df = raw_df[
+        (raw_df['subject_id'].astype(int) == int(sub)) &
+        (raw_df['block'].astype(int) == int(block)) &
+        (raw_df['trial_nr'].astype(int) == int(trial))
+    ].copy()
+
+    if trial_trajectory_df.empty:
+        print(f"Warning: No raw trajectory data found for sub-{sub}, block-{block}, trial-{trial}.")
+        return
+
+    # --- 2. Resample Trajectory to a constant sampling rate ---
+    resampled_df = resample_trial_trajectory(trial_trajectory_df, target_hz=target_hz)
+
+    # --- 3. Re-center for Visualization ---
+    start_x, start_y = resampled_df[['x', 'y']].iloc[0]
+    resampled_df['x_recentered'] = resampled_df['x'] - start_x
+    resampled_df['y_recentered'] = resampled_df['y'] - start_y
+
+    # --- 4. Identify Key Points in Time ---
+    # Find the first point that crossed the movement threshold
+    moved_points = resampled_df[
+        (resampled_df['x_recentered'].abs() > movement_threshold) |
+        (resampled_df['y_recentered'].abs() > movement_threshold)
+    ]
+    first_move_point = moved_points.iloc[0] if not moved_points.empty else None
+
+    # Find the point corresponding to the response time (rt)
+    # We find the index in the resampled data where the time is closest to the rt.
+    response_time_point_idx = (resampled_df['time'] - rt).abs().idxmin()
+    response_point = resampled_df.loc[response_time_point_idx]
+
+    # --- 5. Create the Plot ---
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    # Plot the full re-centered trajectory
+    ax.plot(resampled_df['x_recentered'], resampled_df['y_recentered'], '.-', color='lightblue', label='Full Trajectory', zorder=1, markersize=3)
+
+    # Plot the starting point
+    ax.plot(0, 0, 'o', color='black', markersize=10, label='Start Point', zorder=3)
+
+    # Plot the first point detected as movement
+    if first_move_point is not None:
+        ax.plot(first_move_point['x_recentered'], first_move_point['y_recentered'], '*', color='red', markersize=15, label='First Movement Detected', zorder=4)
+
+    # Plot the response time point
+    ax.plot(response_point['x_recentered'], response_point['y_recentered'], 'X', color='green', markersize=12, mew=2.5, label=f'Response Time ({rt:.2f}s)', zorder=5)
+
+    # Draw the threshold area
+    threshold_square = patches.Rectangle(
+        (-movement_threshold, -movement_threshold),
+        2 * movement_threshold, 2 * movement_threshold,
+        linewidth=1.5, edgecolor='r', facecolor='red', alpha=0.1,
+        linestyle='--', label='Movement Threshold Area'
+    )
+    ax.add_patch(threshold_square)
+
+    # --- 6. Formatting ---
+    ax.set_aspect('equal', adjustable='box')
+    ax.grid(True, linestyle=':')
+    ax.axhline(0, color='gray', lw=0.5)
+    ax.axvline(0, color='gray', lw=0.5)
+    ax.set_title(f'Full Trajectory for sub-{int(sub)}, block-{int(block)}, trial-{int(trial)}')
+    ax.set_xlabel('X coordinate (dva, re-centered)')
+    ax.set_ylabel('Y coordinate (dva, re-centered)')
+
+    lim = 1.5
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
+    ax.legend()
+    plt.show()
+
+def resample_trial_trajectory(trial_df, target_hz=60):
+    """
+    Resamples a single trial's trajectory to a constant sampling rate using linear interpolation.
+
+    Args:
+        trial_df (pd.DataFrame): DataFrame for a single trial, containing 'time', 'x', and 'y'.
+        target_hz (int): The target sampling rate in Hz (e.g., 100 Hz).
+
+    Returns:
+        pd.DataFrame: A new DataFrame with the resampled trajectory.
+    """
+    # Ensure data is sorted by time, which is crucial for interpolation
+    trial_df = trial_df.sort_values('time').reset_index(drop=True)
+
+    original_time = trial_df['time'].values
+    original_x = trial_df['x'].values
+    original_y = trial_df['y'].values
+
+    # If there are fewer than two data points, we cannot interpolate
+    if len(original_time) < 2:
+        return trial_df
+
+    # Create the new, evenly spaced time vector for interpolation
+    start_time = original_time[0]
+    end_time = original_time[-1]
+    step = 1.0 / target_hz
+    new_time = np.arange(start_time, end_time, step)
+
+    # Interpolate x and y coordinates onto the new time vector
+    new_x = np.interp(new_time, original_time, original_x)
+    new_y = np.interp(new_time, original_time, original_y)
+
+    # Create the new resampled DataFrame
+    resampled_df = pd.DataFrame({
+        'time': new_time,
+        'x': new_x,
+        'y': new_y
+    })
+
+    return resampled_df
