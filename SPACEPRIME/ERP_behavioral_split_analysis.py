@@ -5,7 +5,7 @@ import pandas as pd
 import seaborn as sns
 import numpy as np
 from stats import remove_outliers # Assuming this is your custom outlier removal function
-from utils import calculate_fractional_area_latency
+from utils import calculate_fractional_area_latency, get_all_waves
 from mne.stats import permutation_t_test
 from scipy.stats import sem
 
@@ -40,41 +40,6 @@ LATENCY_PERCENTAGE = 0.5
 N_PERMUTATIONS = 10000
 P_VAL_ALPHA = 0.05
 SEED = 42
-
-# --- Helper Function for Wave Extraction ---
-def get_all_waves(trials_df, electrode_pairs, time_window, all_times, lateral_stim_col):
-    """
-    Calculates the grand-average contralateral, ipsilateral, and difference waves
-    from a given set of trials for a single subject/condition.
-    """
-    if trials_df.empty:
-        return None, None, None, None
-
-    time_mask = (all_times >= time_window[0]) & (all_times <= time_window[1])
-    window_times = all_times[time_mask]
-
-    all_contra_activity = []
-    all_ipsi_activity = []
-
-    left_stim_trials = trials_df[trials_df[lateral_stim_col] == 'left']
-    right_stim_trials = trials_df[trials_df[lateral_stim_col] == 'right']
-
-    for left_el, right_el in electrode_pairs:
-        if not left_stim_trials.empty:
-            all_contra_activity.append(left_stim_trials[right_el].loc[:, time_mask].values)
-            all_ipsi_activity.append(left_stim_trials[left_el].loc[:, time_mask].values)
-        if not right_stim_trials.empty:
-            all_contra_activity.append(right_stim_trials[left_el].loc[:, time_mask].values)
-            all_ipsi_activity.append(right_stim_trials[right_el].loc[:, time_mask].values)
-
-    if not all_contra_activity:
-        return None, None, None, None
-
-    mean_contra_wave = np.mean(np.concatenate(all_contra_activity, axis=0), axis=0)
-    mean_ipsi_wave = np.mean(np.concatenate(all_ipsi_activity, axis=0), axis=0)
-    diff_wave = mean_contra_wave - mean_ipsi_wave
-
-    return diff_wave, mean_contra_wave, mean_ipsi_wave, window_times
 
 # --- Main Script ---
 
