@@ -515,7 +515,7 @@ def angle_between_vectors(v1, v2):
 def classify_initial_movement(row, locations_map, start_vec):
     """
     Classifies the initial movement direction for a single trial (row).
-    Categories are 'target', 'distractor', 'neutral', and 'other'.
+    Categories are 'target', 'distractor', 'control', and 'other'.
     """
     # Define the initial movement vector
     initial_point = np.array([row['initial_x_dva'], row['initial_y_dva']])
@@ -525,7 +525,7 @@ def classify_initial_movement(row, locations_map, start_vec):
         roi_locations = {
             'target': row['TargetDigit'],
             'distractor': row['SingletonDigit'],
-            'neutral': row['Non-Singleton2Digit']
+            'control': row['Non-Singleton2Digit']
         }
     except KeyError:
         print("Warning: Columns for ROI locations (e.g., 'TargetLoc') not found. Skipping classification.")
@@ -587,7 +587,7 @@ def plot_trial_vectors(trial_row, locations_map):
     roi_info = {
         'Target': trial_row.get('TargetDigit'),
         'Distractor': trial_row.get('SingletonDigit'),
-        'Neutral': trial_row.get('Non-Singleton2Digit')
+        'Control': trial_row.get('Non-Singleton2Digit')
     }
 
     roi_vectors = {}
@@ -621,7 +621,7 @@ def plot_trial_vectors(trial_row, locations_map):
              color='blue', ha='center', va='center', fontweight='bold')
 
     # Plot the ideal primary ROI vectors
-    colors = {'Target': 'green', 'Distractor': 'red', 'Neutral': 'dimgray'}
+    colors = {'Target': 'green', 'Distractor': 'red', 'Control': 'dimgray'}
     for name, vec in roi_vectors.items():
         ax.arrow(0, 0, vec[0], vec[1], head_width=0.05, head_length=0.1,
                  fc=colors[name], ec=colors[name], linestyle='--', length_includes_head=True, zorder=5, lw=1.5)
@@ -671,14 +671,14 @@ def plot_trial_vectors(trial_row, locations_map):
 
 def visualize_full_trajectory(trial_row, raw_df, movement_threshold, target_hz=60):
     """
-    Plots a resampled and re-centered trajectory for a single trial,
+    Plots a resampled trajectory in absolute coordinates for a single trial,
     highlighting the start of movement and the time of response.
 
     Args:
         trial_row (pd.Series): A single row from the analysis_df, containing
                                subject_id, block, trial_nr, and rt.
         raw_df (pd.DataFrame): The raw mouse-tracking DataFrame ('df' in your script).
-        movement_threshold (float): The movement threshold in dva.
+        movement_threshold (float): The movement threshold in dva, measured from the center.
         target_hz (int): The target sampling rate for resampling.
     """
     # --- 1. Get Trial Info and Data ---
@@ -698,44 +698,46 @@ def visualize_full_trajectory(trial_row, raw_df, movement_threshold, target_hz=6
         print(f"Warning: No raw trajectory data found for sub-{sub}, block-{block}, trial-{trial}.")
         return
 
-    # --- 2. Resample Trajectory to a constant sampling rate ---
+    # --- 2. Resample Trajectory ---
     resampled_df = resample_trial_trajectory(trial_trajectory_df, target_hz=target_hz)
 
-    # --- 3. Re-center for Visualization ---
-    start_x, start_y = resampled_df[['x', 'y']].iloc[0]
-    resampled_df['x_recentered'] = resampled_df['x'] - start_x
-    resampled_df['y_recentered'] = resampled_df['y'] - start_y
+    # --- 3. Identify Key Points in Absolute Coordinates ---
+    start_point = resampled_df.iloc[0]
+    start_x, start_y = start_point['x'], start_point['y']
 
-    # --- 4. Identify Key Points in Time ---
+    # To correctly identify the first movement, calculate displacement from the actual start point.
+    # This is robust even if the start point deviates slightly from (0, 0).
+    displacement_x = resampled_df['x'] - start_x
+    displacement_y = resampled_df['y'] - start_y
+
     # Find the first point that crossed the movement threshold
     moved_points = resampled_df[
-        (resampled_df['x_recentered'].abs() > movement_threshold) |
-        (resampled_df['y_recentered'].abs() > movement_threshold)
+        (displacement_x.abs() > movement_threshold) |
+        (displacement_y.abs() > movement_threshold)
     ]
     first_move_point = moved_points.iloc[0] if not moved_points.empty else None
 
     # Find the point corresponding to the response time (rt)
-    # We find the index in the resampled data where the time is closest to the rt.
     response_time_point_idx = (resampled_df['time'] - rt).abs().idxmin()
     response_point = resampled_df.loc[response_time_point_idx]
 
-    # --- 5. Create the Plot ---
+    # --- 4. Create the Plot ---
     fig, ax = plt.subplots(figsize=(8, 8))
 
-    # Plot the full re-centered trajectory
-    ax.plot(resampled_df['x_recentered'], resampled_df['y_recentered'], '.-', color='lightblue', label='Full Trajectory', zorder=1, markersize=3)
+    # Plot the full absolute trajectory
+    ax.plot(resampled_df['x'], resampled_df['y'], '.-', color='lightblue', label='Full Trajectory', zorder=1, markersize=3)
 
-    # Plot the starting point
-    ax.plot(0, 0, 'o', color='black', markersize=10, label='Start Point', zorder=3)
+    # Plot the actual starting point
+    ax.plot(start_point['x'], start_point['y'], 'o', color='black', markersize=10, label=f"Actual Start ({start_point['x']:.2f}, {start_point['y']:.2f})", zorder=3)
 
     # Plot the first point detected as movement
     if first_move_point is not None:
-        ax.plot(first_move_point['x_recentered'], first_move_point['y_recentered'], '*', color='red', markersize=15, label='First Movement Detected', zorder=4)
+        ax.plot(first_move_point['x'], first_move_point['y'], '+', color='red', markersize=15, label='First Movement Detected', zorder=4)
 
     # Plot the response time point
-    ax.plot(response_point['x_recentered'], response_point['y_recentered'], 'X', color='green', markersize=12, mew=2.5, label=f'Response Time ({rt:.2f}s)', zorder=5)
+    ax.plot(response_point['x'], response_point['y'], 'X', color='green', markersize=12, mew=2.5, label=f'Response Time ({rt:.2f}s)', zorder=5)
 
-    # Draw the threshold area
+    # Draw the threshold area around the intended start (0,0)
     threshold_square = patches.Rectangle(
         (-movement_threshold, -movement_threshold),
         2 * movement_threshold, 2 * movement_threshold,
@@ -744,14 +746,14 @@ def visualize_full_trajectory(trial_row, raw_df, movement_threshold, target_hz=6
     )
     ax.add_patch(threshold_square)
 
-    # --- 6. Formatting ---
+    # --- 5. Formatting ---
     ax.set_aspect('equal', adjustable='box')
     ax.grid(True, linestyle=':')
     ax.axhline(0, color='gray', lw=0.5)
     ax.axvline(0, color='gray', lw=0.5)
-    ax.set_title(f'Full Trajectory for sub-{int(sub)}, block-{int(block)}, trial-{int(trial)}')
-    ax.set_xlabel('X coordinate (dva, re-centered)')
-    ax.set_ylabel('Y coordinate (dva, re-centered)')
+    ax.set_title(f'Absolute Trajectory for sub-{int(sub)}, block-{int(block)}, trial-{int(trial)}')
+    ax.set_xlabel('X coordinate (dva, absolute)')
+    ax.set_ylabel('Y coordinate (dva, absolute)')
 
     lim = 1.5
     ax.set_xlim(-lim, lim)
@@ -799,3 +801,104 @@ def resample_trial_trajectory(trial_df, target_hz=60):
     })
 
     return resampled_df
+
+
+def visualize_absolute_trajectory(trial_row, raw_df, locations_map, target_hz=60):
+    """
+    Plots a resampled trajectory in its original, absolute coordinate space
+    to diagnose start and end points.
+
+    Args:
+        trial_row (pd.Series): A single row from the analysis_df.
+        raw_df (pd.DataFrame): The raw mouse-tracking DataFrame ('df' in your script).
+        locations_map (dict): The dictionary mapping numpad digits to coordinates.
+        target_hz (int): The target sampling rate for resampling.
+    """
+    # --- 1. Get Trial Info and Data ---
+    sub = trial_row['subject_id']
+    block = trial_row['block']
+    trial = trial_row['trial_nr']
+    rt = trial_row['rt']
+
+    trial_trajectory_df = raw_df[
+        (raw_df['subject_id'].astype(int) == int(sub)) &
+        (raw_df['block'].astype(int) == int(block)) &
+        (raw_df['trial_nr'].astype(int) == int(trial))
+    ].copy()
+
+    if trial_trajectory_df.empty:
+        print(f"Warning: No raw trajectory data found for sub-{sub}, block-{block}, trial-{trial}.")
+        return
+
+    resampled_df = resample_trial_trajectory(trial_trajectory_df, target_hz=target_hz)
+
+    # --- 2. Identify Key Points (No Re-centering) ---
+    start_point = resampled_df.iloc[0]
+    response_time_point_idx = (resampled_df['time'] - rt).abs().idxmin()
+    response_point = resampled_df.loc[response_time_point_idx]
+
+    # --- 3. Create the Plot ---
+    fig, ax = plt.subplots(figsize=(9, 9))
+
+    # Plot the numpad background for context
+    for digit, (x, y) in locations_map.items():
+        ax.plot(x, y, 'o', color='lightgray', markersize=40, zorder=1, alpha=0.8)
+        ax.text(x, y, str(digit), color='black', ha='center', va='center', fontweight='bold')
+
+    # Plot the full absolute trajectory
+    ax.plot(resampled_df['x'], resampled_df['y'], '.-', color='cornflowerblue', label='Absolute Trajectory', zorder=2)
+
+    # Highlight the actual start and end points
+    ax.plot(start_point['x'], start_point['y'], 'o', color='red', markersize=12, label=f"Actual Start ({start_point['x']:.2f}, {start_point['y']:.2f})", zorder=4)
+    ax.plot(response_point['x'], response_point['y'], 'X', color='green', markersize=12, mew=2.5, label=f"Actual End ({response_point['x']:.2f}, {response_point['y']:.2f})", zorder=5)
+
+    # --- 4. Formatting ---
+    ax.set_aspect('equal', adjustable='box')
+    ax.grid(True, linestyle=':')
+    ax.axhline(0, color='gray', lw=0.5)
+    ax.axvline(0, color='gray', lw=0.5)
+    ax.set_title(f'Absolute Trajectory for sub-{int(sub)}, block-{int(block)}, trial-{int(trial)}')
+    ax.set_xlabel('X coordinate (dva, absolute)')
+    ax.set_ylabel('Y coordinate (dva, absolute)')
+
+    lim = 2.0  # Use a larger limit to see the full space
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
+    ax.legend(loc='upper right')
+    plt.show()
+
+
+# --- Helper Function for Wave Extraction ---
+def get_all_waves(trials_df, electrode_pairs, time_window, all_times, lateral_stim_col):
+    """
+    Calculates the grand-average contralateral, ipsilateral, and difference waves
+    from a given set of trials for a single subject/condition.
+    """
+    if trials_df.empty:
+        return None, None, None, None
+
+    time_mask = (all_times >= time_window[0]) & (all_times <= time_window[1])
+    window_times = all_times[time_mask]
+
+    all_contra_activity = []
+    all_ipsi_activity = []
+
+    left_stim_trials = trials_df[trials_df[lateral_stim_col] == 'left']
+    right_stim_trials = trials_df[trials_df[lateral_stim_col] == 'right']
+
+    for left_el, right_el in electrode_pairs:
+        if not left_stim_trials.empty:
+            all_contra_activity.append(left_stim_trials[right_el].loc[:, time_mask].values)
+            all_ipsi_activity.append(left_stim_trials[left_el].loc[:, time_mask].values)
+        if not right_stim_trials.empty:
+            all_contra_activity.append(right_stim_trials[left_el].loc[:, time_mask].values)
+            all_ipsi_activity.append(right_stim_trials[right_el].loc[:, time_mask].values)
+
+    if not all_contra_activity:
+        return None, None, None, None
+
+    mean_contra_wave = np.mean(np.concatenate(all_contra_activity, axis=0), axis=0)
+    mean_ipsi_wave = np.mean(np.concatenate(all_ipsi_activity, axis=0), axis=0)
+    diff_wave = mean_contra_wave - mean_ipsi_wave
+
+    return diff_wave, mean_contra_wave, mean_ipsi_wave, window_times
