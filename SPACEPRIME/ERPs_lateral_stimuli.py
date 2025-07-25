@@ -16,7 +16,7 @@ plt.ion()
 
 # --- 1. Preprocessing Parameters (adopted from LMM script) ---
 OUTLIER_RT_THRESHOLD = 2.0
-FILTER_PHASE = 2
+FILTER_PHASE = None
 REACTION_TIME_COL = 'rt'
 PHASE_COL = 'phase'
 
