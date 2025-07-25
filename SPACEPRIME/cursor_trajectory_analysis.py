@@ -4,84 +4,138 @@ from utils import *
 import seaborn as sns
 from SPACEPRIME.subjects import subject_ids
 from stats import remove_outliers
+from scipy.stats import linregress
+import pingouin as pg
 
 plt.ion()
 
 
-
+# Script configuration parameters
+# ===================================================================
+WIDTH = 1920
+HEIGHT = 1080
+DG_VA = 2
+SCREEN_SIZE_CM_Y = 30
+SCREEN_SIZE_CM_X = 40
+VIEWING_DISTANCE_CM = 70
+DWELL_TIME_FILTER_RADIUS = 0.4
+MOVEMENT_THRESHOLD = 0.05
+SIGMA = 25
+FILTER_PHASE = None
+OUTLIER_THRESHOLD = 2
+WINDOW_SIZE = 31
+RESAMP_FREQ = 60
+SUB_BLOCKS_PER_BLOCK = 2
 
 # define data root dir
 data_root = f"{get_data_path()}derivatives/preprocessing/"
-# get all the subject ids
-subjects = os.listdir(data_root)
-sub_ids = subject_ids
-# load data from children
-# Load data from children and add subject_id column
+
+# --- Subject Inclusion/Exclusion ---
+# Get the full list of subjects from the project file
+all_subject_ids = subject_ids
+
+# Define a list of subjects to exclude from all analyses in this script
+subjects_to_exclude = [108]
+print(f"--- Subject Exclusion ---")
+print(f"Excluding subjects: {subjects_to_exclude}")
+
+# Create the final list of subjects to be included in the analysis
+sub_ids = [s for s in all_subject_ids if s not in subjects_to_exclude]
+print(f"Total subjects for analysis: {len(sub_ids)}")
+print("-" * 25)
+
+# --- Load Data ---
+# Load data only for the included subjects
+subjects_in_folder = os.listdir(data_root)
 df_list = list()
-for subject in subjects:
-    if int(subject.split("-")[1]) in sub_ids:
-        filepath = glob.glob(f"{get_data_path()}sourcedata/raw/{subject}/beh/{subject}*mouse_data.csv")[0]
+for subject_folder in subjects_in_folder:
+    # Extract subject ID from folder name like "sub-101"
+    try:
+        current_sub_id = int(subject_folder.split("-")[1])
+    except (IndexError, ValueError):
+        continue # Skip folders that don't match the format
+
+    if current_sub_id in sub_ids:
+        filepath = glob.glob(f"{get_data_path()}sourcedata/raw/{subject_folder}/beh/{subject_folder}*mouse_data.csv")[0]
         temp_df = pd.read_csv(filepath)
-        temp_df['subject_id'] = subject.split("-")[1]  # Extract subject ID and add as a column
-        df_list.append(temp_df)# get rows per trial
+        temp_df['subject_id'] = current_sub_id  # Add subject ID as an integer
+        df_list.append(temp_df)
 df = pd.concat(df_list, ignore_index=True)  # Concatenate all DataFrames
 # Corrected line:
 df['block'] = df.groupby('subject_id')['trial_nr'].transform(
     lambda x: ((x == 0) & (x.shift(1) != 0)).cumsum() - 1)
 rows_per_trial = df.groupby(['trial_nr', "block", 'subject_id']).size().reset_index(name='n_rows')
-# define some setup params
-width = 1920
-height = 1080
-dg_va = 2
-viewing_distance_cm = 70
+
 # Calculate scaled pixel coordinates and add them to the DataFrame
 # This uses the same calculation you have for x and y, but stores them in df.
 df['x_pixels'] = df["x"] * degrees_va_to_pixels(
-    degrees=dg_va,
-    screen_pixels=width,
-    screen_size_cm=40,  # screen_width_cm for x coordinates
-    viewing_distance_cm=viewing_distance_cm
+    degrees=DG_VA,
+    screen_pixels=WIDTH,
+    screen_size_cm=SCREEN_SIZE_CM_X,  # screen_width_cm for x coordinates
+    viewing_distance_cm=VIEWING_DISTANCE_CM
 )
 df['y_pixels'] = df["y"] * degrees_va_to_pixels(
-    degrees=dg_va,
-    screen_pixels=height,
-    screen_size_cm=30,  # screen_height_cm for y coordinates
-    viewing_distance_cm=viewing_distance_cm
+    degrees=DG_VA,
+    screen_pixels=HEIGHT,
+    screen_size_cm=SCREEN_SIZE_CM_Y,  # screen_height_cm for y coordinates
+    viewing_distance_cm=VIEWING_DISTANCE_CM
 )
-data = np.array([df["x_pixels"], df["y_pixels"]]).transpose()
-# define height and width of the screen
-# get the canvas
-canvas = np.vstack((data[:, 0], data[:, 1]))  # shape (2, n_samples)
-_range = [[0, height], [0, width]]
-bins_x, bins_y = width, height
-extent = [0, width, height, 0]
-hist, _, _ = np.histogram2d(canvas[1, :], canvas[0, :], bins=(bins_y, bins_x), range=_range)
-sfreq = rows_per_trial["n_rows"].mean()/3  # divide by 3 because 1 trial is 3 seconds long
-sns.displot(x=rows_per_trial["n_rows"]/3)
-sigma = 25
-alpha = 1.0
-hist /= sfreq
-# Calculate the center of the screen
-center_x = width / 2
-center_y = height / 2
-# Calculate the center of your data (you might want to adjust this based on your specific needs)
-data_center_x = 0  # Or use a fixed value if you know the center
-data_center_y = 0
-# Shift the data so that the center of the data is at the center of the screen
-x_shifted = df["x_pixels"] - data_center_x + center_x
-y_shifted = df["y_pixels"] - data_center_y + center_y
-# Recalculate the histogram with the shifted data
-hist, _, _ = np.histogram2d(y_shifted, x_shifted, bins=(height, width), range=[[0, height], [0, width]]) # Note the change here as well
-hist = gaussian_filter(hist, sigma=sigma)
-extent = [0, width, height, 0]
-plt.figure()
-plt.imshow(hist, extent=extent, origin='upper', aspect='auto', alpha=alpha)
-plt.gca().invert_yaxis()  # Invert the y-axis
+# ===================================================================
+#                      DWELL TIME HEATMAP
+# ===================================================================
+print("\n--- Generating Dwell Time Heatmap ---")
+
+# --- 1. Filter out data from the central starting point ---
+# To better visualize dwell time on peripheral digits, we exclude the
+# dense data from the central starting area (around digit 5).
+print(f"Excluding data within a {DWELL_TIME_FILTER_RADIUS} dva radius of the center to improve visibility.")
+
+# Create a boolean mask for points outside the central radius.
+# We use squared values to avoid a costly square root operation on the entire column.
+outside_center_mask = (df['x']**2 + df['y']**2) > (DWELL_TIME_FILTER_RADIUS**2)
+df_for_heatmap = df[outside_center_mask]
+print(f"Original data points: {len(df)}. Data points for heatmap: {len(df_for_heatmap)}.")
+
+# --- 2. Prepare data for histogram ---
+# Calculate the center of the screen in pixels
+center_x = WIDTH / 2
+center_y = HEIGHT / 2
+
+# Shift the filtered data so that the data's origin (0,0) is at the screen's center
+x_shifted = df_for_heatmap["x_pixels"] + center_x
+y_shifted = df_for_heatmap["y_pixels"] + center_y
+
+# --- 3. Calculate and normalize the 2D histogram ---
+# The histogram counts the number of samples in each pixel bin.
+hist, _, _ = np.histogram2d(y_shifted, x_shifted, bins=(HEIGHT, WIDTH), range=[[0, HEIGHT], [0, WIDTH]])
+
+# To get dwell time in seconds, we need to divide the counts by the sampling frequency.
+# The original script calculated sfreq but didn't apply it to the final plot; this is corrected here.
+sfreq = rows_per_trial["n_rows"].mean() / 3.0  # 3 seconds per trial
+print(f"Average sampling frequency: {sfreq:.2f} Hz")
+
+# Normalize the histogram counts to get seconds.
+# We add a small epsilon to avoid division by zero if sfreq is 0.
+hist /= (sfreq + 1e-9)
+
+# --- 4. Smooth and plot the heatmap ---
+sigma = 25  # Sigma for the Gaussian smoothing filter
+hist_smoothed = gaussian_filter(hist, sigma=sigma)
+
+extent = [0, WIDTH, 0, HEIGHT] # Use 0, height for y-axis to match a standard Cartesian plot
+plt.figure(figsize=(10, 8))
+plt.imshow(hist_smoothed, extent=extent, origin='lower', aspect='auto', cmap='inferno')
 plt.xlabel("X Position (pixels)")
 plt.ylabel("Y Position (pixels)")
-plt.title("Cursor dwell time [s]")
-# Path length analysis
+plt.title("Cursor Dwell Time (seconds, center excluded)")
+cbar = plt.colorbar()
+cbar.set_label("Dwell Time (s)")
+plt.show()
 
+
+# ===================================================================
+#                      PATH LENGTH CALCULATION
+# ===================================================================
 # Group by subject and trial number, then apply the path length calculation
 # This assumes your DataFrame 'df' has 'subject_id' and 'trial_nr' columns.
 df_path_lengths = df.groupby(['subject_id', 'block', 'trial_nr']).apply(calculate_trial_path_length).reset_index(name='path_length_pixels')
@@ -100,38 +154,57 @@ merged_df = pd.merge(
     on=['subject_id', 'block', 'trial_nr'],
     how='left'  # Keeps all rows from df_behavioral_example and adds path_length_pixels
 )
-df_clean = merged_df[merged_df["phase"]!=2]
+df_clean = merged_df[merged_df["phase"]!=FILTER_PHASE]
 
-df_clean = remove_outliers(df_clean, column_name="rt", threshold=2)
+df_clean = remove_outliers(df_clean, column_name="rt", threshold=OUTLIER_THRESHOLD)
 
-# --- Analysis of First Movement Time ---
-
-# To make the detection robust, we'll define a small threshold. A movement is
-# registered when the cursor's distance from the center (0,0) exceeds this.
-# This avoids detecting tiny jitters from the mouse hardware as a real movement.
-# The coordinates are normalized, so the threshold should be small.
-movement_threshold = 0.05
+# ===================================================================
+#                  ANALYSIS OF FIRST MOUSE MOVEMENT (REVISED)
+# ===================================================================
+print("\n--- Analyzing Initial Mouse Movement (with filtering) ---")
 
 # Find all data points where the cursor has moved away from the center.
-# We check if the absolute value of x OR y is greater than our threshold.
-moved_rows_df = df[(df['x'].abs() > movement_threshold) | (df['y'].abs() > movement_threshold)].copy()
+moved_rows_df = df[(df['x'].abs() > MOVEMENT_THRESHOLD) | (df['y'].abs() > MOVEMENT_THRESHOLD)].copy()
 
 # For each trial, find the timestamp of the *first* recorded movement.
-# We group by trial identifiers and find the minimum timestamp within each group.
-# Using .min() is efficient for this task.
 first_movement_times_df = moved_rows_df.groupby(['subject_id', 'block', 'trial_nr'])['time'].min().reset_index()
-
-# Rename the column for clarity
 first_movement_times_df.rename(columns={'time': 'first_movement_s'}, inplace=True)
 
-# Now, let's visualize the distribution of these first movement times.
+# --- Diagnostic Step: Filter out trials where the response was '5' ---
+print("Testing hypothesis: Removing trials with response '5' to check the late peak.")
+
+# To filter by response, we need to merge with the behavioral data `df_clean`.
+# Ensure data types are consistent for a reliable merge.
+# The `df_clean` DataFrame has float types for these columns from a previous step.
+first_movement_times_df['subject_id'] = first_movement_times_df['subject_id'].astype(float)
+first_movement_times_df['block'] = first_movement_times_df['block'].astype(float)
+first_movement_times_df['trial_nr'] = first_movement_times_df['trial_nr'].astype(float)
+
+# Merge to get the 'response' column from the behavioral data.
+merged_movement_df = pd.merge(
+    first_movement_times_df,
+    df_clean[['subject_id', 'block', 'trial_nr', 'response']],  # Only need the response column
+    on=['subject_id', 'block', 'trial_nr'],
+    how='left'  # Use left merge to keep all movement trials
+)
+
+# Create the filtered DataFrame, excluding trials where the response was 5.
+initial_count = len(merged_movement_df)
+# We also drop rows where the merge failed to find a response (just in case)
+filtered_movement_df = merged_movement_df.dropna(subset=['response'])
+filtered_movement_df = filtered_movement_df[filtered_movement_df['response'] != 5].copy()
+removed_count = initial_count - len(filtered_movement_df)
+print(f"Removed {removed_count} trials where the response was 5 (or response was missing).")
+
+# --- Visualize the distribution of these filtered first movement times ---
 plt.figure(figsize=(10, 6))
-sns.histplot(data=first_movement_times_df, x='first_movement_s', bins=50, kde=True)
-plt.title('Distribution of Initial Movement Time', fontsize=16)
-plt.xlabel('Time of First Movement (seconds from trial start)', fontsize=12)
+sns.histplot(data=filtered_movement_df, x='first_movement_s', bins=50, kde=True)
+plt.title("Distribution of Initial Movement Time (Trials with response '5' excluded)", fontsize=16)
+plt.xlabel('Time of First Movement (seconds prior to trial end)', fontsize=12)
 plt.ylabel('Number of Trials', fontsize=12)
 sns.despine()
 plt.show()
+
 
 # ===================================================================
 #                  INITIAL MOVEMENT DIRECTION ANALYSIS
@@ -253,6 +326,92 @@ analysis_df['initial_movement_direction'] = analysis_df.apply(
     classify_initial_movement, axis=1, locations_map=numpad_locations_dva, start_vec=start_point_vec
 )
 
+# --- Diagnostic Step: Investigate the peak near the response time ---
+print("\n--- Investigating the sharp peak in initial movement times ---")
+
+# Based on your observation, the peak occurs around -0.2s before the response.
+# Let's define a narrow window around this peak to isolate these specific trials.
+peak_window_start = -0.4
+print(f"Isolating trials where the first movement was detected between {peak_window_start}s (relative to response).")
+
+# Get the trials that contribute to this peak
+peak_trials_df = first_movement_times_df[
+    (first_movement_times_df['first_movement_s'] > peak_window_start)
+]
+
+print(f"\nFound {len(peak_trials_df)} trials within this peak window.")
+
+if not peak_trials_df.empty:
+    # To understand these trials, let's look at their properties from the main behavioral dataframe.
+    # We need to merge them back with `df_clean` which has the RT and response info.
+    # Ensure dtypes match for merging.
+    peak_trials_df['subject_id'] = peak_trials_df['subject_id'].astype(int)
+    peak_trials_df['block'] = peak_trials_df['block'].astype(int)
+    peak_trials_df['trial_nr'] = peak_trials_df['trial_nr'].astype(int)
+
+    # Merge to get full trial info
+    peak_details_df = pd.merge(
+        df_clean,
+        peak_trials_df,
+        on=['subject_id', 'block', 'trial_nr'],
+        how='inner'  # We only want the trials that are in both dataframes
+    )
+
+    print("\n--- Characteristics of trials in the peak ---")
+    print("Distribution of their Reaction Times (rt):")
+    print(peak_details_df['rt'].describe())
+
+    print("\nDistribution of their Response Correctness (select_target):")
+    print(peak_details_df['select_target'].value_counts(normalize=True, dropna=False))
+
+    print("\n(For comparison, the RT distribution of ALL trials in df_clean):")
+    print(df_clean['rt'].describe())
+
+    # --- Visualize a few example trajectories from the peak ---
+    print("\n--- Visualizing a few example trajectories from the peak ---")
+    # We will use the `analysis_df` as it has all the necessary columns for plotting
+    # and has already been merged with initial movement data.
+    peak_viz_df = pd.merge(
+        analysis_df,
+        peak_trials_df[['subject_id', 'block', 'trial_nr']], # Just use the identifiers to filter
+        on=['subject_id', 'block', 'trial_nr'],
+        how='inner'
+    )
+
+    if not peak_viz_df.empty:
+        # Take up to 3 random trials from the peak to visualize
+        num_to_plot = min(len(peak_viz_df), 3)
+        print(f"Plotting {num_to_plot} random example trajectories...")
+        for i, trial_to_plot in peak_viz_df.sample(n=num_to_plot).iterrows():
+            print(f"Plotting sub-{int(trial_to_plot['subject_id'])}, block-{int(trial_to_plot['block'])}, trial-{int(trial_to_plot['trial_nr'])}")
+            visualize_full_trajectory(trial_to_plot, df, MOVEMENT_THRESHOLD, target_hz=RESAMP_FREQ)
+    else:
+        print("Could not find matching trials in `analysis_df` to visualize.")
+
+else:
+    print("No trials found in the specified peak window.")
+
+
+# ===================================================================
+#       SAVE CLASSIFICATION RESULTS FOR EXTERNAL USE
+# ===================================================================
+print("\n--- Saving Initial Movement Classifications for external use ---")
+# Define a dedicated output directory for this script's results
+output_dir_cursor = f"{get_data_path()}concatenated\\"
+
+# Select only the essential columns for saving
+output_df = analysis_df[['subject_id', 'block', 'trial_nr', 'initial_movement_direction']].copy()
+
+# Ensure data types are standard integers for compatibility
+output_df['subject_id'] = output_df['subject_id'].astype(int)
+output_df['block'] = output_df['block'].astype(int)
+output_df['trial_nr'] = output_df['trial_nr'].astype(int)
+
+# Define the output path and save the file
+output_filepath = f"{output_dir_cursor}initial_movement_classifications.csv"
+output_df.to_csv(output_filepath, index=False)
+print(f"Saved classifications for {len(output_df)} trials to: {output_filepath}")
+
 # ===================================================================
 #       STEP 5: VISUALIZE INITIAL MOVEMENT DIRECTION BY BLOCK
 # ===================================================================
@@ -281,7 +440,7 @@ subject_block_counts['percentage'] = (subject_block_counts['count'] / total_coun
 # (calculating the mean count across subjects) and show the 95% confidence interval as error bars.
 
 plt.figure(figsize=(14, 8))
-plot_order = ['target', 'distractor', 'neutral', 'other']
+plot_order = ['target', 'distractor', 'control', 'other']
 
 # The `hue_order` can be sorted to ensure the legend is in a logical sequence.
 hue_order = sorted(analysis_df['block'].unique().astype(int))
@@ -316,20 +475,17 @@ print("\n--- Starting Running Average Analysis (Revised Logic) ---")
 analysis_df.sort_values(['subject_id', 'block', 'trial_nr'], inplace=True)
 
 # Create a single score for each trial based on the initial movement direction:
-#  +1 if the movement was toward the neutral item (suppression)
+#  +1 if the movement was toward the control item (suppression)
 #  -1 if the movement was toward the distractor item (capture)
 #   0 otherwise (e.g., toward target or other)
 conditions = [
-    analysis_df['initial_movement_direction'] == 'neutral',
+    analysis_df['initial_movement_direction'] == 'control',
     analysis_df['initial_movement_direction'] == 'distractor'
 ]
 choices = [1, -1]
 analysis_df['per_trial_effect'] = np.select(conditions, choices, default=0)
 
 # --- Step 2: Apply a Rolling Average to the Per-Trial Score ---
-
-# Define the size of the rolling window (11 trials, as per the paper).
-window_size = 51
 
 # For each subject, calculate the rolling mean of the per-trial effect score.
 # The result is a smooth curve representing the suppression effect over time.
@@ -339,78 +495,25 @@ window_size = 51
 # at the very beginning and end of the experiment where the window is not full.
 # Without this, we would lose the data from the crucial initial trials.
 analysis_df['suppression_effect'] = analysis_df.groupby('subject_id')['per_trial_effect'].transform(
-    lambda x: x.rolling(window_size, center=False, min_periods=1).mean()
+    lambda x: x.rolling(WINDOW_SIZE, center=False, min_periods=1).mean()
 ) * 100
-
-# --- Step 3: Aggregate Data for Plotting (Using Within-Subject CI Method) ---
 
 # Create a sequential trial index across the entire experiment for each subject.
 analysis_df['singleton_trial_idx'] = analysis_df.groupby('subject_id').cumcount()
 
-# To calculate a within-subject CI, we first need to remove the stable between-subject variance.
-# We'll follow the Cousineau-Morey method.
-
-# 1. Pivot the data so each row is a subject and each column is a trial.
-pivoted_data = analysis_df.pivot_table(
-    index='subject_id',
-    columns='singleton_trial_idx',
-    values='suppression_effect'
-)
-
-# 2. Calculate the mean score for each subject (their average suppression effect).
-subject_means = pivoted_data.mean(axis=1)
-
-# 3. Calculate the grand mean across all subjects and all trials.
-grand_mean = pivoted_data.stack().mean()
-
-# 4. Normalize each data point: original_value - subject_mean + grand_mean
-# This removes the subject's overall bias but preserves the group average.
-normalized_data = pivoted_data.subtract(subject_means, axis=0).add(grand_mean)
-
-# 5. Calculate the mean and SEM on this *normalized* data.
-# The mean of the normalized data is identical to the mean of the original data.
-plot_data_mean = normalized_data.mean(axis=0)
-plot_data_sem = normalized_data.sem(axis=0)
-
-# 6. Apply the Morey (2008) correction factor for bias in repeated-measures variance.
-M = len(pivoted_data.columns) # Number of conditions (time points)
-correction_factor = np.sqrt(M / (M - 1))
-plot_data_sem_corrected = plot_data_sem * correction_factor
-
-# 7. Create the final DataFrame for plotting.
-plot_data = pd.DataFrame({
-    'mean': plot_data_mean,
-    'sem': plot_data_sem_corrected
-}).reset_index()
-
-# Calculate the 95% confidence interval from the corrected SEM.
-plot_data['ci_lower'] = plot_data['mean'] - 1.96 * plot_data['sem']
-plot_data['ci_upper'] = plot_data['mean'] + 1.96 * plot_data['sem']
-
-# --- Step 4: Create the Final Plot ---
+# --- Create the Final Plot ---
 
 plt.figure(figsize=(12, 7))
-
 # Plot the mean suppression effect
-plt.plot(plot_data['singleton_trial_idx'], plot_data['mean'], label='Mean Suppression Effect', color='black', linewidth=2)
-
-# Add the shaded confidence interval region
-plt.fill_between(
-    plot_data['singleton_trial_idx'],
-    plot_data['ci_lower'],
-    plot_data['ci_upper'],
-    color='gray',
-    alpha=0.3,
-    label='95% Confidence Interval'
-)
+sns.lineplot(data=analysis_df, x=analysis_df["singleton_trial_idx"], y=analysis_df["suppression_effect"])
 
 # Add a horizontal line at y=0 for reference
 plt.axhline(0, color='red', linestyle='--', linewidth=1.5, label='No Effect (Capture = Suppression)')
 
 # Formatting the plot
-plt.title('Running Average of Oculomotor Suppression Effect', fontsize=16)
+plt.title(f'Running Average of Motor Suppression Effect, Window Size = {WINDOW_SIZE}', fontsize=16)
 plt.xlabel('Trial Number (Singleton Present)', fontsize=12)
-plt.ylabel('Suppression Effect (% Neutral − % Distractor)', fontsize=12)
+plt.ylabel('Suppression Effect (% Control − % Distractor)', fontsize=12)
 plt.legend()
 plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 sns.despine()
@@ -424,15 +527,103 @@ if pd.notna(last_reliable_trial):
 plt.show()
 
 # ===================================================================
+#       STATISTICAL ANALYSIS: MODELING THE LEARNING EFFECT
+# ===================================================================
+print("\n--- Modeling the Learning Effect Over Trials ---")
+
+# We will fit a logarithmic model to each subject's data to quantify the learning rate.
+# Model: suppression_effect = intercept + slope * log(trial_number)
+# A positive slope indicates that suppression increases over time.
+
+# --- Step 1: Fit a logarithmic model for each subject ---
+subject_fits = []
+# Use the 'per_trial_effect' which is the raw score (-1, 0, or 1) for robust fitting.
+# Add 1 to trial index to avoid log(0).
+analysis_df['log_trial_idx'] = np.log(analysis_df['singleton_trial_idx'] + 1)
+
+for subject, group in analysis_df.groupby('subject_id'):
+    # Ensure there are enough data points to fit a line
+    if len(group) < 3:
+        continue
+
+    # Perform linear regression on the log-transformed trial index
+    slope, intercept, r_value, p_value, std_err = linregress(
+        group['log_trial_idx'],
+        group['per_trial_effect']
+    )
+    subject_fits.append({'subject_id': subject, 'slope': slope, 'intercept': intercept})
+
+fit_results_df = pd.DataFrame(subject_fits)
+
+print(f"Successfully fitted logarithmic models for {len(fit_results_df)} subjects.")
+
+# --- Step 2: Perform a one-sample t-test on the slopes ---
+# We test if the mean of the subjects' slopes is significantly different from zero.
+
+print("\n--- One-Sample T-test on Learning Rate (Slopes) ---")
+ttest_result = pg.ttest(fit_results_df['slope'], 0, confidence=0.95)
+print(ttest_result.round(4))
+
+# --- Step 3: Visualize the model fit ---
+# We plot the running average data and overlay the curve from our model.
+avg_intercept = fit_results_df['intercept'].mean()
+avg_slope = fit_results_df['slope'].mean()
+
+# Define the x-axis range for the fitted curve. We use the `last_reliable_trial`
+# calculated in the previous plot to ensure the range is consistent.
+if pd.notna(last_reliable_trial):
+    x_trials = np.arange(0, last_reliable_trial + 1)
+else:
+    # Fallback if last_reliable_trial is not available for any reason
+    x_trials = np.arange(0, analysis_df['singleton_trial_idx'].max() + 1)
+
+log_x_trials = np.log(x_trials + 1)
+
+# Calculate the predicted y-values from the average model parameters
+# Multiply by 100 to match the scale of the running average plot
+predicted_y = (avg_intercept + avg_slope * log_x_trials) * 100
+
+# Create a new plot showing both the running average and the logarithmic fit
+fig, ax = plt.subplots(figsize=(12, 7))
+
+# Plot the running average with its confidence interval using seaborn
+sns.lineplot(
+    data=analysis_df,
+    x='singleton_trial_idx',
+    y='suppression_effect',
+    ax=ax,
+    color='gray',
+    label='Mean Suppression Effect (Running Avg)'
+)
+
+# Overlay the fitted logarithmic curve
+ax.plot(x_trials, predicted_y, color='blue', linestyle='--', linewidth=2.5, label=f'Logarithmic Fit (Mean Slope={avg_slope:.3f})')
+
+# Formatting
+ax.axhline(0, color='red', linestyle='--', linewidth=1.5)
+ax.set_title('Running Average and Logarithmic Model of Suppression Effect', fontsize=16)
+ax.set_xlabel('Trial Number (Singleton Present)', fontsize=12)
+ax.set_ylabel('Suppression Effect (% Control − % Distractor)', fontsize=12)
+ax.legend()
+ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+sns.despine(ax=ax)
+
+# Apply the same x-axis limit as the previous plot
+if pd.notna(last_reliable_trial):
+    ax.set_xlim(0, last_reliable_trial)
+
+plt.show()
+
+# ===================================================================
 #       ANALYSIS: BLOCK-LEVEL SUPPRESSION EFFECT BAR PLOT
 # ===================================================================
 print("\n--- Creating Block-Level Suppression Effect Bar Plot ---")
 
 # --- Step 1: Calculate a Per-Trial Suppression Score ---
-# This score is +1 for a movement to neutral (suppression), -1 for a movement
+# This score is +1 for a movement to control (suppression), -1 for a movement
 # to the distractor (capture), and 0 otherwise. This logic is robust and clear.
 conditions = [
-    analysis_df['initial_movement_direction'] == 'neutral',
+    analysis_df['initial_movement_direction'] == 'control',
     analysis_df['initial_movement_direction'] == 'distractor'
 ]
 choices = [1, -1]
@@ -466,7 +657,7 @@ plt.axhline(0, color='red', linestyle='--', linewidth=1.5, label='No Effect (Cap
 # Formatting the plot
 plt.title('Suppression Effect Across Blocks', fontsize=16)
 plt.xlabel('Block Number', fontsize=12)
-plt.ylabel('Suppression Effect (% Neutral − % Distractor)', fontsize=12)
+plt.ylabel('Suppression Effect (% Control − % Distractor)', fontsize=12)
 plt.legend()
 plt.grid(True, which='major', axis='y', linestyle='--', linewidth=0.5)
 sns.despine()
@@ -476,46 +667,58 @@ plt.show()
 # ===================================================================
 #           EXAMPLE USAGE OF THE TRIAL PLOTTING FUNCTION
 # ===================================================================
-
+example = 7
 # --- Find a specific trial to plot ---
 distractor_trial_to_plot = analysis_df[
     analysis_df['initial_movement_direction'] == 'distractor'
-].iloc[10]
+].iloc[example]
 # Call the function with the selected trial data
 plot_trial_vectors(distractor_trial_to_plot, numpad_locations_dva)
 
 # --- Or, plot a trial that went towards the target ---
 target_trial_to_plot = analysis_df[
     analysis_df['initial_movement_direction'] == 'target'
-].iloc[10]
+].iloc[example]
 plot_trial_vectors(target_trial_to_plot, numpad_locations_dva)
 
 # --- Or, plot a trial that went towards the other ---
-neutral_trial_to_plot = analysis_df[
-    analysis_df['initial_movement_direction'] == 'neutral'
-    ].iloc[10]  # Using index 5 for variety
-plot_trial_vectors(neutral_trial_to_plot, numpad_locations_dva)
+control_trial_to_plot = analysis_df[
+    analysis_df['initial_movement_direction'] == 'control'
+    ].iloc[example]  # Using index 5 for variety
+plot_trial_vectors(control_trial_to_plot, numpad_locations_dva)
 
 other_trial_to_plot = analysis_df[
     analysis_df['initial_movement_direction'] == 'other'
-    ].iloc[10]  # Using index 5 for variety
+    ].iloc[example]  # Using index 5 for variety
 plot_trial_vectors(other_trial_to_plot, numpad_locations_dva)
 
 
 # ===================================================================
 #           VISUALIZE FULL TRAJECTORIES WITH RESPONSE TIME
 # ===================================================================
-resamp_freq = 60
-distractor_trial_for_viz = analysis_df[analysis_df['initial_movement_direction'] == 'distractor'].iloc[10]
-visualize_full_trajectory(distractor_trial_for_viz, df, movement_threshold, target_hz=resamp_freq)
+distractor_trial_for_viz = analysis_df[analysis_df['initial_movement_direction'] == 'distractor'].iloc[example]
+visualize_full_trajectory(distractor_trial_for_viz, df, MOVEMENT_THRESHOLD, target_hz=RESAMP_FREQ)
 
 # Find a trial where the initial movement was towards the target
-target_trial_for_viz = analysis_df[analysis_df['initial_movement_direction'] == 'target'].iloc[10]
-visualize_full_trajectory(target_trial_for_viz, df, movement_threshold, target_hz=resamp_freq)
+target_trial_for_viz = analysis_df[analysis_df['initial_movement_direction'] == 'target'].iloc[example]
+visualize_full_trajectory(target_trial_for_viz, df, MOVEMENT_THRESHOLD, target_hz=RESAMP_FREQ)
 
-target_trial_for_viz = analysis_df[analysis_df['initial_movement_direction'] == 'neutral'].iloc[10]
-visualize_full_trajectory(target_trial_for_viz, df, movement_threshold, target_hz=resamp_freq)
+control_trial_for_viz = analysis_df[analysis_df['initial_movement_direction'] == 'control'].iloc[example]
+visualize_full_trajectory(control_trial_for_viz, df, MOVEMENT_THRESHOLD, target_hz=RESAMP_FREQ)
 
-target_trial_for_viz = analysis_df[analysis_df['initial_movement_direction'] == 'other'].iloc[10]
-visualize_full_trajectory(target_trial_for_viz, df, movement_threshold, target_hz=resamp_freq)
+other_trial_for_viz = analysis_df[analysis_df['initial_movement_direction'] == 'other'].iloc[example]
+visualize_full_trajectory(other_trial_for_viz, df, MOVEMENT_THRESHOLD, target_hz=RESAMP_FREQ)
 
+# Call the new diagnostic function
+#visualize_absolute_trajectory(control_trial_for_viz, df, numpad_locations_dva, target_hz=RESAMP_FREQ)
+
+# Use the exact same trial that shows the doubling effect
+#distractor_trial_for_viz = analysis_df[analysis_df['initial_movement_direction'] == 'distractor'].iloc[10]
+
+# Run the absolute plot and carefully check the coordinates printed in the legend
+#print("Checking the absolute start and end points for the trial...")
+#visualize_absolute_trajectory(
+#    distractor_trial_for_viz,
+#    df,
+#    numpad_locations_dva,
+#    target_hz=RESAMP_FREQ)
