@@ -13,10 +13,10 @@ import numpy as np
 
 
 df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/sub-{subject}/beh/sub-{subject}_clean*.csv")[0]) for subject in subject_ids])
-df = df[df["phase"]!=2]
+# df = df[df["phase"]!=2]
 df = remove_outliers(df, column_name="rt", threshold=2)
 #df = df[df["SingletonPresent"] == 0]
-df_mean = df.groupby(["subject_id", "Priming", "block"])[["select_target", "rt"]].mean().reset_index()
+df_mean = df.groupby(["subject_id", "Priming"])[["select_target", "rt"]].mean().reset_index()
 # Create plots
 fig, ax = plt.subplots(1, 2) # Slightly larger figure
 # Define colors
@@ -43,7 +43,7 @@ sns.barplot(data=df_mean, x="Priming", y="rt",
             ax=ax[1],
             width=0.8)
 plot_individual_lines(ax=ax[1], data=df_mean, x_col="Priming", y_col="rt")
-ax[1].set_ylabel("Reaction Time (s)")
+ax[1].set_ylabel("Response Time (s)")
 ax[1].tick_params(axis='y')
 # Adjust ylim based on data + potential annotation space
 rt_max = df_mean['rt'].max()
@@ -104,18 +104,6 @@ diff_pp.index = pp_original_indices
 # Now use .loc for index-based assignment
 df_mean.loc[np_original_indices, diff_np.columns] = diff_np
 df_mean.loc[pp_original_indices, diff_pp.columns] = diff_pp
-
-# Plot the stuff
-fig, ax = plt.subplots(1, 2)
-sns.barplot(data=df_mean, x="block", y="select_target", hue="Priming", ax=ax[0])
-sns.barplot(data=df_mean, x="block", y="rt", hue="Priming", ax=ax[1])
-plt.tight_layout()
-# Plot the difference between positive and negative priming compared to baseline directly
-# Plot the stuff
-fig, ax = plt.subplots(1, 2)
-sns.barplot(data=df_mean, x="block", y="np_diff_select_target", ax=ax[0])
-sns.barplot(data=df_mean, x="block", y="pp_diff_rt", ax=ax[1])
-plt.tight_layout()
 
 # compute effect size
 compute_effsize_from_t(t, N=n)
