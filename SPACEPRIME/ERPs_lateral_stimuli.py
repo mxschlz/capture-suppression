@@ -22,7 +22,7 @@ PHASE_COL = 'phase'
 
 # --- 2. General Script Parameters ---
 # Whether to plot the topographies or not (because that takes a while)
-PLOT_TOPOS = False
+PLOT_TOPOS = True
 
 # Paths
 SETTINGS_PATH = os.path.join(get_data_path(), "settings")
@@ -52,13 +52,13 @@ SIG_LINE_ALPHA = 0.6              # Alpha for significance lines
 # Color will be matched to the difference wave color
 
 # Topomap Plotting Parameters
-TOPO_START_TIME = 0.0             # Start time for topomap sequence (seconds)
-TOPO_END_TIME = 0.8               # End time for topomap sequence (seconds)
-TOPO_TIME_STEP = 0.05             # Time step for topomap sequence (seconds)
+# Note: Topomaps are now plotted only for significant time intervals found by the ERP cluster test.
+# TOPO_TIME_STEP determines the sampling rate for plots within those intervals.
+TOPO_TIME_STEP = 0.01             # Time step for topomap sequence within significant intervals (seconds)
 TOPO_CMAP = 'RdBu_r'              # Colormap for topographies
 
 # --- Parameters for Sensor-Space Cluster Permutation Test ---
-PLOT_SIGNIFICANT_SENSORS_TOPO = False # Whether to run and plot sensor cluster results
+PLOT_SIGNIFICANT_SENSORS_TOPO = True # Whether to run and plot sensor cluster results
 # Define time windows for averaging topo data for cluster analysis (in seconds)
 N2AC_TOPO_CLUSTER_WINDOW = (0.22, 0.38) # Example: 220-380ms for N2ac-like activity
 PD_TOPO_CLUSTER_WINDOW = (0.29, 0.38)   # Example: 290-380ms for Pd-like activity
@@ -86,7 +86,7 @@ epochs_info = None  # To be populated from the first subject
 
 # --- Load and Preprocess Data ---
 print("--- Loading and Preprocessing Data ---")
-epochs = load_concatenated_epochs().crop(EPOCH_TMIN, EPOCH_TMAX)
+epochs = load_concatenated_epochs("spaceprime").crop(EPOCH_TMIN, EPOCH_TMAX)
 print(f"Original number of trials: {len(epochs)}")
 
 # Get metadata for preprocessing
@@ -449,78 +449,132 @@ else:
     elif t_thresh_cluster is None:
         print("\nSkipping sensor permutation tests: t_thresh_cluster not available (likely due to N < 2).")
 
-# --- TOPOGRAPHIES ---
-times_to_plot_topo = np.arange(TOPO_START_TIME, TOPO_END_TIME + TOPO_TIME_STEP, TOPO_TIME_STEP)
+# --- TOPOGRAPHIES (PLOTTING ONLY SIGNIFICANT TIME INTERVALS) ---
 
+# --- 1. Determine Time Windows for Plotting from Significant ERP Clusters ---
+print("\n--- Determining time windows for topomap plotting from significant ERP clusters ---")
+topo_plot_windows = {'Target': [], 'Distractor': []}
+
+for cond_name in ['Target', 'Distractor']:
+    significant_clusters_found = False
+    if cluster_results.get(cond_name) and t_thresh_cluster:
+        res = cluster_results[cond_name]
+        for i_c, cl_mask in enumerate(res['clusters']):
+            if res['p_values'][i_c] < ALPHA_STAT_CLUSTER:
+                significant_clusters_found = True
+                cluster_times = times_vector[cl_mask]
+                if len(cluster_times) > 0:
+                    # Add the (start, end) of this significant cluster
+                    topo_plot_windows[cond_name].append((cluster_times[0], cluster_times[-1]))
+
+    if significant_clusters_found:
+        # Combine overlapping or adjacent windows for cleaner reporting
+        # This part is for printing; the plotting logic handles overlaps correctly.
+        from itertools import groupby, count
+        combined_wins = []
+        for win_start, win_end in topo_plot_windows[cond_name]:
+            combined_wins.append(f"({win_start*1000:.0f}-{win_end*1000:.0f} ms)")
+        print(f"  Found significant time windows for {cond_name}: {', '.join(combined_wins)}")
+    else:
+        print(f"  No significant time clusters found for {cond_name}.")
+
+
+# --- 2. Generate Topomap Plots for the Determined Windows ---
 # Define a highlight color for the ROI time window
-ROI_HIGHLIGHT_COLOR = 'gold' # Or any color you prefer
+ROI_HIGHLIGHT_COLOR = 'gold'
 ROI_HIGHLIGHT_LW = 2.5
 
 for plot_type in ["Target", "Distractor"]:
+    windows = topo_plot_windows.get(plot_type, [])
+    if not windows:
+        print(f"\nSkipping {plot_type} topomaps as no significant time windows were found.")
+        continue
+
+    # --- Calculate a consistent vmin/vmax across all clusters for this condition ---
+    all_times_for_cond = []
+    for start, end in windows:
+        times_in_win = np.arange(start, end + TOPO_TIME_STEP, TOPO_TIME_STEP)
+        times_in_win = times_in_win[times_in_win <= end]
+        all_times_for_cond.extend(list(times_in_win))
+    all_times_for_cond = sorted(list(set(all_times_for_cond)))
+
+    # Get grand average data for this condition
     ga_diff_topo_data = ga_data[f'{plot_type.lower()}_diff_topo']
-    if np.all(np.isnan(ga_diff_topo_data)): # Skip if all data is NaN
+    if np.all(np.isnan(ga_diff_topo_data)):
         print(f"Skipping {plot_type} topomaps as grand average data is all NaN.")
         continue
 
-    n_plots = len(times_to_plot_topo)
-    if n_plots == 0: continue
-
-    n_cols = int(np.ceil(np.sqrt(n_plots)))
-    n_rows = int(np.ceil(n_plots / n_cols))
-
-    fig_topo, axes_topo = plt.subplots(n_rows, n_cols, figsize=(max(10, 2.5 * n_cols), 2.5 * n_rows))
-    axes_topo = np.array(axes_topo).flatten() # Ensure it's always an array
-
-    time_indices_to_plot = [np.argmin(np.abs(times_vector - t)) for t in times_to_plot_topo]
-
-    # Determine consistent vmin and vmax
-    topo_data_all_selected_times = ga_diff_topo_data[:, time_indices_to_plot] * AMPLITUDE_SCALE_FACTOR
-    if np.all(np.isnan(topo_data_all_selected_times)): # Check if all selected data is NaN
-        print(f"All selected topo data for {plot_type} is NaN. Setting default vlim.")
+    all_time_indices = [np.argmin(np.abs(times_vector - t)) for t in all_times_for_cond]
+    topo_data_all_times = ga_diff_topo_data[:, all_time_indices] * AMPLITUDE_SCALE_FACTOR
+    if np.all(np.isnan(topo_data_all_times)):
+        print(f"All selected topo data for {plot_type} is NaN. Setting default vlim for plots.")
         max_abs_val = 1.0
     else:
-        max_abs_val = np.nanmax(np.abs(topo_data_all_selected_times))
-        if max_abs_val == 0: max_abs_val = 1.0 # Avoid vmin=vmax=0
+        max_abs_val = np.nanmax(np.abs(topo_data_all_times))
+        if max_abs_val == 0: max_abs_val = 1.0
 
     vmin, vmax = -max_abs_val, max_abs_val
-    print(f'{plot_type} Topomap Limits: vmin = {vmin:.2f} µV, vmax = {vmax:.2f} µV')
+    print(f'\nCalculated consistent {plot_type} Topomap Limits: vmin = {vmin:.2f} µV, vmax = {vmax:.2f} µV')
 
-    # Get the mask for the current plot_type (Target or Distractor)
-    current_sensor_mask = significant_sensors_masks.get(plot_type, None)
+    # --- Loop over each significant window (cluster) to create a separate plot ---
+    for i_win, (start, end) in enumerate(windows):
+        # Generate time points for THIS window only
+        times_to_plot_topo = np.arange(start, end + TOPO_TIME_STEP, TOPO_TIME_STEP)
+        times_to_plot_topo = times_to_plot_topo[times_to_plot_topo <= end]
 
-    # Determine the relevant time window for highlighting
-    if plot_type == "Target":
-        current_topo_cluster_window = N2AC_TOPO_CLUSTER_WINDOW
-    else: # Distractor
-        current_topo_cluster_window = PD_TOPO_CLUSTER_WINDOW
+        if len(times_to_plot_topo) == 0:
+            continue
 
-    for i, time_point in enumerate(times_to_plot_topo):
-        if time_point > TOPO_END_TIME: break
-        if i >= len(axes_topo): break
-        ax_current = axes_topo[i] # Current axis
-        time_idx = time_indices_to_plot[i]
-        data_for_plot = ga_diff_topo_data[:, time_idx] * AMPLITUDE_SCALE_FACTOR
+        n_plots = len(times_to_plot_topo)
+        print(f"\nGenerating {n_plots} topomaps for {plot_type} cluster {i_win + 1} ({start*1000:.0f}-{end*1000:.0f} ms)...")
 
-        im, cn = mne.viz.plot_topomap(data_for_plot, epochs_info, axes=ax_current, cmap=TOPO_CMAP,
-                                      vlim=(vmin, vmax), show=False, sensors=False, outlines='head',
-                                      mask=current_sensor_mask if PLOT_SIGNIFICANT_SENSORS_TOPO else None,
-                                      mask_params=SENSOR_MASK_PARAMS if PLOT_SIGNIFICANT_SENSORS_TOPO else None
-                                     )
-        ax_current.set_title(f"{time_point * 1000:.0f} ms", fontsize=10)
+        n_cols = int(np.ceil(np.sqrt(n_plots)))
+        n_rows = int(np.ceil(n_plots / n_cols))
 
-        # Highlight the subplot if it's within the sensor cluster permutation time window
-        if PLOT_SIGNIFICANT_SENSORS_TOPO and \
-           current_topo_cluster_window[0] <= time_point <= current_topo_cluster_window[1]:
-            plt.setp(ax_current.spines.values(), color=ROI_HIGHLIGHT_COLOR, linewidth=ROI_HIGHLIGHT_LW)
-            # You could also add a patch or change background color, e.g.:
-            ax_current.set_facecolor(ROI_HIGHLIGHT_COLOR) # (define ROI_HIGHLIGHT_COLOR_BG)
+        fig_topo, axes_topo = plt.subplots(n_rows, n_cols, figsize=(max(10, 2.5 * n_cols), 2.5 * n_rows))
+        axes_topo = np.array(axes_topo).flatten()
 
-    for j in range(i + 1, len(axes_topo)): # Use the last valid 'i'
-        fig_topo.delaxes(axes_topo[j])
+        time_indices_to_plot = [np.argmin(np.abs(times_vector - t)) for t in times_to_plot_topo]
 
-    fig_topo.subplots_adjust(right=0.85, top=0.90)
-    cbar_ax = fig_topo.add_axes([0.88, 0.15, 0.03, 0.7])
-    cbar = plt.colorbar(im, cax=cbar_ax, format='%.1f')
-    cbar.set_label('Amplitude Difference [µV]')
-    fig_topo.suptitle(f"Grand Average {plot_type} Difference Wave Topomaps (N={n_subs})\n(Time window for sensor cluster test highlighted in {ROI_HIGHLIGHT_COLOR.lower()})", fontsize=14)
-    fig_topo.tight_layout(rect=[0, 0, 0.85, 0.90]) # Adjust rect for suptitle and colorbar
+        current_sensor_mask = significant_sensors_masks.get(plot_type, None)
+        current_topo_cluster_window = N2AC_TOPO_CLUSTER_WINDOW if plot_type == "Target" else PD_TOPO_CLUSTER_WINDOW
+
+        # This will hold the last plotted image for the colorbar
+        im = None
+
+        for i, time_point in enumerate(times_to_plot_topo):
+            if i >= len(axes_topo): break
+            ax_current = axes_topo[i]
+            time_idx = time_indices_to_plot[i]
+            data_for_plot = ga_diff_topo_data[:, time_idx] * AMPLITUDE_SCALE_FACTOR
+
+            im, cn = mne.viz.plot_topomap(data_for_plot, epochs_info, axes=ax_current, cmap=TOPO_CMAP,
+                                          vlim=(vmin, vmax), show=False, sensors=False, outlines='head',
+                                          mask=current_sensor_mask if PLOT_SIGNIFICANT_SENSORS_TOPO else None,
+                                          mask_params=SENSOR_MASK_PARAMS if PLOT_SIGNIFICANT_SENSORS_TOPO else None
+                                         )
+            ax_current.set_title(f"{time_point * 1000:.0f} ms", fontsize=10)
+
+            if PLOT_SIGNIFICANT_SENSORS_TOPO and \
+               current_topo_cluster_window[0] <= time_point <= current_topo_cluster_window[1]:
+                plt.setp(ax_current.spines.values(), color=ROI_HIGHLIGHT_COLOR, linewidth=ROI_HIGHLIGHT_LW)
+
+        # Clean up unused axes
+        for j in range(i + 1, len(axes_topo)):
+            fig_topo.delaxes(axes_topo[j])
+
+        # Add colorbar to the figure
+        if im:
+            fig_topo.subplots_adjust(right=0.85, top=0.88)
+            cbar_ax = fig_topo.add_axes([0.88, 0.15, 0.03, 0.7])
+            cbar = plt.colorbar(im, cax=cbar_ax, format='%.1f')
+            cbar.set_label('Amplitude Difference [µV]')
+
+        # Add title to the figure
+        title = (f"Grand Average {plot_type} Difference Wave Topomaps (N={n_subs})\n"
+                 f"Significant Cluster {i_win + 1}: {start*1000:.0f} - {end*1000:.0f} ms")
+        if PLOT_SIGNIFICANT_SENSORS_TOPO:
+            title += f"\n(Time window for sensor cluster test highlighted in {ROI_HIGHLIGHT_COLOR.lower()})"
+        fig_topo.suptitle(title, fontsize=14, y=0.98)
+
+        fig_topo.tight_layout(rect=[0, 0, 0.85, 0.92])
