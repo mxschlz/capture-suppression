@@ -327,6 +327,97 @@ plot_erp_sanity_check(pd_epochs.times, pd_contra_wave, pd_ipsi_wave, pd_diff_wav
 plot_erp_sanity_check(n2ac_epochs.times, n2ac_contra_wave, n2ac_ipsi_wave, n2ac_diff_wave, n2ac_trials_meta, 'N2ac',
                       N2AC_TIME_WINDOW)
 
+### MERGED ### --- Visualize ERPs by Behavioral Split ---
+print("\nVisualizing Pd ERPs split by singleton accuracy effect...")
+
+# --- 1. Define the behavioral variable and create groups ---
+behavioral_metric = 'singleton_acc_effect'
+
+# Use a quartile split to create four groups for the behavioral metric
+# Ensure the metric exists and has enough unique values for a quartile split
+if behavioral_metric in final_df.columns and final_df[behavioral_metric].nunique() > 3:
+    metric_title = behavioral_metric.replace("_", " ").title()
+    # Corrected to a true quartile (4 groups) split for better analysis
+    group_labels = [f'Q1', f'Q2', f'Q3']
+    final_df['behavioral_group'] = pd.qcut(final_df[behavioral_metric],
+                                           q=3,
+                                           labels=group_labels,
+                                           duplicates='drop')
+    print(f"Successfully created {final_df['behavioral_group'].nunique()} groups based on quartiles of '{behavioral_metric}'.")
+    print("Group sizes:\n", final_df['behavioral_group'].value_counts().sort_index())
+
+
+    # --- 2. Aggregate trial-level ERPs to subject-level averages ---
+    subject_avg_contra = {}
+    subject_avg_ipsi = {}
+    subject_avg_diff = {}
+
+    # Use the original pd_trials_meta which is aligned with the wave arrays
+    for subject in pd_trials_meta[SUBJECT_ID_COL].unique():
+        mask = (pd_trials_meta[SUBJECT_ID_COL] == subject).values
+        if np.any(mask):
+            subject_avg_contra[subject] = pd_contra_wave[mask].mean(axis=0)
+            subject_avg_ipsi[subject] = pd_ipsi_wave[mask].mean(axis=0)
+            subject_avg_diff[subject] = pd_diff_wave[mask].mean(axis=0)
+
+    # --- 3. Plot Grand Averages for each behavioral group ---
+    fig, axes = plt.subplots(1, 2, figsize=(18, 7), sharey=True)
+    fig.suptitle(f'Pd Component by Quartiles of {metric_title}', fontsize=16, fontweight='bold')
+    times_ms = pd_epochs.times * 1000
+
+    # Create a color palette for the quartile groups
+    n_groups = final_df['behavioral_group'].nunique()
+    colors = plt.cm.Accent(np.linspace(0.1, 0.9, n_groups))
+
+    # Sort group labels to ensure Q1 is plotted first with the first color, etc.
+    sorted_groups = sorted(final_df['behavioral_group'].dropna().unique())
+
+    for i, group_label in enumerate(sorted_groups):
+        # Get subjects belonging to the current group
+        # We need to look up subject IDs from final_df, which is at the subject level
+        subjects_in_group = final_df[final_df['behavioral_group'] == group_label][SUBJECT_ID_COL].tolist()
+
+        # Collect the average waves for these subjects
+        group_contra_waves = [subject_avg_contra[s] for s in subjects_in_group if s in subject_avg_contra]
+        group_ipsi_waves = [subject_avg_ipsi[s] for s in subjects_in_group if s in subject_avg_ipsi]
+        group_diff_waves = [subject_avg_diff[s] for s in subjects_in_group if s in subject_avg_diff]
+
+        if not group_diff_waves:
+            print(f"Warning: No ERP data found for group '{group_label}'. Skipping.")
+            continue
+
+        # Calculate grand average for the group
+        ga_contra = np.mean(group_contra_waves, axis=0)
+        ga_ipsi = np.mean(group_ipsi_waves, axis=0)
+        ga_diff = np.mean(group_diff_waves, axis=0)
+
+        color = colors[i]
+
+        # Plot on the 'Contra vs Ipsi' subplot
+        axes[0].plot(times_ms, ga_contra, color=color, linestyle='--', label=f'Contra ({group_label})', lw=2)
+        axes[0].plot(times_ms, ga_ipsi, color=color, linestyle=':', label=f'Ipsi ({group_label})', lw=2)
+
+        # Plot on the 'Difference Wave' subplot
+        axes[1].plot(times_ms, ga_diff, color=color, linestyle='-', lw=2.5, label=f'Difference ({group_label})')
+
+    # --- 4. Formatting and Final Touches ---
+    for ax in axes:
+        ax.axvspan(PD_TIME_WINDOW[0] * 1000, PD_TIME_WINDOW[1] * 1000, color='lightcoral', alpha=0.3, label='Pd Window')
+        ax.axhline(0, color='black', linestyle='--', lw=0.8)
+        ax.axvline(0, color='black', linestyle=':', lw=0.8)
+        ax.set_xlabel('Time (ms)')
+        ax.grid(True, linestyle=':', alpha=0.6)
+        ax.legend(title="Groups")
+        # Set the x-axis to the requested time interval (0 to 0.7 seconds)
+        ax.set_xlim(0, 700)
+
+    axes[0].set_title('Contralateral vs. Ipsilateral Waveforms')
+    axes[0].set_ylabel('Amplitude (µV)')
+    axes[1].set_title('Difference Wave (Contra - Ipsi)')
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.show()
+
 ### MERGED ### --- Multivariate Correlation Analysis ---
 print("\n--- Multivariate Correlation Analysis ---")
 # --- 2. Perform Correlation Analysis ---
