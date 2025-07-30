@@ -14,7 +14,7 @@ plt.ion()
 
 # load df
 df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/sub-{subject}/beh/sub-{subject}_clean*.csv")[0]) for subject in subject_ids])
-df = df[df["phase"]!=2]
+#df = df[df["phase"]!=2]
 df = remove_outliers(df, column_name="rt", threshold=2)
 
 # divide into subblocks (optional)
@@ -44,7 +44,7 @@ df_merged['rt_diff_running_avg'] = df_merged.groupby('subject_id')['rt_diff'].tr
 
 # Add labels and title
 fig, ax = plt.subplots()
-sns.boxplot(x='sub_block', y='rt_diff', data=df_merged)
+sns.lineplot(x='sub_block', y='rt_diff', data=df_merged, palette="tab10")
 ax.set_xlabel('Block')
 ax.set_ylabel('Reaction time (distractor absent - distractor present)')
 ax.set_title("")
@@ -52,14 +52,6 @@ ax.hlines(y=0, xmin=plt.xlim()[0], xmax=plt.xlim()[1], linestyles='--', color="b
 ax.legend("")  # Place legend outside the plot
 ax.set_title("Transition from distractor attentional capture to suppression")
 plt.tight_layout()  # Adjust layout to prevent labels from overlapping
-# make stats annotations
-pairs = []
-for i in range(0, 10):
-    for j in range(i + 1, 10):  # Start j from i+1 to avoid duplicates and self-pairs
-        pairs.append([i, j])# annotate ax1 --> accuracy
-annotator1 = Annotator(ax=ax, plot="boxplot", pairs=pairs, data=df_merged, x="sub_block", y="rt_diff")
-annotator1.configure(test="t-test_paired", text_format="star", hide_non_significant=True)
-annotator1.apply_and_annotate()
 
 # stats
 anova_correct = AnovaRM(df_merged, depvar='rt_diff', subject='subject_id', within=['sub_block'], aggregate_func="mean").fit()
