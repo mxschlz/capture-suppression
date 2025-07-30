@@ -902,3 +902,94 @@ def get_all_waves(trials_df, electrode_pairs, time_window, all_times, lateral_st
     diff_wave = mean_contra_wave - mean_ipsi_wave
 
     return diff_wave, mean_contra_wave, mean_ipsi_wave, window_times
+
+
+def calculate_capture_score(row, locations_map):
+    """
+    Calculates a time-weighted capture score based on the full trajectory,
+    adapting its logic for singleton-present and singleton-absent trials.
+
+    This function quantifies motor deviation by projecting the average trajectory
+    vector onto two competing directions.
+
+    - For Singleton-Present trials:
+      It contrasts movement towards the salient distractor vs. a neutral control item.
+      This isolates the specific effect of salience.
+      Score = projection_on_distractor - projection_on_control
+
+    - For Singleton-Absent trials:
+      It contrasts movement towards one neutral non-target vs. another.
+      This provides a baseline measure of random motor deviation.
+      Score = projection_on_NonSingleton1 - projection_on_NonSingleton2
+
+    Args:
+        row (pd.Series): A row from the analysis DataFrame. Must contain trial info
+                         like 'SingletonPresent', digit locations, and the average
+                         trajectory vector ('avg_x_dva', 'avg_y_dva').
+        locations_map (dict): A dictionary mapping numpad digits to (x, y) coordinates.
+
+    Returns:
+        float: The calculated capture score.
+            - Positive Score: Stronger pull towards the first item in the contrast (e.g., distractor).
+            - Negative Score: Stronger pull towards the second item (e.g., control).
+    """
+    # --- 1. Get the average movement vector for the trial ---
+    # This vector represents the "center of mass" of the entire trajectory,
+    # making the score inherently time-weighted.
+    try:
+        avg_vec = np.array([row['avg_x_dva'], row['avg_y_dva']])
+    except KeyError:
+        print("Warning: 'avg_x_dva' or 'avg_y_dva' not found. Cannot calculate score.")
+        return np.nan
+
+    if np.linalg.norm(avg_vec) < 1e-6:
+        return np.nan
+
+    # --- 2. Determine which items to contrast based on trial type ---
+    try:
+        is_singleton_present = row['SingletonPresent'] == 1
+    except KeyError:
+        print("Warning: 'SingletonPresent' column not found. Cannot determine trial type.")
+        return np.nan
+
+    if is_singleton_present:
+        # For singleton trials, contrast the distractor vs. a neutral control.
+        primary_col, contrast_col = 'TargetDigit', 'SingletonDigit'
+    else:
+        # For no-singleton trials, contrast the two neutral non-targets.
+        primary_col, contrast_col = 'TargetDigit', 'Non-Singleton1Digit'
+
+    # --- 3. Get digit locations for the primary and contrast items ---
+    try:
+        primary_digit = row[primary_col]
+        contrast_digit = row[contrast_col]
+    except KeyError as e:
+        print(f"Warning: Missing required column for score calculation: {e}")
+        return np.nan
+
+    if pd.isna(primary_digit) or pd.isna(contrast_digit):
+        return np.nan
+
+    # --- 4. Calculate projections ---
+    def get_projection(digit):
+        """Helper to get the projection of the avg_vec onto a direction vector."""
+        # Ensure digit is an integer for dictionary lookup
+        dir_vec = np.array(locations_map.get(int(digit), (0, 0)))
+        norm = np.linalg.norm(dir_vec)
+        if norm < 1e-6:
+            return np.nan  # Cannot project onto a zero vector
+        unit_vec = dir_vec / norm
+        return np.dot(avg_vec, unit_vec)
+
+    projection_on_primary = get_projection(primary_digit)
+    projection_on_contrast = get_projection(contrast_digit)
+
+    if np.isnan(projection_on_primary) or np.isnan(projection_on_contrast):
+        return np.nan
+
+    # --- 5. The final score is the difference between projections ---
+    # This measures the "extra" pull towards the primary item (e.g., distractor)
+    # relative to the contrast item (e.g., control).
+    # A positive score means more pull towards the primary.
+    capture_score = projection_on_primary - projection_on_contrast
+    return capture_score
