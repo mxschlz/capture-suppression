@@ -267,7 +267,6 @@ print("Final ROI map:", {k: tuple(round(vi, 2) for vi in v) for k, v in sorted(n
 
 # ===================================================================
 #      CONTINUOUS MOVEMENT ANALYSIS (CAPTURE SCORE)
-#      (Comparing Singleton-Present vs. Singleton-Absent)
 # ===================================================================
 print("\n--- Starting Continuous Movement Analysis (Full Trajectory) ---")
 print("This method calculates a capture score for both singleton-present and singleton-absent trials.")
@@ -311,54 +310,77 @@ analysis_df['capture_score'] = analysis_df.apply(
     calculate_capture_score, axis=1, locations_map=numpad_locations_dva
 )
 
-# Drop any trials where the score could not be calculated and add a readable column
+# Drop any trials where the score could not be calculated
 analysis_df.dropna(subset=['capture_score'], inplace=True)
+
+# --- Add a readable column for Priming condition ---
+# We map the numeric Priming values to meaningful labels for plotting.
+priming_map = {1: 'Positive', 0: 'No', -1: 'Negative'}
+analysis_df['PrimingCondition'] = analysis_df['Priming'].map(priming_map)
+
+# Drop any trials that don't have a valid priming condition, just in case.
+analysis_df.dropna(subset=['PrimingCondition'], inplace=True)
+
+print(f"Successfully calculated capture score for {len(analysis_df)} trials.")
+print("Analysis will be divided by the following priming conditions:")
+print(analysis_df['PrimingCondition'].value_counts())
 analysis_df['Condition'] = np.where(analysis_df['SingletonPresent'] == 1, 'Distractor Present', 'Distractor Absent')
 print(f"Successfully calculated capture score for {len(analysis_df)} trials.")
 
 # ===================================================================
-#       VISUALIZE THE CAPTURE SCORE
+#       VISUALIZE THE CAPTURE SCORE BY PRIMING CONDITION
 # ===================================================================
-print("\n--- Visualizing Capture Score (Distractor Present vs. Absent) ---")
+print("\n--- Visualizing Capture Score by Priming Condition ---")
 
-
-# --- Plotting: Score across blocks for both conditions ---
+# --- Plotting: Score across blocks for each priming condition ---
 plt.figure(figsize=(12, 7))
 sns.pointplot(
     data=analysis_df,
     x='block',
     y='capture_score',
-    hue='Condition',
-    hue_order=['Distractor Present', 'Distractor Absent'],
-    palette={'Distractor Present': 'salmon', 'Distractor Absent': 'skyblue'},
+    hue='PrimingCondition',
+    hue_order=['Negative', 'No', 'Positive'],  # Set a logical order
+    palette={'Positive': 'mediumseagreen', 'No': 'gray', 'Negative': 'salmon'}, # Intuitive colors
     errorbar='ci',
     join=True
 )
 plt.axhline(0, color='black', linestyle='--', linewidth=1, label='No Lateral Bias')
-plt.title('Capture Score Across Blocks by Condition', fontsize=16)
+plt.title('Capture Score Across Blocks by Priming Condition', fontsize=16)
 plt.xlabel('Block Number', fontsize=12)
 plt.ylabel('Capture Score (Positive = Target Capture)', fontsize=12)
-plt.legend(title='Condition')
+plt.legend(title='Priming Condition')
 plt.grid(True, which='major', axis='y', linestyle=':', linewidth=0.5)
 sns.despine()
 plt.show()
 
 
 # ===================================================================
-#       STATISTICAL ANALYSIS: CAPTURE SCORE
+#       STATISTICAL ANALYSIS: CAPTURE SCORE BY PRIMING
 # ===================================================================
-print("\n--- Statistical Analysis of Capture Score ---")
+print("\n--- Statistical Analysis of Capture Score (Priming x Block) ---")
 
-# We will run a 2xN repeated measures ANOVA to test for:
-# 1. A main effect of Condition (is there capture overall?)
+# We will run a 3xN repeated measures ANOVA to test for:
+# 1. A main effect of PrimingCondition (does priming affect capture?)
 # 2. A main effect of Block (is there learning?)
-# 3. An interaction effect (does the capture effect change across blocks?)
-print("\nRunning 2xN Repeated Measures ANOVA (Condition x Block)...")
+# 3. An interaction effect (does the priming effect change across blocks?)
+print("\nRunning 3xN Repeated Measures ANOVA (PrimingCondition x Block)...")
+
+# Filter out subjects who do not have data in all conditions for the ANOVA
+# This is a requirement for the rm_anova function in pingouin
+analysis_df_anova = analysis_df.copy()
+if analysis_df_anova.groupby(['subject_id', 'PrimingCondition', 'block']).size().unstack(fill_value=0).eq(0).any().any():
+    print("Warning: Some subjects may not have data for all conditions/blocks. Filtering for ANOVA.")
+    analysis_df_anova = pg.remove_rm_na(
+        data=analysis_df_anova,
+        dv='capture_score',
+        within=['PrimingCondition', 'block'],
+        subject='subject_id'
+    )
 
 rm_anova_results = pg.rm_anova(
-    data=analysis_df,
+    data=analysis_df_anova,
     dv='capture_score',
-    within=['Condition', 'block'],  # Two within-subject factors
+    within=['PrimingCondition', 'block'],  # Updated within-subject factors
     subject='subject_id',
     detailed=True
 )
@@ -406,7 +428,7 @@ sns.lineplot(
 plt.axhline(0, color='red', linestyle='--', linewidth=1.5, label='Capture = Target capture')
 
 # Formatting the plot
-plt.title(f'Running Average of capture Score (Window Size = {WINDOW_SIZE})', fontsize=16)
+plt.title(f'Running Average of Capture Score (Window Size = {WINDOW_SIZE})', fontsize=16)
 plt.xlabel('Trial Number (Singleton Present)', fontsize=12)
 plt.ylabel('capture Score (Negative = Capture, Positive = Target)', fontsize=12)
 plt.legend()
@@ -486,72 +508,6 @@ print(f"Remaining trials for analysis: {len(analysis_df_classification)}")
 analysis_df_classification['initial_movement_direction'] = analysis_df_classification.apply(
     classify_initial_movement, axis=1, locations_map=numpad_locations_dva, start_vec=start_point_vec
 )
-
-# --- Diagnostic Step: Investigate the peak near the response time ---
-print("\n--- Investigating the sharp peak in initial movement times ---")
-
-# Based on your observation, the peak occurs around -0.2s before the response.
-# Let's define a narrow window around this peak to isolate these specific trials.
-peak_window_start = -0.4
-print(f"Isolating trials where the first movement was detected between {peak_window_start}s (relative to response).")
-
-# Get the trials that contribute to this peak
-peak_trials_df = first_movement_times_df[
-    (first_movement_times_df['first_movement_s'] > peak_window_start)
-]
-
-print(f"\nFound {len(peak_trials_df)} trials within this peak window.")
-
-if not peak_trials_df.empty:
-    # To understand these trials, let's look at their properties from the main behavioral dataframe.
-    # We need to merge them back with `df_clean` which has the RT and response info.
-    # Ensure dtypes match for merging.
-    peak_trials_df['subject_id'] = peak_trials_df['subject_id'].astype(int)
-    peak_trials_df['block'] = peak_trials_df['block'].astype(int)
-    peak_trials_df['trial_nr'] = peak_trials_df['trial_nr'].astype(int)
-
-    # Merge to get full trial info
-    peak_details_df = pd.merge(
-        df_clean,
-        peak_trials_df,
-        on=['subject_id', 'block', 'trial_nr'],
-        how='inner'  # We only want the trials that are in both dataframes
-    )
-
-    print("\n--- Characteristics of trials in the peak ---")
-    print("Distribution of their Reaction Times (rt):")
-    print(peak_details_df['rt'].describe())
-
-    print("\nDistribution of their Response Correctness (select_target):")
-    print(peak_details_df['select_target'].value_counts(normalize=True, dropna=False))
-
-    print("\n(For comparison, the RT distribution of ALL trials in df_clean):")
-    print(df_clean['rt'].describe())
-
-    # --- Visualize a few example trajectories from the peak ---
-    print("\n--- Visualizing a few example trajectories from the peak ---")
-    # We will use the `analysis_df` as it has all the necessary columns for plotting
-    # and has already been merged with initial movement data.
-    peak_viz_df = pd.merge(
-        analysis_df_classification,
-        peak_trials_df[['subject_id', 'block', 'trial_nr']], # Just use the identifiers to filter
-        on=['subject_id', 'block', 'trial_nr'],
-        how='inner'
-    )
-
-    if not peak_viz_df.empty:
-        # Take up to 3 random trials from the peak to visualize
-        num_to_plot = min(len(peak_viz_df), 3)
-        print(f"Plotting {num_to_plot} random example trajectories...")
-        for i, trial_to_plot in peak_viz_df.sample(n=num_to_plot).iterrows():
-            print(f"Plotting sub-{int(trial_to_plot['subject_id'])}, block-{int(trial_to_plot['block'])}, trial-{int(trial_to_plot['trial_nr'])}")
-            visualize_full_trajectory(trial_to_plot, df, MOVEMENT_THRESHOLD, target_hz=RESAMP_FREQ)
-    else:
-        print("Could not find matching trials in `analysis_df` to visualize.")
-
-else:
-    print("No trials found in the specified peak window.")
-
 
 # ===================================================================
 #       SAVE CLASSIFICATION RESULTS FOR EXTERNAL USE
@@ -829,6 +785,10 @@ print("\n--- One-Sample T-test on Block-level suppression effects ---")
 ttest_result = ttest_rel(block_level_effect.query("block==0")["suppression_effect"], block_level_effect.query("block==1")["suppression_effect"])
 print(ttest_result)
 
+
+
+# THE CODE BELOW IS FOR DIAGNOSTICS ONLY
+"""
 # ===================================================================
 #           EXAMPLE USAGE OF THE TRIAL PLOTTING FUNCTION
 # ===================================================================
@@ -887,3 +847,4 @@ visualize_full_trajectory(other_trial_for_viz, df, MOVEMENT_THRESHOLD, target_hz
 #    df,
 #    numpad_locations_dva,
 #    target_hz=RESAMP_FREQ)
+"""
