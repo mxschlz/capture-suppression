@@ -4,7 +4,7 @@ from utils import *
 import seaborn as sns
 from SPACEPRIME.subjects import subject_ids
 from stats import remove_outliers
-from scipy.stats import linregress
+from scipy.stats import linregress, ttest_rel
 import pingouin as pg
 
 plt.ion()
@@ -119,17 +119,16 @@ print(f"Average sampling frequency: {sfreq:.2f} Hz")
 hist /= (sfreq + 1e-9)
 
 # --- 4. Smooth and plot the heatmap ---
-sigma = 25  # Sigma for the Gaussian smoothing filter
-hist_smoothed = gaussian_filter(hist, sigma=sigma)
+hist_smoothed = gaussian_filter(hist, sigma=SIGMA)
 
 extent = [0, WIDTH, 0, HEIGHT] # Use 0, height for y-axis to match a standard Cartesian plot
 plt.figure(figsize=(10, 8))
 plt.imshow(hist_smoothed, extent=extent, origin='lower', aspect='auto', cmap='inferno')
 plt.xlabel("X Position (pixels)")
 plt.ylabel("Y Position (pixels)")
-plt.title("Cursor Dwell Time (seconds, center excluded)")
-cbar = plt.colorbar()
-cbar.set_label("Dwell Time (s)")
+plt.title("Cursor Dwell Time")
+#cbar = plt.colorbar()
+#cbar.set_label("Dwell Time (s)")
 plt.show()
 
 
@@ -266,6 +265,168 @@ numpad_locations_dva.update(data_driven_map)
 print("Using data-driven ROI locations with default fallbacks.")
 print("Final ROI map:", {k: tuple(round(vi, 2) for vi in v) for k, v in sorted(numpad_locations_dva.items())})
 
+# ===================================================================
+#      CONTINUOUS MOVEMENT ANALYSIS (CAPTURE SCORE)
+#      (Comparing Singleton-Present vs. Singleton-Absent)
+# ===================================================================
+print("\n--- Starting Continuous Movement Analysis (Full Trajectory) ---")
+print("This method calculates a capture score for both singleton-present and singleton-absent trials.")
+
+# --- Step 1: Calculate the Average Vector for Each Trial's Full Trajectory ---
+print("Calculating the average vector for each trial's full trajectory...")
+avg_full_trajectory_vectors_df = df.groupby(['subject_id', 'block', 'trial_nr']).agg(
+    avg_x_dva=('x', 'mean'),
+    avg_y_dva=('y', 'mean')
+).reset_index()
+
+# --- Step 2: Merge Average Vectors into the Main Analysis DataFrame ---
+# We use `df_clean` as our base, but this time we DO NOT filter by SingletonPresent.
+analysis_df = df_clean.copy()  # Keep all trials
+# TODO: this is temporary for coherence with the rest of the plots
+analysis_df = analysis_df.query("SingletonPresent==1")
+
+
+# Ensure data types are consistent for merging.
+analysis_df['subject_id'] = analysis_df['subject_id'].astype(int)
+analysis_df['block'] = analysis_df['block'].astype(int)
+analysis_df['trial_nr'] = analysis_df['trial_nr'].astype(int)
+avg_full_trajectory_vectors_df['subject_id'] = avg_full_trajectory_vectors_df['subject_id'].astype(int)
+avg_full_trajectory_vectors_df['block'] = avg_full_trajectory_vectors_df['block'].astype(int)
+avg_full_trajectory_vectors_df['trial_nr'] = avg_full_trajectory_vectors_df['trial_nr'].astype(int)
+
+# Use a left merge to add the average trajectory vectors to our trial data.
+analysis_df = pd.merge(
+    analysis_df,
+    avg_full_trajectory_vectors_df,
+    on=['subject_id', 'block', 'trial_nr'],
+    how='left'
+)
+analysis_df.dropna(subset=['avg_x_dva', 'avg_y_dva'], inplace=True)
+print(f"Found trajectory data for {len(analysis_df)} trials.")
+
+# --- Step 3: Apply the new, adaptive Function to Calculate the Capture Score ---
+# The new function in utils.py will automatically handle the logic for both trial types.
+print("Applying adaptive capture score calculation...")
+analysis_df['capture_score'] = analysis_df.apply(
+    calculate_capture_score, axis=1, locations_map=numpad_locations_dva
+)
+
+# Drop any trials where the score could not be calculated and add a readable column
+analysis_df.dropna(subset=['capture_score'], inplace=True)
+analysis_df['Condition'] = np.where(analysis_df['SingletonPresent'] == 1, 'Distractor Present', 'Distractor Absent')
+print(f"Successfully calculated capture score for {len(analysis_df)} trials.")
+
+# ===================================================================
+#       VISUALIZE THE CAPTURE SCORE
+# ===================================================================
+print("\n--- Visualizing Capture Score (Distractor Present vs. Absent) ---")
+
+
+# --- Plotting: Score across blocks for both conditions ---
+plt.figure(figsize=(12, 7))
+sns.pointplot(
+    data=analysis_df,
+    x='block',
+    y='capture_score',
+    hue='Condition',
+    hue_order=['Distractor Present', 'Distractor Absent'],
+    palette={'Distractor Present': 'salmon', 'Distractor Absent': 'skyblue'},
+    errorbar='ci',
+    join=True
+)
+plt.axhline(0, color='black', linestyle='--', linewidth=1, label='No Lateral Bias')
+plt.title('Capture Score Across Blocks by Condition', fontsize=16)
+plt.xlabel('Block Number', fontsize=12)
+plt.ylabel('Capture Score (Positive = Target Capture)', fontsize=12)
+plt.legend(title='Condition')
+plt.grid(True, which='major', axis='y', linestyle=':', linewidth=0.5)
+sns.despine()
+plt.show()
+
+
+# ===================================================================
+#       STATISTICAL ANALYSIS: CAPTURE SCORE
+# ===================================================================
+print("\n--- Statistical Analysis of Capture Score ---")
+
+# We will run a 2xN repeated measures ANOVA to test for:
+# 1. A main effect of Condition (is there capture overall?)
+# 2. A main effect of Block (is there learning?)
+# 3. An interaction effect (does the capture effect change across blocks?)
+print("\nRunning 2xN Repeated Measures ANOVA (Condition x Block)...")
+
+rm_anova_results = pg.rm_anova(
+    data=analysis_df,
+    dv='capture_score',
+    within=['Condition', 'block'],  # Two within-subject factors
+    subject='subject_id',
+    detailed=True
+)
+
+print("ANOVA Results:")
+print(rm_anova_results.round(4))
+
+# ===================================================================
+#      ANALYSIS: RUNNING AVERAGE OF capture SCORE OVER TRIALS
+# ===================================================================
+print("\n--- Analyzing Running Average of capture Score Over Trials ---")
+
+# To get a more granular view of learning, we'll plot the capture score
+# over a continuous trial index using a running average to smooth the curve.
+
+# --- Step 1: Prepare the DataFrame ---
+# Ensure the DataFrame is sorted correctly for time-series analysis.
+analysis_df.sort_values(['subject_id', 'block', 'trial_nr'], inplace=True)
+
+# Create a sequential trial index for each subject (only for singleton-present trials).
+analysis_df['singleton_trial_idx'] = analysis_df.groupby('subject_id').cumcount()
+
+# --- Step 2: Calculate the Running Average ---
+# For each subject, calculate the rolling mean of the capture score.
+# This smooths out trial-to-trial noise and reveals the underlying trend.
+# We use the same WINDOW_SIZE defined earlier in the script for consistency.
+analysis_df['capture_score_running_avg'] = analysis_df.groupby('subject_id')['capture_score'].transform(
+    lambda x: x.rolling(WINDOW_SIZE, center=False, min_periods=1).mean()
+)
+
+print(f"Calculated running average with a window size of {WINDOW_SIZE} trials.")
+
+# --- Step 3: Create the Line Plot ---
+plt.figure(figsize=(12, 7))
+
+# Use seaborn's lineplot to show the mean running average across all subjects.
+# The confidence interval will be plotted automatically.
+sns.lineplot(
+    data=analysis_df,
+    x='singleton_trial_idx',
+    y='capture_score_running_avg'
+)
+
+# Add a horizontal line at y=0 for a clear reference point
+plt.axhline(0, color='red', linestyle='--', linewidth=1.5, label='Capture = Target capture')
+
+# Formatting the plot
+plt.title(f'Running Average of capture Score (Window Size = {WINDOW_SIZE})', fontsize=16)
+plt.xlabel('Trial Number (Singleton Present)', fontsize=12)
+plt.ylabel('capture Score (Negative = Capture, Positive = Target)', fontsize=12)
+plt.legend()
+plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+sns.despine()
+
+plt.show()
+
+# ===================================================================
+#       SAVE RESULTS FOR EXTERNAL USE
+# ===================================================================
+print("\n--- Saving Initial Movement Classifications for external use ---")
+# Define a dedicated output directory for this script's results
+output_dir_capture = f"{get_data_path()}concatenated\\"
+
+# Define the output path and save the file
+output_filepath = f"{output_dir_capture}capture_scores.csv"
+analysis_df.to_csv(output_filepath, index=False)
+print(f"Saved capture scores for {len(analysis_df)} trials to: {output_filepath}")
+
 # The start point is always digit 5, which is at (0,0) in our map
 start_point_vec = np.array(numpad_locations_dva[5])
 
@@ -289,7 +450,7 @@ df_clean['subject_id'] = df_clean['subject_id'].astype(float)
 initial_move_points_df['subject_id'] = initial_move_points_df['subject_id'].astype(float)
 # Choose only singleton present trials in merged_df
 df_clean = df_clean.query("SingletonPresent==1")
-analysis_df = pd.merge(
+analysis_df_classification = pd.merge(
     df_clean,
     initial_move_points_df,
     on=['subject_id', 'block', 'trial_nr'],
@@ -297,11 +458,11 @@ analysis_df = pd.merge(
 )
 
 # Drop trials where no movement was detected (initial coordinates will be NaN)
-analysis_df.dropna(subset=['initial_x_dva', 'initial_y_dva'], inplace=True)
-print(f"Found initial movement data for {len(analysis_df)} trials.")
+analysis_df_classification.dropna(subset=['initial_x_dva', 'initial_y_dva'], inplace=True)
+print(f"Found initial movement data for {len(analysis_df_classification)} trials.")
 
 # --- Exclude trials where any primary ROI is at the center (digit 5) ---
-initial_trial_count = len(analysis_df)
+initial_trial_count = len(analysis_df_classification)
 print(f"Filtering out trials with a primary ROI at the center...")
 
 # Define the columns that hold the digit locations for the primary ROIs.
@@ -310,19 +471,19 @@ roi_digit_columns = ['TargetDigit', 'SingletonDigit', 'Non-Singleton2Digit']
 
 # Create a boolean mask to identify rows where any of these columns have the value 5.
 # The .any(axis=1) checks across the row for any True value.
-is_center_roi_mask = (analysis_df[roi_digit_columns] == 5).any(axis=1)
+is_center_roi_mask = (analysis_df_classification[roi_digit_columns] == 5).any(axis=1)
 
 # Keep only the trials where the mask is False (i.e., no ROI was at the center).
 # Using .copy() is good practice here to avoid SettingWithCopyWarning later.
-analysis_df = analysis_df[~is_center_roi_mask].copy()
+#analysis_df = analysis_df[~is_center_roi_mask].copy()
 
-excluded_count = initial_trial_count - len(analysis_df)
+excluded_count = initial_trial_count - len(analysis_df_classification)
 print(f"Excluded {excluded_count} trials.")
-print(f"Remaining trials for analysis: {len(analysis_df)}")
+print(f"Remaining trials for analysis: {len(analysis_df_classification)}")
 
 # --- Step 3 & 4: Calculate Vectors, Angles, and Classify Movement ---
 # Apply the classification function to each row of the DataFrame
-analysis_df['initial_movement_direction'] = analysis_df.apply(
+analysis_df_classification['initial_movement_direction'] = analysis_df_classification.apply(
     classify_initial_movement, axis=1, locations_map=numpad_locations_dva, start_vec=start_point_vec
 )
 
@@ -372,7 +533,7 @@ if not peak_trials_df.empty:
     # We will use the `analysis_df` as it has all the necessary columns for plotting
     # and has already been merged with initial movement data.
     peak_viz_df = pd.merge(
-        analysis_df,
+        analysis_df_classification,
         peak_trials_df[['subject_id', 'block', 'trial_nr']], # Just use the identifiers to filter
         on=['subject_id', 'block', 'trial_nr'],
         how='inner'
@@ -400,7 +561,7 @@ print("\n--- Saving Initial Movement Classifications for external use ---")
 output_dir_cursor = f"{get_data_path()}concatenated\\"
 
 # Select only the essential columns for saving
-output_df = analysis_df[['subject_id', 'block', 'trial_nr', 'initial_movement_direction']].copy()
+output_df = analysis_df_classification[['subject_id', 'block', 'trial_nr', 'initial_movement_direction']].copy()
 
 # Ensure data types are standard integers for compatibility
 output_df['subject_id'] = output_df['subject_id'].astype(int)
@@ -420,7 +581,7 @@ print("\n--- Visualizing Initial Movement Direction by Block ---")
 # --- Step 5a: Calculate counts per subject, per block ---
 # We need to get the number of trials classified into each direction for each subject and each block.
 # This gives us the subject-level data needed for plotting with error bars.
-subject_block_counts = analysis_df.groupby(
+subject_block_counts = analysis_df_classification.groupby(
     ['subject_id', 'block', 'initial_movement_direction']
 ).size().reset_index(name='count')
 
@@ -443,7 +604,7 @@ plt.figure(figsize=(14, 8))
 plot_order = ['target', 'distractor', 'control', 'other']
 
 # The `hue_order` can be sorted to ensure the legend is in a logical sequence.
-hue_order = sorted(analysis_df['block'].unique().astype(int))
+hue_order = sorted(analysis_df_classification['block'].unique().astype(int))
 
 sns.barplot(
     data=subject_block_counts,
@@ -472,18 +633,18 @@ print("\n--- Starting Running Average Analysis (Revised Logic) ---")
 # --- Step 1: Calculate a Per-Trial Suppression Score ---
 
 # First, ensure the DataFrame is sorted correctly. This is crucial for any time-series analysis.
-analysis_df.sort_values(['subject_id', 'block', 'trial_nr'], inplace=True)
+analysis_df_classification.sort_values(['subject_id', 'block', 'trial_nr'], inplace=True)
 
 # Create a single score for each trial based on the initial movement direction:
 #  +1 if the movement was toward the control item (suppression)
 #  -1 if the movement was toward the distractor item (capture)
 #   0 otherwise (e.g., toward target or other)
 conditions = [
-    analysis_df['initial_movement_direction'] == 'control',
-    analysis_df['initial_movement_direction'] == 'distractor'
+    analysis_df_classification['initial_movement_direction'] == 'control',
+    analysis_df_classification['initial_movement_direction'] == 'distractor'
 ]
 choices = [1, -1]
-analysis_df['per_trial_effect'] = np.select(conditions, choices, default=0)
+analysis_df_classification['per_trial_effect'] = np.select(conditions, choices, default=0)
 
 # --- Step 2: Apply a Rolling Average to the Per-Trial Score ---
 
@@ -494,18 +655,21 @@ analysis_df['per_trial_effect'] = np.select(conditions, choices, default=0)
 # CRITICAL FIX: We use `min_periods=1`. This ensures that we get a value even
 # at the very beginning and end of the experiment where the window is not full.
 # Without this, we would lose the data from the crucial initial trials.
-analysis_df['suppression_effect'] = analysis_df.groupby('subject_id')['per_trial_effect'].transform(
+analysis_df_classification['suppression_effect'] = analysis_df_classification.groupby('subject_id')['per_trial_effect'].transform(
     lambda x: x.rolling(WINDOW_SIZE, center=False, min_periods=1).mean()
 ) * 100
 
 # Create a sequential trial index across the entire experiment for each subject.
-analysis_df['singleton_trial_idx'] = analysis_df.groupby('subject_id').cumcount()
+analysis_df_classification['singleton_trial_idx'] = analysis_df_classification.groupby('subject_id').cumcount()
+
+# Use the 'per_trial_effect' which is the raw score (-1, 0, or 1) for robust fitting.
+# Add 1 to trial index to avoid log(0).
+analysis_df_classification['log_trial_idx'] = np.log(analysis_df_classification['singleton_trial_idx'] + 1)
 
 # --- Create the Final Plot ---
-
 plt.figure(figsize=(12, 7))
 # Plot the mean suppression effect
-sns.lineplot(data=analysis_df, x=analysis_df["singleton_trial_idx"], y=analysis_df["suppression_effect"])
+sns.lineplot(data=analysis_df_classification, x=analysis_df_classification["log_trial_idx"], y=analysis_df_classification["suppression_effect"])
 
 # Add a horizontal line at y=0 for reference
 plt.axhline(0, color='red', linestyle='--', linewidth=1.5, label='No Effect (Capture = Suppression)')
@@ -519,7 +683,7 @@ plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 sns.despine()
 
 # Limit the x-axis if there are very few subjects in the last trials, which can make the CI explode.
-trial_counts = analysis_df['singleton_trial_idx'].value_counts()
+trial_counts = analysis_df_classification['log_trial_idx'].value_counts()
 last_reliable_trial = trial_counts[trial_counts >= 3].index.max()
 if pd.notna(last_reliable_trial):
     plt.xlim(0, last_reliable_trial)
@@ -537,11 +701,8 @@ print("\n--- Modeling the Learning Effect Over Trials ---")
 
 # --- Step 1: Fit a logarithmic model for each subject ---
 subject_fits = []
-# Use the 'per_trial_effect' which is the raw score (-1, 0, or 1) for robust fitting.
-# Add 1 to trial index to avoid log(0).
-analysis_df['log_trial_idx'] = np.log(analysis_df['singleton_trial_idx'] + 1)
 
-for subject, group in analysis_df.groupby('subject_id'):
+for subject, group in analysis_df_classification.groupby('subject_id'):
     # Ensure there are enough data points to fit a line
     if len(group) < 3:
         continue
@@ -575,7 +736,7 @@ if pd.notna(last_reliable_trial):
     x_trials = np.arange(0, last_reliable_trial + 1)
 else:
     # Fallback if last_reliable_trial is not available for any reason
-    x_trials = np.arange(0, analysis_df['singleton_trial_idx'].max() + 1)
+    x_trials = np.arange(0, analysis_df_classification['singleton_trial_idx'].max() + 1)
 
 log_x_trials = np.log(x_trials + 1)
 
@@ -588,8 +749,8 @@ fig, ax = plt.subplots(figsize=(12, 7))
 
 # Plot the running average with its confidence interval using seaborn
 sns.lineplot(
-    data=analysis_df,
-    x='singleton_trial_idx',
+    data=analysis_df_classification,
+    x='log_trial_idx',
     y='suppression_effect',
     ax=ax,
     color='gray',
@@ -623,16 +784,16 @@ print("\n--- Creating Block-Level Suppression Effect Bar Plot ---")
 # This score is +1 for a movement to control (suppression), -1 for a movement
 # to the distractor (capture), and 0 otherwise. This logic is robust and clear.
 conditions = [
-    analysis_df['initial_movement_direction'] == 'control',
-    analysis_df['initial_movement_direction'] == 'distractor'
+    analysis_df_classification['initial_movement_direction'] == 'control',
+    analysis_df_classification['initial_movement_direction'] == 'distractor'
 ]
 choices = [1, -1]
-analysis_df['per_trial_effect'] = np.select(conditions, choices, default=0)
+analysis_df_classification['per_trial_effect'] = np.select(conditions, choices, default=0)
 
 # --- Step 2: Calculate Mean Suppression Effect per Subject, per Block ---
 # We group by subject and block and take the mean of our per-trial score.
 # This gives us a single, stable suppression value for each subject in each block.
-block_level_effect = analysis_df.groupby(['subject_id', 'block'])['per_trial_effect'].mean().reset_index()
+block_level_effect = analysis_df_classification.groupby(['subject_id', 'block'])['per_trial_effect'].mean().reset_index()
 
 # Multiply by 100 to get a percentage-like value for the y-axis.
 block_level_effect['suppression_effect'] = block_level_effect['per_trial_effect'] * 100
@@ -664,31 +825,35 @@ sns.despine()
 
 plt.show()
 
+print("\n--- One-Sample T-test on Block-level suppression effects ---")
+ttest_result = ttest_rel(block_level_effect.query("block==0")["suppression_effect"], block_level_effect.query("block==1")["suppression_effect"])
+print(ttest_result)
+
 # ===================================================================
 #           EXAMPLE USAGE OF THE TRIAL PLOTTING FUNCTION
 # ===================================================================
 example = 7
 # --- Find a specific trial to plot ---
-distractor_trial_to_plot = analysis_df[
-    analysis_df['initial_movement_direction'] == 'distractor'
+distractor_trial_to_plot = analysis_df_classification[
+    analysis_df_classification['initial_movement_direction'] == 'distractor'
 ].iloc[example]
 # Call the function with the selected trial data
 plot_trial_vectors(distractor_trial_to_plot, numpad_locations_dva)
 
 # --- Or, plot a trial that went towards the target ---
-target_trial_to_plot = analysis_df[
-    analysis_df['initial_movement_direction'] == 'target'
+target_trial_to_plot = analysis_df_classification[
+    analysis_df_classification['initial_movement_direction'] == 'target'
 ].iloc[example]
 plot_trial_vectors(target_trial_to_plot, numpad_locations_dva)
 
 # --- Or, plot a trial that went towards the other ---
-control_trial_to_plot = analysis_df[
-    analysis_df['initial_movement_direction'] == 'control'
+control_trial_to_plot = analysis_df_classification[
+    analysis_df_classification['initial_movement_direction'] == 'control'
     ].iloc[example]  # Using index 5 for variety
 plot_trial_vectors(control_trial_to_plot, numpad_locations_dva)
 
-other_trial_to_plot = analysis_df[
-    analysis_df['initial_movement_direction'] == 'other'
+other_trial_to_plot = analysis_df_classification[
+    analysis_df_classification['initial_movement_direction'] == 'other'
     ].iloc[example]  # Using index 5 for variety
 plot_trial_vectors(other_trial_to_plot, numpad_locations_dva)
 
@@ -696,17 +861,17 @@ plot_trial_vectors(other_trial_to_plot, numpad_locations_dva)
 # ===================================================================
 #           VISUALIZE FULL TRAJECTORIES WITH RESPONSE TIME
 # ===================================================================
-distractor_trial_for_viz = analysis_df[analysis_df['initial_movement_direction'] == 'distractor'].iloc[example]
+distractor_trial_for_viz = analysis_df_classification[analysis_df_classification['initial_movement_direction'] == 'distractor'].iloc[example]
 visualize_full_trajectory(distractor_trial_for_viz, df, MOVEMENT_THRESHOLD, target_hz=RESAMP_FREQ)
 
 # Find a trial where the initial movement was towards the target
-target_trial_for_viz = analysis_df[analysis_df['initial_movement_direction'] == 'target'].iloc[example]
+target_trial_for_viz = analysis_df_classification[analysis_df_classification['initial_movement_direction'] == 'target'].iloc[example]
 visualize_full_trajectory(target_trial_for_viz, df, MOVEMENT_THRESHOLD, target_hz=RESAMP_FREQ)
 
-control_trial_for_viz = analysis_df[analysis_df['initial_movement_direction'] == 'control'].iloc[example]
+control_trial_for_viz = analysis_df_classification[analysis_df_classification['initial_movement_direction'] == 'control'].iloc[example]
 visualize_full_trajectory(control_trial_for_viz, df, MOVEMENT_THRESHOLD, target_hz=RESAMP_FREQ)
 
-other_trial_for_viz = analysis_df[analysis_df['initial_movement_direction'] == 'other'].iloc[example]
+other_trial_for_viz = analysis_df_classification[analysis_df_classification['initial_movement_direction'] == 'other'].iloc[example]
 visualize_full_trajectory(other_trial_for_viz, df, MOVEMENT_THRESHOLD, target_hz=RESAMP_FREQ)
 
 # Call the new diagnostic function
