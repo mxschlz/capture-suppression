@@ -1,9 +1,8 @@
-import mne
 import matplotlib.pyplot as plt
 import SPACEPRIME  # Use the SPACEPRIME package for loading
 import numpy as np
 from scipy.signal import savgol_filter
-from scipy.stats import t, ttest_rel, sem
+from scipy.stats import t, sem
 from mne.stats import permutation_cluster_1samp_test, permutation_cluster_test
 import itertools
 
@@ -24,7 +23,7 @@ REACTION_TIME_COL = 'rt'
 SUBJECT_ID_COL = 'subject_id'
 
 # --- Pd Electrode Definition (using the same comprehensive pool as N2ac) ---
-PD_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4"), ("C5", "C6"), ("CP3", "CP4"), ("CP5", "CP6")]
+PD_ELECTRODES = [("C3", "C4")]
 left_electrodes = [pair[0] for pair in PD_ELECTRODES]
 right_electrodes = [pair[1] for pair in PD_ELECTRODES]
 
