@@ -52,9 +52,9 @@ PRIMING_REF_STR = PRIMING_MAP.get(0)
 
 # --- 3. ERP Component Definitions ---
 PD_TIME_WINDOW = (0.2, 0.4)
-PD_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4"), ("C5", "C6"), ("CP3", "CP4"), ("CP5", "CP6")]
+PD_ELECTRODES = [("C3", "C4")]
 N2AC_TIME_WINDOW = (0.2, 0.4)
-N2AC_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4"), ("C5", "C6"), ("CP3", "CP4"), ("CP5", "CP6")]
+N2AC_ELECTRODES = [("C3", "C4")]
 
 # --- Latency Robustness Check Configuration ---
 PERCENTAGES_TO_TEST = [0.3, 0.5, 0.7] # Using 50% as the standard
@@ -150,12 +150,12 @@ for subject_id in n2ac_analysis_df[SUBJECT_ID_COL].unique():
         if jackknife_sample_df.empty: continue
 
         jackknifed_rt = jackknife_sample_df[REACTION_TIME_COL].mean()
-        df.loc[trial_idx, 'jackknifed_rt_n2ac'] = jackknifed_rt
+        df.loc[trial_idx, 'jackknifed_rt_n2ac'] = jackknifed_rt * -1
         jackknifed_acc = jackknife_sample_df[ACCURACY_INT_COL].mean()
-        df.loc[trial_idx, 'jackknifed_acc_n2ac'] = jackknifed_acc
+        df.loc[trial_idx, 'jackknifed_acc_n2ac'] = jackknifed_acc * -1
         z_rt = (jackknifed_rt - grand_mean_rt_n2ac) / grand_std_rt_n2ac
         z_acc = (jackknifed_acc - grand_mean_acc_n2ac) / grand_std_acc_n2ac
-        df.loc[trial_idx, 'jackknifed_bis_n2ac'] = z_acc - z_rt
+        df.loc[trial_idx, 'jackknifed_bis_n2ac'] = (z_acc - z_rt) * -1
 
         n2ac_wave, n2ac_times = get_jackknife_contra_ipsi_wave(
             sample_df=jackknife_sample_df, lateral_stim_loc=trial_row[TARGET_COL],
@@ -209,12 +209,12 @@ for subject_id in pd_analysis_df[SUBJECT_ID_COL].unique():
         if jackknife_sample_df.empty: continue
 
         jackknifed_rt = jackknife_sample_df[REACTION_TIME_COL].mean()
-        df.loc[trial_idx, 'jackknifed_rt_pd'] = jackknifed_rt
+        df.loc[trial_idx, 'jackknifed_rt_pd'] = jackknifed_rt * -1
         jackknifed_acc = jackknife_sample_df[ACCURACY_INT_COL].mean()
-        df.loc[trial_idx, 'jackknifed_acc_pd'] = jackknifed_acc
+        df.loc[trial_idx, 'jackknifed_acc_pd'] = jackknifed_acc * -1
         z_rt = (jackknifed_rt - grand_mean_rt_pd) / grand_std_rt_pd
         z_acc = (jackknifed_acc - grand_mean_acc_pd) / grand_std_acc_pd
-        df.loc[trial_idx, 'jackknifed_bis_pd'] = z_acc - z_rt
+        df.loc[trial_idx, 'jackknifed_bis_pd'] = (z_acc - z_rt) * -1
 
         pd_wave, pd_times = get_jackknife_contra_ipsi_wave(
             sample_df=jackknife_sample_df, lateral_stim_loc=trial_row[DISTRACTOR_COL],
