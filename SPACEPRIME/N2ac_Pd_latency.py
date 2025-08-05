@@ -1,12 +1,15 @@
-import mne
 import numpy as np
 import matplotlib.pyplot as plt
-import glob
-import os # For os.path.join
 from scipy.signal import savgol_filter
-from SPACEPRIME import get_data_path
-from SPACEPRIME.subjects import subject_ids
+from scipy.stats import t, sem
+from matplotlib.lines import Line2D
+import itertools
+
 from SPACEPRIME import load_concatenated_epochs
+from stats import remove_outliers
+from utils import calculate_fractional_area_latency
+from mne.stats import permutation_t_test
+
 plt.ion()
 
 # --- Parameters ---
@@ -15,16 +18,16 @@ plt.ion()
 EPOCH_TMIN, EPOCH_TMAX = 0.0, 0.7  # Seconds, crop for comparability
 
 # Electrodes for Contra/Ipsi Calculation
-# These are used for all three conditions (N2ac-like and Pd-like)
-# For a left visual field stimulus, FC6 is contralateral, FC5 is ipsilateral.
-# For a right visual field stimulus, FC5 is contralateral, FC6 is ipsilateral.
-ELECTRODE_LEFT_HEMISPHERE = "FC5"
-ELECTRODE_RIGHT_HEMISPHERE = "FC6"
+ELECTRODE_LEFT_HEMISPHERE = "C3"
+ELECTRODE_RIGHT_HEMISPHERE = "C4"
+OUTLIER_RT_THRESHOLD = 2.0
+REACTION_TIME_COL = 'rt'
+SUBJECT_ID_COL = 'subject_id'
 
 # Plotting Parameters
 SAVGOL_WINDOW_LENGTH = 51
 SAVGOL_POLYORDER = 3
-AMPLITUDE_SCALE_FACTOR = 1e6  # Volts to Microvolts (10e5 in original was 1e6)
+AMPLITUDE_SCALE_FACTOR = 1e6  # Volts to Microvolts
 PLOT_COLORS = {
     'distractor_lateral': "darkorange",
     'target_distractor_present': "blue",
@@ -36,187 +39,239 @@ PLOT_LEGENDS = {
     'target_distractor_absent': "Target lateral (Distractor absent, N2ac)"
 }
 
+# --- Latency & Permutation Test Parameters (from ERP_behavioral_split_analysis.py) ---
+# Analysis windows for latency calculation
+N2AC_ANALYSIS_WINDOW = (0.2, 0.4)
+PD_ANALYSIS_WINDOW = (0.2, 0.4)
+LATENCY_PERCENTAGE = 0.5  # 50% fractional area latency
+
+# MNE Permutation t-test parameters
+N_PERMUTATIONS_TTEST = 10000
+P_VAL_ALPHA = 0.05
+SEED = 42
+
 # --- End of Parameters ---
 
+
 # --- Data Storage for Subject-Level Results ---
-# Stores the (contra - ipsi) difference wave for each subject and condition
-subject_diff_waves = {
-    'distractor_lateral': [],
-    'target_distractor_present': [],
-    'target_distractor_absent': []
-}
+# Format: subject_diff_waves['sub-01']['distractor_lateral'] = wave_array
+subject_diff_waves = {}
 
-times_vector = None # To be populated from the first subject
-processed_subject_count = 0
+times_vector = None  # To be populated from the first subject
 
-# load epochs
-epochs = load_concatenated_epochs().crop(EPOCH_TMIN, EPOCH_TMAX)
+# load epochs and preprocess
+epochs = load_concatenated_epochs("spaceprime").crop(EPOCH_TMIN, EPOCH_TMAX)
 print(f"Loaded {len(epochs)} epochs.")
 
+df = epochs.metadata.copy().reset_index(drop=True)
+if REACTION_TIME_COL in df.columns:
+    print(f"Removing RT outliers (threshold: {OUTLIER_RT_THRESHOLD} SD)...")
+    df = remove_outliers(df, column_name=REACTION_TIME_COL, threshold=OUTLIER_RT_THRESHOLD)
+    print(f"  Trials remaining after RT outlier removal: {len(df)}")
+
+epochs = epochs[df.index]
+print(f"Final number of trials after preprocessing: {len(epochs)}")
+
 # --- Subject Loop ---
-print("Starting subject-level processing...")
-for subject_id_int in subject_ids:
+print("\n--- Starting subject-level processing ---")
+all_subject_ids = epochs.metadata[SUBJECT_ID_COL].unique()
+
+for subject_id_int in all_subject_ids:
+    subject_id_str = f"sub-{int(subject_id_int):02d}"
+    subject_diff_waves[subject_id_str] = {}
+
     try:
         epochs_sub = epochs[f"subject_id=={subject_id_int}"]
-        print(f"  Loaded {len(epochs_sub)} epochs.")
-
-        # Apply baseline if needed (currently commented out in original)
-        # epochs_sub.apply_baseline((-0.3, 0))
-
-        # Filter for specific trial types if needed (currently commented out)
-        # epochs_sub = epochs_sub["select_target==True"]
-        # epochs_sub = epochs_sub["Priming==0"]
-
-        epochs_sub.crop(EPOCH_TMIN, EPOCH_TMAX)
-        print(f"  Cropped epochs to {EPOCH_TMIN}-{EPOCH_TMAX}s. {len(epochs_sub)} epochs remaining.")
-
-        if not epochs_sub: # If cropping or filtering results in no epochs
-            print(f"  No epochs remaining for sub-{subject_id_int} after preproc. Skipping.")
+        if not epochs_sub:
+            print(f"  No epochs for sub-{subject_id_int} after preproc. Skipping.")
             continue
 
-        if times_vector is None: # Store times vector from the first successfully processed subject
+        if times_vector is None:
             times_vector = epochs_sub.times.copy()
 
         all_conds_sub = list(epochs_sub.event_id.keys())
-        subject_contributed_this_loop = False
 
         # --- 1. Distractor Lateral (Pd-like component) ---
-        # Target-2-Singleton-1: Target Central, Distractor Left
-        # Target-2-Singleton-3: Target Central, Distractor Right
         left_stim_epochs_dl = epochs_sub[[x for x in all_conds_sub if "Target-2-Singleton-1" in x]]
         right_stim_epochs_dl = epochs_sub[[x for x in all_conds_sub if "Target-2-Singleton-3" in x]]
 
         if len(left_stim_epochs_dl) > 0 and len(right_stim_epochs_dl) > 0:
-            # Distractor Left: Contra is ELECTRODE_RIGHT_HEMISPHERE, Ipsi is ELECTRODE_LEFT_HEMISPHERE
-            contra_dl_left_stim = left_stim_epochs_dl.copy().average(picks=ELECTRODE_RIGHT_HEMISPHERE).data
-            ipsi_dl_left_stim = left_stim_epochs_dl.copy().average(picks=ELECTRODE_LEFT_HEMISPHERE).data
-            # Distractor Right: Contra is ELECTRODE_LEFT_HEMISPHERE, Ipsi is ELECTRODE_RIGHT_HEMISPHERE
-            contra_dl_right_stim = right_stim_epochs_dl.copy().average(picks=ELECTRODE_LEFT_HEMISPHERE).data
-            ipsi_dl_right_stim = right_stim_epochs_dl.copy().average(picks=ELECTRODE_RIGHT_HEMISPHERE).data
-
-            avg_contra_dl = np.mean([contra_dl_left_stim, contra_dl_right_stim], axis=0)
-            avg_ipsi_dl = np.mean([ipsi_dl_left_stim, ipsi_dl_right_stim], axis=0)
-            diff_wave_dl_sub = avg_contra_dl - avg_ipsi_dl
-            subject_diff_waves['distractor_lateral'].append(diff_wave_dl_sub)
-            subject_contributed_this_loop = True
-            print(f"    Calculated Pd-like diff wave for sub-{subject_id_int}.")
-        else:
-            print(f"    Skipping Pd-like for sub-{subject_id_int} due to insufficient trials.")
+            contra_dl_left = left_stim_epochs_dl.copy().average(picks=ELECTRODE_RIGHT_HEMISPHERE).data
+            ipsi_dl_left = left_stim_epochs_dl.copy().average(picks=ELECTRODE_LEFT_HEMISPHERE).data
+            contra_dl_right = right_stim_epochs_dl.copy().average(picks=ELECTRODE_LEFT_HEMISPHERE).data
+            ipsi_dl_right = right_stim_epochs_dl.copy().average(picks=ELECTRODE_RIGHT_HEMISPHERE).data
+            diff_wave_dl_sub = np.mean([contra_dl_left, contra_dl_right], axis=0) - np.mean(
+                [ipsi_dl_left, ipsi_dl_right], axis=0)
+            subject_diff_waves[subject_id_str]['distractor_lateral'] = diff_wave_dl_sub.squeeze()
 
         # --- 2. Target Lateral (Distractor Present; N2ac-like component) ---
-        # Target-1-Singleton-2: Target Left, Distractor Central
-        # Target-3-Singleton-2: Target Right, Distractor Central
         left_stim_epochs_tdp = epochs_sub[[x for x in all_conds_sub if "Target-1-Singleton-2" in x]]
         right_stim_epochs_tdp = epochs_sub[[x for x in all_conds_sub if "Target-3-Singleton-2" in x]]
 
         if len(left_stim_epochs_tdp) > 0 and len(right_stim_epochs_tdp) > 0:
-            # Target Left: Contra is ELECTRODE_RIGHT_HEMISPHERE, Ipsi is ELECTRODE_LEFT_HEMISPHERE
-            contra_tdp_left_stim = left_stim_epochs_tdp.copy().average(picks=ELECTRODE_RIGHT_HEMISPHERE).data
-            ipsi_tdp_left_stim = left_stim_epochs_tdp.copy().average(picks=ELECTRODE_LEFT_HEMISPHERE).data
-            # Target Right: Contra is ELECTRODE_LEFT_HEMISPHERE, Ipsi is ELECTRODE_RIGHT_HEMISPHERE
-            contra_tdp_right_stim = right_stim_epochs_tdp.copy().average(picks=ELECTRODE_LEFT_HEMISPHERE).data
-            ipsi_tdp_right_stim = right_stim_epochs_tdp.copy().average(picks=ELECTRODE_RIGHT_HEMISPHERE).data
-
-            avg_contra_tdp = np.mean([contra_tdp_left_stim, contra_tdp_right_stim], axis=0)
-            avg_ipsi_tdp = np.mean([ipsi_tdp_left_stim, ipsi_tdp_right_stim], axis=0)
-            diff_wave_tdp_sub = avg_contra_tdp - avg_ipsi_tdp
-            subject_diff_waves['target_distractor_present'].append(diff_wave_tdp_sub)
-            subject_contributed_this_loop = True
-            print(f"    Calculated N2ac-like (distractor present) diff wave for sub-{subject_id_int}.")
-        else:
-            print(f"    Skipping N2ac-like (distractor present) for sub-{subject_id_int} due to insufficient trials.")
+            contra_tdp_left = left_stim_epochs_tdp.copy().average(picks=ELECTRODE_RIGHT_HEMISPHERE).data
+            ipsi_tdp_left = left_stim_epochs_tdp.copy().average(picks=ELECTRODE_LEFT_HEMISPHERE).data
+            contra_tdp_right = right_stim_epochs_tdp.copy().average(picks=ELECTRODE_LEFT_HEMISPHERE).data
+            ipsi_tdp_right = right_stim_epochs_tdp.copy().average(picks=ELECTRODE_RIGHT_HEMISPHERE).data
+            diff_wave_tdp_sub = np.mean([contra_tdp_left, contra_tdp_right], axis=0) - np.mean(
+                [ipsi_tdp_left, ipsi_tdp_right], axis=0)
+            subject_diff_waves[subject_id_str]['target_distractor_present'] = diff_wave_tdp_sub.squeeze()
 
         # --- 3. Target Lateral (Distractor Absent; N2ac-like component) ---
-        # Target-1-Singleton-0: Target Left, No Distractor
-        # Target-3-Singleton-0: Target Right, No Distractor
         left_stim_epochs_tda = epochs_sub[[x for x in all_conds_sub if "Target-1-Singleton-0" in x]]
         right_stim_epochs_tda = epochs_sub[[x for x in all_conds_sub if "Target-3-Singleton-0" in x]]
 
         if len(left_stim_epochs_tda) > 0 and len(right_stim_epochs_tda) > 0:
-            # Target Left: Contra is ELECTRODE_RIGHT_HEMISPHERE, Ipsi is ELECTRODE_LEFT_HEMISPHERE
-            contra_tda_left_stim = left_stim_epochs_tda.copy().average(picks=ELECTRODE_RIGHT_HEMISPHERE).data
-            ipsi_tda_left_stim = left_stim_epochs_tda.copy().average(picks=ELECTRODE_LEFT_HEMISPHERE).data
-            # Target Right: Contra is ELECTRODE_LEFT_HEMISPHERE, Ipsi is ELECTRODE_RIGHT_HEMISPHERE
-            contra_tda_right_stim = right_stim_epochs_tda.copy().average(picks=ELECTRODE_LEFT_HEMISPHERE).data
-            ipsi_tda_right_stim = right_stim_epochs_tda.copy().average(picks=ELECTRODE_RIGHT_HEMISPHERE).data
+            contra_tda_left = left_stim_epochs_tda.copy().average(picks=ELECTRODE_RIGHT_HEMISPHERE).data
+            ipsi_tda_left = left_stim_epochs_tda.copy().average(picks=ELECTRODE_LEFT_HEMISPHERE).data
+            contra_tda_right = right_stim_epochs_tda.copy().average(picks=ELECTRODE_LEFT_HEMISPHERE).data
+            ipsi_tda_right = right_stim_epochs_tda.copy().average(picks=ELECTRODE_RIGHT_HEMISPHERE).data
+            diff_wave_tda_sub = np.mean([contra_tda_left, contra_tda_right], axis=0) - np.mean(
+                [ipsi_tda_left, ipsi_tda_right], axis=0)
+            subject_diff_waves[subject_id_str]['target_distractor_absent'] = diff_wave_tda_sub.squeeze()
 
-            avg_contra_tda = np.mean([contra_tda_left_stim, contra_tda_right_stim], axis=0)
-            avg_ipsi_tda = np.mean([ipsi_tda_left_stim, ipsi_tda_right_stim], axis=0)
-            diff_wave_tda_sub = avg_contra_tda - avg_ipsi_tda
-            subject_diff_waves['target_distractor_absent'].append(diff_wave_tda_sub)
-            subject_contributed_this_loop = True
-            print(f"    Calculated N2ac-like (distractor absent) diff wave for sub-{subject_id_int}.")
+        if not subject_diff_waves[subject_id_str]:
+            del subject_diff_waves[subject_id_str]
         else:
-            print(f"    Skipping N2ac-like (distractor absent) for sub-{subject_id_int} due to insufficient trials.")
-
-        if subject_contributed_this_loop:
-            processed_subject_count += 1
+            print(
+                f"  Processed subject {subject_id_str}. Found data for: {list(subject_diff_waves[subject_id_str].keys())}")
 
     except Exception as e:
-        print(f"  Error processing subject sub-{subject_id_int}: {e}. Skipping this subject.")
-        # Note: If an error occurs mid-subject, they might have partial contributions.
-        # A more robust way would be to collect data in a temp dict for the subject
-        # and only append to global lists if the subject processing completes fully.
+        print(f"  Error processing subject {subject_id_str}: {e}. Skipping.")
+        if subject_id_str in subject_diff_waves:
+            del subject_diff_waves[subject_id_str]
         continue
 
-print(f"\n--- Finished subject-level processing. Processed data for {processed_subject_count} subjects who contributed to at least one condition. ---")
+print(f"\n--- Finished. Processed data for {len(subject_diff_waves)} subjects. ---")
 
-if processed_subject_count == 0:
-    print("No subjects were processed successfully. Exiting.")
-    exit()
-if times_vector is None:
-    print("Times vector could not be determined. Exiting.")
-    exit()
+# --- NEW: Calculate Subject-Level Latency and Amplitude Metrics ---
+print("\n--- Calculating Subject-Level Fractional Area Latencies & Amplitudes ---")
+subject_metrics = {}
+for sub_id, cond_data in subject_diff_waves.items():
+    subject_metrics[sub_id] = {}
+    for cond_key, wave in cond_data.items():
+        is_target_component = 'target' in cond_key
+        analysis_window = N2AC_ANALYSIS_WINDOW if is_target_component else PD_ANALYSIS_WINDOW
+
+        latency = calculate_fractional_area_latency(
+            wave, times_vector,
+            percentage=LATENCY_PERCENTAGE,
+            is_target=is_target_component,
+            analysis_window_times=analysis_window
+        )
+        amplitude = np.nan
+        if not np.isnan(latency) and (times_vector[0] <= latency <= times_vector[-1]):
+            amplitude = np.interp(latency, times_vector, wave) * AMPLITUDE_SCALE_FACTOR
+
+        subject_metrics[sub_id][cond_key] = {'latency': latency, 'amplitude': amplitude}
 
 # --- Grand Average Calculation ---
-print("\nCalculating Grand Averages...")
+print("\n--- Calculating Grand Averages ---")
 ga_diff_waves = {}
-n_subjects_per_condition = {}
+stacked_diff_waves = {}
+condition_keys = list(PLOT_LEGENDS.keys())[1:]
 
-for key, wave_list in subject_diff_waves.items():
-    if wave_list: # Check if list is not empty (i.e., at least one subject contributed)
-        # Squeeze to remove singleton dimension if present, e.g. (N, 1, times) -> (N, times)
-        stacked_waves = np.array(wave_list).squeeze()
-        if stacked_waves.ndim == 1: # Handle case where only one subject contributed to this condition
-            stacked_waves = stacked_waves[np.newaxis, :]
+for key in condition_keys:
+    waves_list = [data[key] for sub, data in subject_diff_waves.items() if key in data]
+    if waves_list:
+        stacked_data = np.array(waves_list)
+        ga_diff_waves[key] = np.mean(stacked_data, axis=0)
+        stacked_diff_waves[key] = stacked_data
+        print(f"  GA for '{PLOT_LEGENDS.get(key, key)}': {len(waves_list)} subjects.")
 
-        if stacked_waves.shape[0] > 0:
-            ga_diff_waves[key] = np.mean(stacked_waves, axis=0)
-            n_subjects_per_condition[key] = stacked_waves.shape[0]
-            print(f"  GA for '{PLOT_LEGENDS.get(key, key)}': {n_subjects_per_condition[key]} subjects.")
-        else: # Should not be reached if wave_list was non-empty and stacking worked
-            ga_diff_waves[key] = np.full_like(times_vector, np.nan)
-            n_subjects_per_condition[key] = 0
-            print(f"  No data for GA for '{PLOT_LEGENDS.get(key, key)}' (after stacking).")
-    else:
-        ga_diff_waves[key] = np.full_like(times_vector, np.nan) # Fill with NaNs if no subjects
-        n_subjects_per_condition[key] = 0
-        print(f"  No data for GA for '{PLOT_LEGENDS.get(key, key)}'.")
+# --- Plotting and Statistical Analysis ---
+print("\n--- Plotting Grand Averages and Running Paired Permutation t-tests ---")
+fig, ax = plt.subplots(figsize=(14, 9))
+
+# --- Plotting Loop ---
+for key in condition_keys:
+    if key in ga_diff_waves:
+        ga_wave = ga_diff_waves[key]
+        stacked_data = stacked_diff_waves[key]
+        n_subs = stacked_data.shape[0]
+
+        ga_wave_plot = savgol_filter(ga_wave, SAVGOL_WINDOW_LENGTH, SAVGOL_POLYORDER) * AMPLITUDE_SCALE_FACTOR
+        sem_wave = sem(stacked_data, axis=0)
+        t_crit = t.ppf(1 - 0.05 / 2, n_subs - 1)
+        ci_range = sem_wave * t_crit * AMPLITUDE_SCALE_FACTOR
+
+        ax.plot(times_vector, ga_wave_plot, color=PLOT_COLORS[key], lw=2.5, label=f"{PLOT_LEGENDS[key]} (N={n_subs})")
+        ax.fill_between(times_vector, ga_wave_plot - ci_range, ga_wave_plot + ci_range, color=PLOT_COLORS[key],
+                        alpha=0.1)
+
+        # Add crosshairs based on GA wave metrics
+        is_target_comp = 'target' in key
+        analysis_window = N2AC_ANALYSIS_WINDOW if is_target_comp else PD_ANALYSIS_WINDOW
+        latency_on_ga = calculate_fractional_area_latency(
+            ga_wave, times_vector, percentage=LATENCY_PERCENTAGE, is_target=is_target_comp,
+            analysis_window_times=analysis_window)
+
+        if not np.isnan(latency_on_ga) and (times_vector[0] <= latency_on_ga <= times_vector[-1]):
+            amplitude_on_ga = np.interp(latency_on_ga, times_vector, ga_wave_plot)
+            ax.plot([latency_on_ga, latency_on_ga], [0, amplitude_on_ga], color=PLOT_COLORS[key], linestyle=':', lw=1.5)
+            ax.plot([ax.get_xlim()[0], latency_on_ga], [amplitude_on_ga, amplitude_on_ga], color=PLOT_COLORS[key],
+                    linestyle=':', lw=1.5)
+            ax.plot(latency_on_ga, amplitude_on_ga, 'o', markerfacecolor=PLOT_COLORS[key], markeredgecolor='k',
+                    markersize=8, zorder=11)
+
+# --- Paired Permutation t-tests on Metrics ---
+print("\n--- Running Paired Permutation t-tests on Metrics ---")
+comparisons = list(itertools.combinations(condition_keys, 2))
+stats_text_handles = []
+
+for cond1, cond2 in comparisons:
+    print(f"\n--- Comparing: {PLOT_LEGENDS[cond1]} vs {PLOT_LEGENDS[cond2]} ---")
 
 
-# --- Plotting Grand Averages ---
-print("\nPlotting Grand Averages...")
-plt.figure(figsize=(10, 6))
+    def run_metric_test(metric_name):
+        common_subjects = [s for s, m in subject_metrics.items() if cond1 in m and cond2 in m and
+                           not np.isnan(m[cond1][metric_name]) and not np.isnan(m[cond2][metric_name])]
 
-for key in subject_diff_waves.keys(): # Iterate in the order they were defined
-    if n_subjects_per_condition.get(key, 0) > 0: # Check if there's data to plot
-        # The GA is already 1D (times,) due to np.mean(axis=0)
-        # and the squeeze/newaxis logic for single subject.
-        # So, no [0] indexing needed for ga_diff_waves[key]
-        plt.plot(times_vector,
-                 savgol_filter(ga_diff_waves[key] * AMPLITUDE_SCALE_FACTOR,
-                               window_length=SAVGOL_WINDOW_LENGTH, polyorder=SAVGOL_POLYORDER),
-                 color=PLOT_COLORS.get(key, 'black'), # Default to black if key not in PLOT_COLORS
-                 label=f"{PLOT_LEGENDS.get(key, key)} (N={n_subjects_per_condition[key]})")
+        if len(common_subjects) < 3:
+            print(f"  Not enough common subjects ({len(common_subjects)}) for {metric_name} test. Skipping.")
+            return "p=n.s."
 
-plt.axhline(y=0, color='k', linestyle='--', linewidth=0.8)
-plt.axvline(x=0, color='k', linestyle=':', linewidth=0.8) # Assuming 0 is stimulus onset
-plt.legend(loc='best')
-plt.title(f"Grand Average Difference Waves (Contra - Ipsi) at {ELECTRODE_LEFT_HEMISPHERE}/{ELECTRODE_RIGHT_HEMISPHERE}")
-plt.ylabel("Amplitude [µV]")
-plt.xlabel("Time [s]")
-plt.grid(True, linestyle=':', alpha=0.6)
+        metric1 = [subject_metrics[s][cond1][metric_name] for s in common_subjects]
+        metric2 = [subject_metrics[s][cond2][metric_name] for s in common_subjects]
+        diffs = np.array(metric1) - np.array(metric2)
+
+        _, p_val, _ = permutation_t_test(diffs[:, np.newaxis], n_permutations=N_PERMUTATIONS_TTEST, seed=SEED)
+        p_val_float = p_val[0]
+
+        p_str = f"p={p_val_float:.3f}" if p_val_float >= 0.001 else "p<0.001"
+        if p_val_float < P_VAL_ALPHA:
+            p_str += '*'
+        return p_str
+
+
+    p_text_lat = run_metric_test('latency')
+    p_text_amp = run_metric_test('amplitude')
+
+    name1_short = PLOT_LEGENDS[cond1].split('(')[0].strip()
+    name2_short = PLOT_LEGENDS[cond2].split('(')[0].strip()
+
+    stats_text_handles.append(Line2D([0], [0], color='w', label=f"'{name1_short}' vs '{name2_short}':"))
+    stats_text_handles.append(Line2D([0], [0], color='w', label=f"  Latency: {p_text_lat}"))
+    stats_text_handles.append(Line2D([0], [0], color='w', label=f"  Amplitude: {p_text_amp}"))
+    stats_text_handles.append(Line2D([0], [0], color='w', label=" "))  # Spacer
+
+# --- Finalize Plot ---
+ax.axhline(0, color="black", linestyle="--", linewidth=1)
+ax.axvline(0, color="black", linestyle=":", linewidth=1)
+
+# Create legend
+handles, labels = ax.get_legend_handles_labels()
+handles.append(Line2D([0], [0], marker='o', color='w', markeredgecolor='k', label='Metric on GA Wave', markersize=8,
+                      linestyle='None'))
+handles.extend(stats_text_handles)
+ax.legend(handles=handles, loc='best', title="Paired Comparisons", fontsize=10)
+
+ax.set_title(
+    f"Grand Average Difference Waves (Contra - Ipsi) at {ELECTRODE_LEFT_HEMISPHERE}/{ELECTRODE_RIGHT_HEMISPHERE}",
+    fontsize=16, weight='bold')
+ax.set_ylabel("Amplitude (µV)", fontsize=14)
+ax.set_xlabel("Time (s)", fontsize=14)
+ax.grid(True, linestyle=':', alpha=0.6)
+ax.tick_params(axis='both', which='major', labelsize=12)
 plt.tight_layout()
 plt.show(block=True)
-
-print("\nDone.")
