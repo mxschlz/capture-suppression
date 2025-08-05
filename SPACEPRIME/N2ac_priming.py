@@ -186,8 +186,8 @@ for key in condition_keys:
     for sub_str_loop in subject_diff_waves.keys():
         if key in subject_diff_waves[sub_str_loop]:
             raw_wave = subject_diff_waves[sub_str_loop][key]
-            smoothed_wave = savgol_filter(raw_wave, window_length=SAVGOL_WINDOW, polyorder=SAVGOL_POLYORDER)
-
+            #smoothed_wave = savgol_filter(raw_wave, window_length=SAVGOL_WINDOW, polyorder=SAVGOL_POLYORDER)
+            smoothed_wave = raw_wave
             # Store the smoothed wave for this subject and condition
             if sub_str_loop not in subject_diff_waves_smoothed:
                 subject_diff_waves_smoothed[sub_str_loop] = {}
