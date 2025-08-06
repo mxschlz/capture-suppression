@@ -6,7 +6,7 @@ import glob
 import numpy as np # Needed for _create_and_save_concatenated_tfr
 import pandas as pd # Added for load_concatenated_csv
 
-SUPPORTED_PARADIGMS = ['spaceprime', 'passive', 'flanker']
+SUPPORTED_PARADIGMS = ['spaceprime', 'spaceprime_desc-csd', 'passive', 'flanker']
 
 # --- Configuration for filenames (functions to generate names based on paradigm) ---
 
@@ -337,19 +337,12 @@ def load_concatenated_csv(filename, **kwargs):
         return None
 
 
-# ======== Main execution block for __init__.py ========
-# This code runs when the SPACEPRIME package is imported.
-
-print(f"INFO: Initializing SPACEPRIME package...")
-
 # On import, this package does not automatically create or load any data.
 # You must explicitly call the creation or loading functions.
-print(f"INFO: SPACEPRIME package initialization complete.")
 print(f"INFO: Supported paradigms are: {SUPPORTED_PARADIGMS}")
 
 print("\nINFO: To load data for a specific paradigm (e.g., 'passive'), use:")
 print("INFO:   epochs = SPACEPRIME.load_concatenated_epochs('passive')")
-print("INFO:   tfr = SPACEPRIME.load_concatenated_tfr('passive')")
 print("INFO:   my_dataframe = SPACEPRIME.load_concatenated_csv('your_file.csv')")
 
 print("\nINFO: To create missing files for a paradigm, use:")
