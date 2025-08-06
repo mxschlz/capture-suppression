@@ -22,21 +22,21 @@ PHASE_COL = 'phase'
 
 # --- 2. General Script Parameters ---
 # Whether to plot the topographies or not (because that takes a while)
-PLOT_TOPOS = True
+PLOT_TOPOS = False
 
 # Paths
 SETTINGS_PATH = os.path.join(get_data_path(), "settings")
 MONTAGE_FNAME = "CACS-64_NO_REF.bvef" # Relative to SETTINGS_PATH
 
 # ROIs for Contra/Ipsi Calculation
-LEFT_ROI_DISTRACTOR = ["FC3", "FC5", "C3", "C5", "CP3", "CP5"]
-RIGHT_ROI_DISTRACTOR = ["FC4", "FC6", "C4", "C6", "CP4", "CP6"]
-LEFT_ROI_TARGET = ["FC3", "FC5", "C3", "C5", "CP3", "CP5"]
-RIGHT_ROI_TARGET = ["FC4", "FC6", "C4", "C6", "CP4", "CP6"]
+LEFT_ROI_DISTRACTOR = ["FC3", "FC5", "C3"]
+RIGHT_ROI_DISTRACTOR = ["FC4", "FC6", "C4"]
+LEFT_ROI_TARGET = ["FC3", "FC5", "C3"]
+RIGHT_ROI_TARGET = ["FC4", "FC6", "C4"]
 
 # Epoching and Plotting
 EPOCH_TMIN, EPOCH_TMAX = 0.0, 0.7  # Seconds
-AMPLITUDE_SCALE_FACTOR = 1e6      # Volts to Microvolts for plotting (Corrected from 1e7)
+AMPLITUDE_SCALE_FACTOR = 1      # Volts to Microvolts for plotting (Corrected from 1e7)
 
 # Cluster Permutation Test Parameters
 N_JOBS = 5
@@ -58,10 +58,10 @@ TOPO_TIME_STEP = 0.01             # Time step for topomap sequence within signif
 TOPO_CMAP = 'RdBu_r'              # Colormap for topographies
 
 # --- Parameters for Sensor-Space Cluster Permutation Test ---
-PLOT_SIGNIFICANT_SENSORS_TOPO = True # Whether to run and plot sensor cluster results
+PLOT_SIGNIFICANT_SENSORS_TOPO = False # Whether to run and plot sensor cluster results
 # Define time windows for averaging topo data for cluster analysis (in seconds)
-N2AC_TOPO_CLUSTER_WINDOW = (0.22, 0.38) # Example: 220-380ms for N2ac-like activity
-PD_TOPO_CLUSTER_WINDOW = (0.29, 0.38)   # Example: 290-380ms for Pd-like activity
+N2AC_TOPO_CLUSTER_WINDOW = (0.2, 0.4) # Example: 220-380ms for N2ac-like activity
+PD_TOPO_CLUSTER_WINDOW = (0.2, 0.4)   # Example: 290-380ms for Pd-like activity
 # Alpha for sensor cluster p-values (can be same as ALPHA_STAT_CLUSTER)
 ALPHA_SENSOR_CLUSTER = 0.05
 # Mask parameters for plotting significant sensors
@@ -86,7 +86,7 @@ epochs_info = None  # To be populated from the first subject
 
 # --- Load and Preprocess Data ---
 print("--- Loading and Preprocessing Data ---")
-epochs = load_concatenated_epochs("spaceprime").crop(EPOCH_TMIN, EPOCH_TMAX)
+epochs = load_concatenated_epochs("spaceprime_desc-csd").crop(EPOCH_TMIN, EPOCH_TMAX)
 print(f"Original number of trials: {len(epochs)}")
 
 # Get metadata for preprocessing
@@ -578,3 +578,82 @@ for plot_type in ["Target", "Distractor"]:
         fig_topo.suptitle(title, fontsize=14, y=0.98)
 
         fig_topo.tight_layout(rect=[0, 0, 0.85, 0.92])
+
+# --- (New) Plot a single summary topomap for each condition's sensor test ---
+print("\n--- Plotting Summary Topomaps for Sensor Cluster Analysis ---")
+if PLOT_SIGNIFICANT_SENSORS_TOPO and n_subs >= 2:
+    fig_summary_topo, axes_summary = plt.subplots(1, 2, figsize=(10, 5), squeeze=False)
+    axes_summary = axes_summary.flatten()
+
+    summary_plot_params = {
+        'Target': {
+            'ax': axes_summary[0],
+            'window': N2AC_TOPO_CLUSTER_WINDOW,
+            'mask': significant_sensors_masks.get('Target')
+        },
+        'Distractor': {
+            'ax': axes_summary[1],
+            'window': PD_TOPO_CLUSTER_WINDOW,
+            'mask': significant_sensors_masks.get('Distractor')
+        }
+    }
+
+    # Find a common color limit for both plots for better comparison
+    vmax_summary = 0
+    for cond_type, params in summary_plot_params.items():
+        ga_topo_data = ga_data[f'{cond_type.lower()}_diff_topo']
+        if np.any(np.isnan(ga_topo_data)): continue
+        t_start_idx = np.argmin(np.abs(times_vector - params['window'][0]))
+        t_end_idx = np.argmin(np.abs(times_vector - params['window'][1]))
+
+        # Average GA data over the window
+        data_to_plot = np.mean(ga_topo_data[:, t_start_idx:t_end_idx + 1], axis=1) * AMPLITUDE_SCALE_FACTOR
+        current_max = np.nanmax(np.abs(data_to_plot))
+        if current_max > vmax_summary:
+            vmax_summary = current_max
+
+    if vmax_summary == 0: vmax_summary = 1.0  # Avoid vlim=(0,0)
+
+    im = None  # To hold the last plotted image for the colorbar
+    for cond_type, params in summary_plot_params.items():
+        ax = params['ax']
+        window = params['window']
+        mask = params['mask']
+
+        # Get the grand-average data averaged over the specified window
+        ga_topo_data = ga_data[f'{cond_type.lower()}_diff_topo']
+        if np.all(np.isnan(ga_topo_data)):
+            ax.set_title(f"{cond_type} Difference\n(Data not available)")
+            ax.axis('off')
+            continue
+
+        t_start_idx = np.argmin(np.abs(times_vector - window[0]))
+        t_end_idx = np.argmin(np.abs(times_vector - window[1]))
+        data_to_plot = np.mean(ga_topo_data[:, t_start_idx:t_end_idx + 1], axis=1) * AMPLITUDE_SCALE_FACTOR
+
+        im, _ = mne.viz.plot_topomap(
+            data_to_plot,
+            epochs_info,
+            axes=ax,
+            cmap=TOPO_CMAP,
+            vlim=(-vmax_summary, vmax_summary),
+            show=False,
+            sensors=False,
+            outlines='head',
+            mask=mask,
+            mask_params=SENSOR_MASK_PARAMS
+        )
+
+        title = f"{cond_type} Difference\n({window[0] * 1000:.0f}-{window[1] * 1000:.0f} ms)"
+        if mask is None:
+            title += "\n(No significant clusters)"
+        ax.set_title(title)
+
+    # Add a single colorbar for the summary figure
+    if im:
+        fig_summary_topo.subplots_adjust(right=0.85)
+        cbar_ax = fig_summary_topo.add_axes([0.88, 0.25, 0.03, 0.5])
+        cbar = plt.colorbar(im, cax=cbar_ax, format='%.1f')
+        cbar.set_label('Amplitude Difference [µV]')
+    fig_summary_topo.suptitle(f"Summary of Sensor-Space Cluster Analysis (N={n_subs})", fontsize=14, y=0.98)
+    fig_summary_topo.tight_layout(rect=[0, 0, 0.85, 0.92])
