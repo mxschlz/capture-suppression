@@ -993,3 +993,38 @@ def calculate_capture_score(row, locations_map):
     # A positive score means more pull towards the primary.
     capture_score = projection_on_primary - projection_on_contrast
     return capture_score
+
+### MERGED ### --- Sanity-Check ERP Visualizations ---
+def plot_erp_sanity_check(times, contra_wave, ipsi_wave, diff_wave, meta_df, component_name, time_window,
+                          subject_id_col, baseline_window):
+    """Helper function to plot grand average ERP waveforms."""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    times_ms = times * 1000
+
+    subject_diff_waves, subject_contra_waves, subject_ipsi_waves = [], [], []
+    for subject in meta_df[subject_id_col].unique():
+        mask = (meta_df[subject_id_col] == subject).values
+        if np.any(mask):
+            subject_contra_waves.append(contra_wave[mask].mean(axis=0))
+            subject_ipsi_waves.append(ipsi_wave[mask].mean(axis=0))
+            subject_diff_waves.append(diff_wave[mask].mean(axis=0))
+            ax.plot(times_ms, diff_wave[mask].mean(axis=0), color='grey', alpha=0.3, lw=1.0)
+
+    if not subject_diff_waves: return
+
+    ax.plot(times_ms, np.mean(subject_contra_waves, axis=0), 'r--', lw=1.5, label='GA Contralateral')
+    ax.plot(times_ms, np.mean(subject_ipsi_waves, axis=0), 'b--', lw=1.5, label='GA Ipsilateral')
+    ax.plot(times_ms, np.mean(subject_diff_waves, axis=0), 'k-', lw=2.5, label='GA Difference')
+
+    ax.axvspan(baseline_window[0] * 1000, baseline_window[1] * 1000, color='lightblue', alpha=0.5, label='Baseline')
+    ax.axvspan(time_window[0] * 1000, time_window[1] * 1000, color='lightcoral', alpha=0.5,
+               label=f'{component_name} Window')
+    ax.axhline(0, color='black', linestyle='--', lw=0.8)
+    ax.axvline(0, color='black', linestyle=':', lw=0.8, label='Stimulus Onset')
+    ax.set_title(f'Grand Average {component_name} Waveforms', fontweight='bold')
+    ax.set_xlabel('Time (ms)')
+    ax.set_ylabel('Amplitude (µV)')
+    ax.legend()
+    ax.grid(True, linestyle=':', alpha=0.6)
+    plt.tight_layout()
+    plt.show()
