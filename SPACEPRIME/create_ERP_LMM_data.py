@@ -52,16 +52,16 @@ PRIMING_REF_STR = PRIMING_MAP.get(0)
 
 # --- 3. ERP Component Definitions ---
 PD_TIME_WINDOW = (0.2, 0.4)
-PD_ELECTRODES = [("C3", "C4")]
 N2AC_TIME_WINDOW = (0.2, 0.4)
-N2AC_ELECTRODES = [("C3", "C4")]
+PD_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4")]
+N2AC_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4")]
 
 # --- Latency Robustness Check Configuration ---
 PERCENTAGES_TO_TEST = [0.3, 0.5, 0.7] # Using 50% as the standard
 
 # --- Main Script ---
 print("Loading and concatenating epochs...")
-epochs = SPACEPRIME.load_concatenated_epochs("spaceprime")
+epochs = SPACEPRIME.load_concatenated_epochs("spaceprime_desc-csd")
 df = epochs.metadata.copy()
 sfreq = epochs.info["sfreq"]
 print(f"Original number of trials: {len(df)}")
