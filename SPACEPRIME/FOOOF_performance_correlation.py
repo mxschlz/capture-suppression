@@ -9,6 +9,7 @@ import os
 import pandas as pd
 import warnings
 import SPACEPRIME
+from stats import remove_outliers
 
 plt.ion()
 
@@ -170,6 +171,12 @@ print("Epochs loaded.")
 
 if REACTION_TIME_COLUMN not in all_epochs.metadata.columns:
     raise ValueError(f"Reaction time column '{REACTION_TIME_COLUMN}' not found in epochs metadata.")
+
+df = all_epochs.metadata.copy().reset_index(drop=True)
+
+df = remove_outliers(df, column_name=REACTION_TIME_COLUMN, threshold=2)
+all_epochs = all_epochs[df.index]
+
 
 unique_subject_ids = all_epochs.metadata[SUBJECT_ID_COLUMN].unique()
 print(f"\nFound {len(unique_subject_ids)} unique subjects. Starting subject-by-subject processing...")
