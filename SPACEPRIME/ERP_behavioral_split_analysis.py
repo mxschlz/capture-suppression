@@ -30,8 +30,8 @@ RT_SPLIT_COL = 'rt_split'
 # 3. ERP Component Definitions
 # This window is for extracting the wave from the epoch data
 COMPONENT_TIME_WINDOW = (0.0, 0.7)
-PD_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4"), ("C5", "C6"), ("CP3", "CP4"), ("CP5", "CP6")]
-N2AC_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4"), ("C5", "C6"), ("CP3", "CP4"), ("CP5", "CP6")]
+PD_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4")]
+N2AC_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4")]
 
 # 4. Statistical & Analysis Parameters
 # This window is for the fractional area latency calculation itself
@@ -45,11 +45,12 @@ SEED = 42
 
 # --- 1. Load and Preprocess Data ---
 print("--- Step 1: Loading and Preprocessing Data ---")
-epochs = SPACEPRIME.load_concatenated_epochs("spaceprime").crop(COMPONENT_TIME_WINDOW[0], COMPONENT_TIME_WINDOW[1])
+epochs = SPACEPRIME.load_concatenated_epochs("spaceprime_desc-csd").crop(COMPONENT_TIME_WINDOW[0], COMPONENT_TIME_WINDOW[1])
 df = epochs.metadata.copy()
 
 # Preprocessing
-df = df[df[PHASE_COL] != FILTER_PHASE]
+if FILTER_PHASE:
+    df = df[df[PHASE_COL] != FILTER_PHASE]
 df = remove_outliers(df, column_name=REACTION_TIME_COL, threshold=OUTLIER_RT_THRESHOLD)
 df[ACCURACY_INT_COL] = df[ACCURACY_COL].astype(int)
 df[TARGET_COL] = pd.to_numeric(df[TARGET_COL], errors='coerce').map({1: "left", 2: "mid", 3: "right"})
@@ -114,7 +115,7 @@ for subject_id in merged_df[SUBJECT_ID_COL].unique():
 
                 if cond_df.empty: continue
 
-                # Use the new helper function to get all three waves
+                # Use the helper function to get all three waves
                 diff_wave, contra_wave, ipsi_wave, times = get_all_waves(
                     cond_df, params['electrodes'], COMPONENT_TIME_WINDOW, all_times, params['stim_col']
                 )
@@ -153,8 +154,12 @@ df_save = agg_df.groupby(["subject", "component"])[["latency", "amplitude"]].mea
 output_path = f'{SPACEPRIME.get_data_path()}concatenated\\erp_latency_amplitude_subject_mean.csv'
 df_save.to_csv(output_path, index=True)
 
+
 # --- 3. Analyze and Plot ERP Metrics with Permutation Tests ---
-print("\n--- Step 3: Analyzing and Plotting ERP Metrics ---")
+# This step has been removed. The statistical analysis is now integrated
+# into the grand-average difference wave plots in Step 5 for a more
+# consolidated and informative visualization.
+print("\n--- Step 3: Merged into Step 5 ---")
 
 comparisons = [
     {'title': 'N2ac by RT', 'component': 'N2ac', 'split_by': 'RT', 'conds': ['fast', 'slow']},
@@ -163,59 +168,8 @@ comparisons = [
     {'title': 'Pd by Accuracy', 'component': 'Pd', 'split_by': 'Accuracy', 'conds': ['correct', 'incorrect']},
 ]
 
-fig, axes = plt.subplots(2, 2, figsize=(18, 10), constrained_layout=True)
-fig.suptitle('ERP Metric Analysis by Behavioral Split (Paired Permutation Test)', fontsize=20, y=1.06)
-axes = axes.flatten()
 
-LATENCY_COLOR = 'C0'
-AMPLITUDE_COLOR = 'C1'
-
-for i, comp_info in enumerate(comparisons):
-    ax = axes[i]
-    ax.set_title(comp_info['title'], fontsize=16)
-    plot_df = agg_df[(agg_df['component'] == comp_info['component']) & (agg_df['split_by'] == comp_info['split_by'])].copy()
-    cond1_name, cond2_name = comp_info['conds']
-    legend_handles = []
-
-    # Latency Analysis
-    pivot_lat = plot_df.pivot(index='subject', columns='condition', values='latency').dropna()
-    if len(pivot_lat) > 2:
-        sns.pointplot(data=plot_df, x='condition', y='latency', order=comp_info['conds'], ax=ax,
-                      join=True, errorbar=('se', 1), scale=0.8, errwidth=1.5, capsize=0.1, color=LATENCY_COLOR)
-        diffs_lat = pivot_lat[cond1_name].values - pivot_lat[cond2_name].values
-        X_lat = diffs_lat[:, np.newaxis]
-        _, p_val_lat, _ = permutation_t_test(X_lat, n_permutations=N_PERMUTATIONS, seed=SEED)
-        p_text = f"p={p_val_lat[0]:.3f}{'*' if p_val_lat[0] < P_VAL_ALPHA else ''}"
-        legend_handles.append(Line2D([0], [0], color=LATENCY_COLOR, lw=2, label=f'Latency ({p_text})'))
-
-    ax.set_xlabel('Condition', fontsize=14)
-    ax.set_ylabel(f'{int(LATENCY_PERCENTAGE*100)}% Latency (s)', fontsize=14, color=LATENCY_COLOR)
-    ax.tick_params(axis='y', labelcolor=LATENCY_COLOR)
-    ax.grid(axis='x', linestyle=':', alpha=0.7)
-
-    # Amplitude Analysis
-    ax_amp = ax.twinx()
-    amp_label = 'Amplitude (µV)'
-
-    pivot_amp = plot_df.pivot(index='subject', columns='condition', values='amplitude').dropna()
-    if len(pivot_amp) > 2:
-        sns.pointplot(data=plot_df, x='condition', y='amplitude', order=comp_info['conds'], ax=ax_amp,
-                      join=True, errorbar=('se', 1), scale=0.8, errwidth=1.5, capsize=0.1,
-                      color=AMPLITUDE_COLOR, linestyles='--')
-        diffs_amp = pivot_amp[cond1_name].values - pivot_amp[cond2_name].values
-        X_amp = diffs_amp[:, np.newaxis]
-        _, p_val_amp, _ = permutation_t_test(X_amp, n_permutations=N_PERMUTATIONS, seed=SEED)
-        p_text = f"p={p_val_amp[0]:.3f}{'*' if p_val_amp[0] < P_VAL_ALPHA else ''}"
-        legend_handles.append(Line2D([0], [0], color=AMPLITUDE_COLOR, lw=2, linestyle='--', label=f'Amplitude ({p_text})'))
-
-    ax_amp.set_ylabel(amp_label, fontsize=14, color=AMPLITUDE_COLOR)
-    ax_amp.tick_params(axis='y', labelcolor=AMPLITUDE_COLOR)
-    ax_amp.grid(False)
-
-    if legend_handles:
-        ax.legend(handles=legend_handles, loc='best')
-
-# --- 4. NEW: Plot Grand-Average ERP Waves with Contra/Ipsi Detail ---
+# --- 4. Plot Grand-Average ERP Waves with Contra/Ipsi Detail ---
 print("\n--- Step 4: Visualizing Grand-Average ERP Waveforms ---")
 fig_waves, axes_waves = plt.subplots(2, 2, figsize=(20, 12), sharey=True, constrained_layout=True)
 fig_waves.suptitle('Grand-Average Contralateral and Ipsilateral ERPs by Behavioral Split', fontsize=20, y=1.06)
@@ -251,10 +205,6 @@ for i, comp_info in enumerate(comparisons):
         sem_contra = sem(np.stack(cond_df['contra_wave'].values), axis=0)
         sem_ipsi = sem(np.stack(cond_df['ipsi_wave'].values), axis=0)
 
-        # Grand average of calculated metrics
-        ga_latency = cond_df['latency'].mean()
-        ga_amplitude_diff = cond_df['amplitude'].mean()  # This is amplitude on the diff wave
-
         # Plot Contra and Ipsi waves
         ax.plot(times_for_plot, ga_contra_wave, color=color, lw=2.5, linestyle='-')
         ax.fill_between(times_for_plot, ga_contra_wave - sem_contra, ga_contra_wave + sem_contra, color=color,
@@ -281,10 +231,10 @@ for i, comp_info in enumerate(comparisons):
     ax.grid(True, linestyle=':', alpha=0.6)
 
 
-# --- 5. Plot Grand-Average Difference Waves with Metric Crosshairs ---
-print("\n--- Step 5: Visualizing Grand-Average Difference Waves ---")
+# --- 5. Plot Grand-Average Difference Waves with Metric Crosshairs & Stats ---
+print("\n--- Step 5: Visualizing Grand-Average Difference Waves with Stats ---")
 fig_diff, axes_diff = plt.subplots(2, 2, figsize=(20, 12), sharey=True, constrained_layout=True)
-fig_diff.suptitle('Grand-Average Difference Waves with Latency/Amplitude Markers', fontsize=20, y=1.06)
+fig_diff.suptitle('Grand-Average Difference Waves with Latency/Amplitude Markers and Paired Stats', fontsize=20, y=1.06)
 axes_diff = axes_diff.flatten()
 
 for i, comp_info in enumerate(comparisons):
@@ -292,17 +242,39 @@ for i, comp_info in enumerate(comparisons):
     ax.set_title(comp_info['title'], fontsize=16)
     plot_df = agg_df[(agg_df['component'] == comp_info['component']) & (agg_df['split_by'] == comp_info['split_by'])]
     colors = ['#1f77b4', '#ff7f0e']
+    cond1_name, cond2_name = comp_info['conds']
 
-    # Create a static legend entry for the crosshair marker
-    legend_handles = [
-        Line2D([0], [0], marker='o', color='w', markeredgecolor='k',
-               label='Metric on GA Wave', markersize=8, linestyle='None') # Changed label for clarity
-    ]
+    # --- Perform Paired Permutation Tests ---
+    # Latency Analysis
+    pivot_lat = plot_df.pivot(index='subject', columns='condition', values='latency')
+    p_text_lat = "p=n.s."
+    # Ensure both conditions are present for paired comparison
+    if cond1_name in pivot_lat.columns and cond2_name in pivot_lat.columns:
+        valid_pairs = pivot_lat[[cond1_name, cond2_name]].dropna()
+        if len(valid_pairs) > 2:
+            diffs_lat = valid_pairs[cond1_name].values - valid_pairs[cond2_name].values
+            X_lat = diffs_lat[:, np.newaxis]
+            _, p_val_lat, _ = permutation_t_test(X_lat, n_permutations=N_PERMUTATIONS, seed=SEED)
+            p_text_lat = f"p={p_val_lat[0]:.3f}{'*' if p_val_lat[0] < P_VAL_ALPHA else ''}"
 
+    # Amplitude Analysis
+    pivot_amp = plot_df.pivot(index='subject', columns='condition', values='amplitude')
+    p_text_amp = "p=n.s."
+    if cond1_name in pivot_amp.columns and cond2_name in pivot_amp.columns:
+        valid_pairs = pivot_amp[[cond1_name, cond2_name]].dropna()
+        if len(valid_pairs) > 2:
+            diffs_amp = valid_pairs[cond1_name].values - valid_pairs[cond2_name].values
+            X_amp = diffs_amp[:, np.newaxis]
+            _, p_val_amp, _ = permutation_t_test(X_amp, n_permutations=N_PERMUTATIONS, seed=SEED)
+            p_text_amp = f"p={p_val_amp[0]:.3f}{'*' if p_val_amp[0] < P_VAL_ALPHA else ''}"
+
+    # --- Plotting Loop ---
     for j, cond_name in enumerate(comp_info['conds']):
         color = colors[j]
         cond_df = plot_df[plot_df['condition'] == cond_name].dropna(subset=['wave'])
-        if cond_df.empty: continue
+
+        if cond_df.empty:
+            continue
 
         n_subjects = len(cond_df)
         times_for_plot = cond_df['times'].iloc[0]
@@ -312,7 +284,6 @@ for i, comp_info in enumerate(comparisons):
         sem_wave = sem(np.stack(cond_df['wave'].values), axis=0)
 
         # Calculate latency and amplitude ON THE GRAND-AVERAGE WAVE for visualization
-        # Using more explicit variable names to avoid confusion with the mean of subject-level metrics
         is_target_comp = comp_info['component'] == 'N2ac'
         latency_on_ga = calculate_fractional_area_latency(
             ga_wave, times_for_plot,
@@ -321,12 +292,6 @@ for i, comp_info in enumerate(comparisons):
             analysis_window_times=LATENCY_ANALYSIS_WINDOW
         )
         amplitude_on_ga = np.interp(latency_on_ga, times_for_plot, ga_wave) if not np.isnan(latency_on_ga) else np.nan
-
-        # Invert N2ac wave AND its amplitude metric for plotting consistency
-        #inversion_factor = -1 if is_target_comp else 1
-        #ga_wave *= inversion_factor
-        #sem_wave *= inversion_factor
-        #amplitude_on_ga *= inversion_factor
 
         # Plot the difference wave
         ax.plot(times_for_plot, ga_wave, color=color, lw=2.5, label=f'{cond_name} (N={n_subjects})')
@@ -344,24 +309,31 @@ for i, comp_info in enumerate(comparisons):
             ax.plot(latency_on_ga, amplitude_on_ga, 'o',
                     markerfacecolor=color, markeredgecolor='k', markersize=8, zorder=11)
 
-    # Aesthetics
+    # --- Aesthetics and Legend with Stats ---
     ax.axvspan(LATENCY_ANALYSIS_WINDOW[0], LATENCY_ANALYSIS_WINDOW[1], color='grey', alpha=0.25, zorder=0)
     ax.axhline(0, color='k', linestyle='--', lw=1)
     ax.axvline(0, color='k', linestyle=':', lw=1)
-    if 'times_for_plot' in locals(): # Ensure times_for_plot exists
+    if 'times_for_plot' in locals():
         ax.set_xlim(times_for_plot[0], times_for_plot[-1])
 
-    # Combine generated legend handles with the static one
+    # Create legend handles
     line_handles, _ = ax.get_legend_handles_labels()
-    legend_handles.extend(line_handles)
-    ax.legend(handles=legend_handles, loc='best')
+    # Add a handle for the crosshair marker
+    #line_handles.append(Line2D([0], [0], marker='o', color='w', markeredgecolor='k',
+                               #label='Metric on GA Wave', markersize=8, linestyle='None'))
+    # Add text-only handles for the stats by creating invisible lines
+    line_handles.append(Line2D([0], [0], color='w', label=f'Latency Comp: {p_text_lat}'))
+    line_handles.append(Line2D([0], [0], color='w', label=f'Amplitude Comp: {p_text_amp}'))
+
+    ax.legend(handles=line_handles, loc='best', title="Paired Comparisons")
 
     ax.set_xlabel("Time (s)", fontsize=12)
     ax.set_ylabel("Amplitude (µV)", fontsize=12)
     ax.grid(True, linestyle=':', alpha=0.6)
 
+
 # --- 6. Plot Trial Count Balance ---
-print("\n--- Step 5: Visualizing Trial Count Balance ---")
+print("\n--- Step 6: Visualizing Trial Count Balance ---")
 fig_counts, axes_counts = plt.subplots(2, 2, figsize=(16, 12), sharey=True)
 fig_counts.suptitle('Trial Counts per Condition, Showing Within-Subject Change', fontsize=18, y=1.02)
 axes_counts = axes_counts.flatten()
