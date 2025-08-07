@@ -11,7 +11,7 @@ import warnings
 import SPACEPRIME
 from stats import remove_outliers
 
-plt.ion()
+#plt.ion()
 
 # --- Configuration ---
 # 1. Define parameters for PSD computation and FOOOF fitting
@@ -117,7 +117,7 @@ def analyze_and_plot_within_subject(results_df, period, analysis_type, groups):
     """
     title_map = {
         'outcome': 'by Trial Outcome',
-        'rt_split': 'by Reaction Time (Correct Trials)'
+        'rt_split': 'by Reaction Time'
     }
     print(f"\n--- Analyzing {title_map[analysis_type]} for: {period.upper()} ---")
 
@@ -227,12 +227,27 @@ for subject_id in unique_subject_ids:
          'period': 'post-stimulus', 'outcome': None, 'rt_split': 'fast'},
         {'name': 'post-stimulus_slow', 'query': "rt_split == 'slow'", 'tmin': 0, 'tmax': None,
          'period': 'post-stimulus', 'outcome': None, 'rt_split': 'slow'},
+        ### NEW ### --- Analysis 3: General exponent across all trials ---
+        # An empty query "" selects all epochs for the subject.
+        {'name': 'pre-stimulus_all_trials', 'query': "", 'tmin': None, 'tmax': 0, 'period': 'pre-stimulus',
+         'outcome': 'all_trials', 'rt_split': None},
+        {'name': 'post-stimulus_all_trials', 'query': "", 'tmin': 0, 'tmax': None, 'period': 'post-stimulus',
+         'outcome': 'all_trials', 'rt_split': None},
     ]
 
+    # ... inside the main loop ...
     for cond in conditions:
         print(f"  - Analyzing: {cond['name']}")
+
         # Use MNE's query system to select epochs, then crop
-        epochs_for_analysis = subject_epochs_all[cond['query']].copy().crop(tmin=cond['tmin'], tmax=cond['tmax'])
+        # MODIFIED: Handle the empty query for 'all_trials' condition
+        if cond['query']:
+            epochs_for_analysis = subject_epochs_all[cond['query']].copy()
+        else:  # If query is empty, use all epochs for the subject
+            epochs_for_analysis = subject_epochs_all.copy()
+
+        # Now crop the selected epochs
+        epochs_for_analysis.crop(tmin=cond['tmin'], tmax=cond['tmax'])
 
         exponent = process_subject_psd_and_fooof(epochs_for_analysis, cond['name'], subject_id)
 
@@ -263,6 +278,7 @@ if all_results:
     # Define a helper function to create a single, descriptive condition label
     def create_condition_label(row):
         if pd.notna(row['outcome']):
+            # This will now handle 'correct', 'incorrect', and 'all_trials'
             return f"{row['period']}_{row['outcome']}"
         elif pd.notna(row['rt_split']):
             return f"{row['period']}_{row['rt_split']}"
@@ -284,13 +300,13 @@ if all_results:
 
     # Reset the index to make 'subject_id' a regular column
     wide_results_df = wide_results_df.reset_index()
-    wide_results_df.reset_index(names="subject_id", inplace=True)
+
     print("Wide-format DataFrame created successfully. Displaying head:")
     print(wide_results_df.head())
     output_path = f'{SPACEPRIME.get_data_path()}concatenated\\fooof_exponents.csv'
     # You can now save this wide DataFrame to a CSV file if you wish:
     wide_results_df.to_csv(output_path, index=False)
-    # print("\nSaved wide-format DataFrame to CSV.")
+    print(f"\nSaved wide-format DataFrame to: {output_path}")
 else:
     print("No results were generated. Cannot perform final analysis.")
 
