@@ -227,13 +227,14 @@ for i, comp_info in enumerate(comparisons):
     ax.legend(handles=final_legend_handles, loc='best')
 
     ax.set_xlabel("Time (s)", fontsize=12)
-    ax.set_ylabel("Amplitude (µV)", fontsize=12)
+    ax.set_ylabel("Amplitude (mV/m²)", fontsize=12)
     ax.grid(True, linestyle=':', alpha=0.6)
 
 
 # --- 5. Plot Grand-Average Difference Waves with Metric Crosshairs & Stats ---
 print("\n--- Step 5: Visualizing Grand-Average Difference Waves with Stats ---")
-fig_diff, axes_diff = plt.subplots(2, 2, figsize=(20, 12), sharey=True, constrained_layout=True)
+# Removed sharey=True to allow for selective y-axis inversion
+fig_diff, axes_diff = plt.subplots(2, 2, figsize=(20, 12), constrained_layout=True)
 fig_diff.suptitle('Grand-Average Difference Waves with Latency/Amplitude Markers and Paired Stats', fontsize=20, y=1.06)
 axes_diff = axes_diff.flatten()
 
@@ -316,11 +317,12 @@ for i, comp_info in enumerate(comparisons):
     if 'times_for_plot' in locals():
         ax.set_xlim(times_for_plot[0], times_for_plot[-1])
 
+    # Invert Y-axis for N2ac plots to show negativity upwards
+    if comp_info['component'] == 'N2ac':
+        ax.invert_yaxis()
+
     # Create legend handles
     line_handles, _ = ax.get_legend_handles_labels()
-    # Add a handle for the crosshair marker
-    #line_handles.append(Line2D([0], [0], marker='o', color='w', markeredgecolor='k',
-                               #label='Metric on GA Wave', markersize=8, linestyle='None'))
     # Add text-only handles for the stats by creating invisible lines
     line_handles.append(Line2D([0], [0], color='w', label=f'Latency Comp: {p_text_lat}'))
     line_handles.append(Line2D([0], [0], color='w', label=f'Amplitude Comp: {p_text_amp}'))
@@ -328,7 +330,7 @@ for i, comp_info in enumerate(comparisons):
     ax.legend(handles=line_handles, loc='best', title="Paired Comparisons")
 
     ax.set_xlabel("Time (s)", fontsize=12)
-    ax.set_ylabel("Amplitude (µV)", fontsize=12)
+    ax.set_ylabel("Amplitude (mV/m²)", fontsize=12)
     ax.grid(True, linestyle=':', alpha=0.6)
 
 
