@@ -22,7 +22,7 @@ PHASE_COL = 'phase'
 
 # --- 2. General Script Parameters ---
 # Whether to plot the topographies or not (because that takes a while)
-PLOT_TOPOS = False
+PLOT_TOPOS = True
 
 # Paths
 SETTINGS_PATH = os.path.join(get_data_path(), "settings")
@@ -58,10 +58,10 @@ TOPO_TIME_STEP = 0.01             # Time step for topomap sequence within signif
 TOPO_CMAP = 'RdBu_r'              # Colormap for topographies
 
 # --- Parameters for Sensor-Space Cluster Permutation Test ---
-PLOT_SIGNIFICANT_SENSORS_TOPO = False # Whether to run and plot sensor cluster results
+PLOT_SIGNIFICANT_SENSORS_TOPO = True # Whether to run and plot sensor cluster results
 # Define time windows for averaging topo data for cluster analysis (in seconds)
 N2AC_TOPO_CLUSTER_WINDOW = (0.2, 0.4) # Example: 220-380ms for N2ac-like activity
-PD_TOPO_CLUSTER_WINDOW = (0.2, 0.4)   # Example: 290-380ms for Pd-like activity
+PD_TOPO_CLUSTER_WINDOW = (0.25, 0.4)   # Example: 290-380ms for Pd-like activity
 # Alpha for sensor cluster p-values (can be same as ALPHA_STAT_CLUSTER)
 ALPHA_SENSOR_CLUSTER = 0.05
 # Mask parameters for plotting significant sensors
@@ -304,7 +304,7 @@ for cond_name, params in erp_plot_params.items():
     ax.axvline(x=0, color='k', linestyle=':', linewidth=0.8)
     ax.legend(loc='upper right')
     ax.set_title(f"{cond_name} Lateralization (N={n_subs})")
-    ax.set_ylabel("Amplitude [µV]")
+    ax.set_ylabel("Amplitude [mV/m²]")
     ax.set_xlabel("Time [s]")
     sns.despine(ax=ax)
 
@@ -645,15 +645,13 @@ if PLOT_SIGNIFICANT_SENSORS_TOPO and n_subs >= 2:
         )
 
         title = f"{cond_type} Difference\n({window[0] * 1000:.0f}-{window[1] * 1000:.0f} ms)"
-        if mask is None:
-            title += "\n(No significant clusters)"
         ax.set_title(title)
 
     # Add a single colorbar for the summary figure
     if im:
         fig_summary_topo.subplots_adjust(right=0.85)
         cbar_ax = fig_summary_topo.add_axes([0.88, 0.25, 0.03, 0.5])
-        cbar = plt.colorbar(im, cax=cbar_ax, format='%.1f')
-        cbar.set_label('Amplitude Difference [µV]')
+        cbar = plt.colorbar(im, cax=cbar_ax)
+        cbar.set_label('Amplitude Difference [mV/m²]')
     fig_summary_topo.suptitle(f"Summary of Sensor-Space Cluster Analysis (N={n_subs})", fontsize=14, y=0.98)
     fig_summary_topo.tight_layout(rect=[0, 0, 0.85, 0.92])
