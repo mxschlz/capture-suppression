@@ -957,7 +957,7 @@ def calculate_capture_score(row, locations_map):
         primary_col, contrast_col = 'TargetDigit', 'SingletonDigit'
     else:
         # For no-singleton trials, contrast the two neutral non-targets.
-        primary_col, contrast_col = 'TargetDigit', 'Non-Singleton1Digit'
+        primary_col, contrast_col = 'TargetDigit', 'Non-Singleton2Digit'
 
     # --- 3. Get digit locations for the primary and contrast items ---
     try:
@@ -994,7 +994,7 @@ def calculate_capture_score(row, locations_map):
     capture_score = projection_on_primary - projection_on_contrast
     return capture_score
 
-### MERGED ### --- Sanity-Check ERP Visualizations ---
+
 def plot_erp_sanity_check(times, contra_wave, ipsi_wave, diff_wave, meta_df, component_name, time_window,
                           subject_id_col, baseline_window):
     """Helper function to plot grand average ERP waveforms."""
@@ -1028,3 +1028,80 @@ def plot_erp_sanity_check(times, contra_wave, ipsi_wave, diff_wave, meta_df, com
     ax.grid(True, linestyle=':', alpha=0.6)
     plt.tight_layout()
     plt.show()
+
+
+def calculate_trajectory_projections(row, locations_map):
+    """
+    Calculates a comprehensive set of trajectory projection scores for a single trial.
+
+    This function deconstructs the average trajectory vector by projecting it onto
+    the direction of every relevant stimulus category (Target, Distractor, Control, Other).
+    This provides a multi-dimensional measure of motor pull.
+
+    Args:
+        row (pd.Series): A row from the analysis DataFrame. Must contain trial info
+                         like 'SingletonPresent', digit locations, and the average
+                         trajectory vector ('avg_x_dva', 'avg_y_dva').
+        locations_map (dict): A dictionary mapping numpad digits to (x, y) coordinates.
+
+    Returns:
+        pd.Series: A series containing the projection scores for each category, e.g.,
+                   'proj_target', 'proj_distractor', 'proj_control_max', etc.
+    """
+    # --- 1. Get the average movement vector for the trial ---
+    try:
+        avg_vec = np.array([row['avg_x_dva'], row['avg_y_dva']])
+    except KeyError:
+        return pd.Series({'proj_target': np.nan, 'proj_distractor': np.nan, 'proj_control_max': np.nan, 'proj_control_avg': np.nan})
+
+    if np.linalg.norm(avg_vec) < 1e-6: # No movement, no projections
+        return pd.Series({'proj_target': np.nan, 'proj_distractor': np.nan, 'proj_control_max': np.nan, 'proj_control_avg': np.nan})
+
+    # --- 2. Helper function for projection calculation ---
+    def get_projection(digit, avg_vec, locations_map):
+        """Helper to get the projection of the avg_vec onto a direction vector."""
+        if pd.isna(digit):
+            return np.nan
+        dir_vec = np.array(locations_map.get(int(digit), (0, 0)))
+        norm = np.linalg.norm(dir_vec)
+        if norm < 1e-6:
+            return np.nan  # Cannot project onto a zero vector (center)
+        unit_vec = dir_vec / norm
+        return np.dot(avg_vec, unit_vec)
+
+    # --- 3. Identify and categorize all digits on screen ---
+    target_digit = row.get('TargetDigit')
+    distractor_digit = row.get('SingletonDigit') if row.get('SingletonPresent') == 1 else np.nan
+
+    # Identify all presented non-target digits to define the "control" set
+    all_nontarget_cols = ['SingletonDigit', 'Non-Singleton1Digit', 'Non-Singleton2Digit'] # Add more if they exist
+    control_digits = set()
+    for col in all_nontarget_cols:
+        digit = row.get(col)
+        # A control is a non-target, non-distractor item
+        if pd.notna(digit) and digit != target_digit and digit != distractor_digit:
+            control_digits.add(int(digit))
+
+    # --- 4. Calculate projections for each category ---
+    results = {}
+
+    # Projection onto Target
+    results['proj_target'] = get_projection(target_digit, avg_vec, locations_map)
+
+    # Projection onto Distractor (if present)
+    results['proj_distractor'] = get_projection(distractor_digit, avg_vec, locations_map)
+
+    # Projections onto Control items
+    if control_digits:
+        control_projs = [p for p in [get_projection(d, avg_vec, locations_map) for d in control_digits] if pd.notna(p)]
+        if control_projs:
+            results['proj_control_max'] = max(control_projs)
+            results['proj_control_avg'] = np.mean(control_projs)
+        else:
+            results['proj_control_max'] = np.nan
+            results['proj_control_avg'] = np.nan
+    else:
+        results['proj_control_max'] = np.nan
+        results['proj_control_avg'] = np.nan
+
+    return pd.Series(results)
