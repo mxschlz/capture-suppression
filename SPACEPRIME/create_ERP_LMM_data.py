@@ -2,11 +2,9 @@ import matplotlib.pyplot as plt
 import SPACEPRIME
 from utils import get_jackknife_contra_ipsi_wave, calculate_fractional_area_latency, get_single_trial_contra_ipsi_wave
 import pandas as pd
-import statsmodels.formula.api as smf
 import seaborn as sns
 import numpy as np
-from stats import remove_outliers  # Assuming this is your custom outlier removal function
-from patsy.contrasts import Treatment # Import Treatment for specifying reference levels
+from stats import remove_outliers, add_within_between_predictors  # Assuming this is your custom outlier removal function
 
 plt.ion()
 
@@ -126,7 +124,7 @@ for subject_id in n2ac_analysis_df[SUBJECT_ID_COL].unique():
         jackknifed_acc = jackknife_sample_df[ACCURACY_INT_COL].mean()
         z_rt = (jackknifed_rt - grand_mean_rt_n2ac) / grand_std_rt_n2ac
         z_acc = (jackknifed_acc - grand_mean_acc_n2ac) / grand_std_acc_n2ac
-        jackknifed_bis = (z_acc - z_rt) * -1
+        jackknifed_bis = (z_acc - z_rt)
 
         # NEW: Loop over each electrode pair to calculate metrics individually
         for electrode_pair in N2AC_ELECTRODES:
@@ -190,7 +188,7 @@ for subject_id in pd_analysis_df[SUBJECT_ID_COL].unique():
         jackknifed_acc = jackknife_sample_df[ACCURACY_INT_COL].mean()
         z_rt = (jackknifed_rt - grand_mean_rt_pd) / grand_std_rt_pd
         z_acc = (jackknifed_acc - grand_mean_acc_pd) / grand_std_acc_pd
-        jackknifed_bis = (z_acc - z_rt) * -1
+        jackknifed_bis = (z_acc - z_rt)
 
         # NEW: Loop over each electrode pair
         for electrode_pair in PD_ELECTRODES:
@@ -242,12 +240,17 @@ print("\n--- Saving Long-Format Data to CSV ---")
 n2ac_final_df = pd.DataFrame(n2ac_results_list)
 pd_final_df = pd.DataFrame(pd_results_list)
 
+# --- NEW: Split predictors into within- and between-subject components ---
+n2ac_final_df = add_within_between_predictors(n2ac_final_df, SUBJECT_ID_COL, PERCENTAGES_TO_TEST)
+pd_final_df = add_within_between_predictors(pd_final_df, SUBJECT_ID_COL, PERCENTAGES_TO_TEST)
+
 # Save the new long-format dataframes
-n2ac_output_path = f'{SPACEPRIME.get_data_path()}concatenated\\{paradigm}_{N2AC_ELECTRODES}_n2ac_erp_behavioral_lmm_long_data.csv'
+n2ac_output_path = f'{SPACEPRIME.get_data_path()}concatenated\\{paradigm}_n2ac_erp_behavioral_lmm_long_data_between-within.csv'
 n2ac_final_df.to_csv(n2ac_output_path, index=False)
 print(f"N2ac-specific long-format data saved to:\n{n2ac_output_path}")
 
-pd_output_path = f'{SPACEPRIME.get_data_path()}concatenated\\{paradigm}_{N2AC_ELECTRODES}_pd_erp_behavioral_lmm_long_data.csv'
+# Note: Corrected the filename for Pd to be distinct from N2ac
+pd_output_path = f'{SPACEPRIME.get_data_path()}concatenated\\{paradigm}_pd_erp_behavioral_lmm_long_data_between-within.csv'
 pd_final_df.to_csv(pd_output_path, index=False)
 print(f"Pd-specific long-format data saved to:\n{pd_output_path}")
 
@@ -356,81 +359,3 @@ if n2ac_has_data or pd_has_data:
     plt.show()
 else:
     print("No data available for latency robustness plots.")
-
-
-# --- NEW: Linear Mixed-Effects Modeling ---
-print("\n--- Running Linear Mixed-Effects Models ---")
-
-# --- N2ac Model ---
-print("\n--- N2ac Model: Predicting BIS from N2ac Latency ---")
-n2ac_lmm_df = n2ac_final_df.copy()
-# Select the 50% fractional area latency as the primary measure
-latency_col_n2ac = 'jk_latency_50'
-dependent_var = 'jackknifed_bis'
-
-# Prepare data for the model (drop NaNs in relevant columns)
-model_cols_n2ac = [dependent_var, latency_col_n2ac, PRIMING_COL, TRIAL_NUMBER_COL, ELECTRODE_COL, SUBJECT_ID_COL]
-n2ac_lmm_df_clean = n2ac_lmm_df[model_cols_n2ac].dropna()
-
-if not n2ac_lmm_df_clean.empty:
-    # Define the model formula, including electrode as a predictor
-    # We use C() to treat 'electrode' and 'Priming' as categorical variables
-    # and Treatment() to set a specific reference level.
-    formula_n2ac = (f"{dependent_var} ~ {latency_col_n2ac} + "
-                    f"C({PRIMING_COL}, Treatment(reference='{PRIMING_REF_STR}')) + "
-                    f"C({ELECTRODE_COL}, Treatment(reference='{N2AC_ELECTRODE_REF}')) + "
-                    f"{TRIAL_NUMBER_COL}")
-
-    print(f"N2ac Model Formula:\n{formula_n2ac}")
-
-    # Fit the model
-    try:
-        lmm_n2ac = smf.mixedlm(
-            formula=formula_n2ac,
-            data=n2ac_lmm_df_clean,
-            groups=n2ac_lmm_df_clean[SUBJECT_ID_COL]
-        )
-        lmm_n2ac_results = lmm_n2ac.fit()
-        print("\nN2ac LMM Results:")
-        print(lmm_n2ac_results.summary())
-    except Exception as e:
-        print(f"Could not fit N2ac LMM. Error: {e}")
-else:
-    print("Not enough data to run the N2ac LMM after cleaning NaNs.")
-
-
-# --- Pd Model ---
-print("\n--- Pd Model: Predicting BIS from Pd Latency ---")
-pd_lmm_df = pd_final_df.copy()
-# Select the 50% fractional area latency as the primary measure
-latency_col_pd = 'jk_latency_50'
-
-# Prepare data for the model
-model_cols_pd = [dependent_var, latency_col_pd, PRIMING_COL, TRIAL_NUMBER_COL, ELECTRODE_COL, SUBJECT_ID_COL]
-pd_lmm_df_clean = pd_lmm_df[model_cols_pd].dropna()
-
-if not pd_lmm_df_clean.empty:
-    # Define the model formula
-    formula_pd = (f"{dependent_var} ~ {latency_col_pd} + "
-                  f"C({PRIMING_COL}, Treatment(reference='{PRIMING_REF_STR}')) + "
-                  f"C({ELECTRODE_COL}, Treatment(reference='{PD_ELECTRODE_REF}')) + "
-                  f"{TRIAL_NUMBER_COL}")
-
-    print(f"Pd Model Formula:\n{formula_pd}")
-
-    # Fit the model
-    try:
-        lmm_pd = smf.mixedlm(
-            formula=formula_pd,
-            data=pd_lmm_df_clean,
-            groups=pd_lmm_df_clean[SUBJECT_ID_COL]
-        )
-        lmm_pd_results = lmm_pd.fit()
-        print("\nPd LMM Results:")
-        print(lmm_pd_results.summary())
-    except Exception as e:
-        print(f"Could not fit Pd LMM. Error: {e}")
-else:
-    print("Not enough data to run the Pd LMM after cleaning NaNs.")
-
-print("\nScript finished.")
