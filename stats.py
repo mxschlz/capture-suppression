@@ -657,5 +657,51 @@ def calculate_bis(df, rt_col='mean_rt', pc_col='pc'):
 
     return df_out
 
+
+def add_within_between_predictors(df, subject_col, percentages):
+    """
+    Splits continuous predictors into between-subject and within-subject components.
+
+    For each specified metric (latency, amplitude), this function calculates:
+    1. A 'between' predictor: The subject's average for that metric.
+    2. A 'within' predictor: The trial-level value centered on the subject's average.
+
+    This is crucial for mixed-effects models to disentangle trait vs. state effects.
+
+    Args:
+        df (pd.DataFrame): The input dataframe (e.g., n2ac_final_df).
+        subject_col (str): The name of the subject identifier column.
+        percentages (list): A list of the fractional area percentages used (e.g., [0.3, 0.5, 0.7]).
+
+    Returns:
+        pd.DataFrame: The dataframe with new '..._between' and '..._within' columns.
+    """
+    if df.empty:
+        print("Skipping within/between split: DataFrame is empty.")
+        return df
+
+    print("Splitting predictors into within-subject and between-subject components...")
+    metrics_to_split = ['jk_latency', 'jk_amplitude', 'st_latency', 'st_amplitude']
+
+    for p in percentages:
+        p_int = int(p * 100)
+        for metric_base in metrics_to_split:
+            col_name = f'{metric_base}_{p_int}'
+            if col_name not in df.columns:
+                continue
+
+            # 1. Calculate the between-subject predictor (subject's mean)
+            between_col_name = f'{col_name}_between'
+            subject_mean = df.groupby(subject_col)[col_name].transform('mean')
+            df[between_col_name] = subject_mean
+
+            # 2. Calculate the within-subject predictor (trial-level deviation from subject's mean)
+            within_col_name = f'{col_name}_within'
+            df[within_col_name] = df[col_name] - df[between_col_name]
+
+    print("Predictor splitting complete.")
+    return df
+
+
 if __name__ == "__main__":
     pass
