@@ -13,7 +13,7 @@ import numpy as np
 
 
 df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/sub-{subject}/beh/sub-{subject}_clean*.csv")[0]) for subject in subject_ids])
-# df = df[df["phase"]!=2]
+df = df[df["phase"]!=2]
 df = remove_outliers(df, column_name="rt", threshold=2)
 #df = df[df["SingletonPresent"] == 0]
 df_mean = df.groupby(["subject_id", "Priming"])[["select_target", "rt"]].mean().reset_index()
@@ -57,11 +57,11 @@ fig.tight_layout() # Adjust layout to prevent overlap
 pairs = [[0, -1], [0, 1], [1, -1]]
 # annotate ax1 --> accuracy
 annotator1 = Annotator(ax=ax[0], plot="barplot", pairs=pairs, data=df_mean, x="Priming", y="select_target")
-annotator1.configure(test="t-test_paired", text_format="star", comparisons_correction="bonferroni")
+annotator1.configure(test="t-test_paired", text_format="star")
 annotator1.apply_and_annotate()
 # annotate ax2 --> reaction time
 annotator2 = Annotator(ax=ax[1], plot="barplot", pairs=pairs, data=df_mean, x="Priming", y="rt")
-annotator2.configure(test="t-test_paired", text_format="star", comparisons_correction="bonferroni")
+annotator2.configure(test="t-test_paired", text_format="star")
 annotator2.apply_and_annotate()
 # further stats
 n = df.subject_id.unique().__len__()
