@@ -12,7 +12,7 @@ plt.ion()
 
 # --- 1. Data Loading & Preprocessing ---
 OUTLIER_RT_THRESHOLD = 2.0
-FILTER_PHASE = None
+FILTER_PHASE = 2
 
 # --- 2. Column Names ---
 SUBJECT_ID_COL = 'subject_id'
@@ -310,7 +310,7 @@ calculate_and_save_subject_averages(
 # --- MODIFIED: Analysis of Latency Robustness ---
 print("\n--- Analyzing Robustness of Latency Calculation (by Electrode) ---")
 
-def prepare_robustness_df(df, component_name):
+def prepare_robustness_df(df):
     """Melts the dataframe for robustness plotting."""
     latency_cols = [f'jk_latency_{int(p*100)}' for p in PERCENTAGES_TO_TEST]
     id_vars = [ELECTRODE_COL]
@@ -323,8 +323,8 @@ def prepare_robustness_df(df, component_name):
     long_df.dropna(inplace=True)
     return long_df
 
-n2ac_robust_df = prepare_robustness_df(n2ac_final_df, 'N2ac')
-pd_robust_df = prepare_robustness_df(pd_final_df, 'Pd')
+n2ac_robust_df = prepare_robustness_df(n2ac_final_df)
+pd_robust_df = prepare_robustness_df(pd_final_df)
 
 n2ac_has_data = not n2ac_robust_df.empty
 pd_has_data = not pd_robust_df.empty
