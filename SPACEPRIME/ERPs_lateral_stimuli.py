@@ -16,7 +16,7 @@ plt.ion()
 
 # --- 1. Preprocessing Parameters (adopted from LMM script) ---
 OUTLIER_RT_THRESHOLD = 2.0
-FILTER_PHASE = None
+FILTER_PHASE = 2
 REACTION_TIME_COL = 'rt'
 PHASE_COL = 'phase'
 
@@ -86,7 +86,7 @@ epochs_info = None  # To be populated from the first subject
 
 # --- Load and Preprocess Data ---
 print("--- Loading and Preprocessing Data ---")
-epochs = load_concatenated_epochs("spaceprime_desc-csd").crop(EPOCH_TMIN, EPOCH_TMAX)
+epochs = load_concatenated_epochs("spaceprime").crop(EPOCH_TMIN, EPOCH_TMAX)
 print(f"Original number of trials: {len(epochs)}")
 
 # Get metadata for preprocessing

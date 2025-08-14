@@ -4,7 +4,7 @@ from utils import *
 import seaborn as sns
 from SPACEPRIME.subjects import subject_ids
 from stats import remove_outliers
-from scipy.stats import linregress, ttest_rel
+from scipy.stats import ttest_rel
 import pingouin as pg
 
 plt.ion()
@@ -285,95 +285,50 @@ avg_full_trajectory_vectors_df = df.groupby(['subject_id', 'block', 'trial_nr'])
 
 # --- Step 2: Merge Average Vectors into the Main Analysis DataFrame ---
 # We use `df_clean` as our base, but this time we DO NOT filter by SingletonPresent.
-analysis_df = df_clean.copy()  # Keep all trials
+analysis_df_temp = df_clean.copy()  # Keep all trials
 # TODO: this is temporary for coherence with the rest of the plots
-#analysis_df = analysis_df.query("SingletonPresent==1")
+# analysis_df_temp = analysis_df_temp.query("SingletonPresent==1")
 
 
 # Ensure data types are consistent for merging.
-analysis_df['subject_id'] = analysis_df['subject_id'].astype(int)
-analysis_df['block'] = analysis_df['block'].astype(int)
-analysis_df['trial_nr'] = analysis_df['trial_nr'].astype(int)
+analysis_df_temp['subject_id'] = analysis_df_temp['subject_id'].astype(int)
+analysis_df_temp['block'] = analysis_df_temp['block'].astype(int)
+analysis_df_temp['trial_nr'] = analysis_df_temp['trial_nr'].astype(int)
 avg_full_trajectory_vectors_df['subject_id'] = avg_full_trajectory_vectors_df['subject_id'].astype(int)
 avg_full_trajectory_vectors_df['block'] = avg_full_trajectory_vectors_df['block'].astype(int)
 avg_full_trajectory_vectors_df['trial_nr'] = avg_full_trajectory_vectors_df['trial_nr'].astype(int)
 
 # Use a left merge to add the average trajectory vectors to our trial data.
-analysis_df = pd.merge(
-    analysis_df,
+analysis_df_temp = pd.merge(
+    analysis_df_temp,
     avg_full_trajectory_vectors_df,
     on=['subject_id', 'block', 'trial_nr'],
     how='left'
 )
-analysis_df.dropna(subset=['avg_x_dva', 'avg_y_dva'], inplace=True)
-print(f"Found trajectory data for {len(analysis_df)} trials.")
-
-# --- Step 3: Apply the new, adaptive Function to Calculate the Capture Score ---
-# The new function in utils.py will automatically handle the logic for both trial types.
-print("Applying adaptive capture score calculation...")
-analysis_df['capture_score'] = analysis_df.apply(
-    calculate_capture_score, axis=1, locations_map=numpad_locations_dva
-)
-analysis_df.dropna(subset=['capture_score'], inplace=True)
-
-# ===================================================================
-#           NEW: DIAGNOSTIC PRINT FOR CAPTURE SCORE
-# ===================================================================
-print("\n--- DIAGNOSTIC: Example 'capture_score' Calculations ---")
-# To avoid flooding the console, let's re-run the calculation with verbose=True
-# for a few random trials to see the logic in action.
-num_examples = min(3, len(analysis_df))
-if num_examples > 0:
-    for _, trial_row in analysis_df.sample(n=num_examples).iterrows():
-        _ = calculate_capture_score(trial_row, numpad_locations_dva, verbose=True)
-print("--- END DIAGNOSTIC ---\n")
+analysis_df_temp.dropna(subset=['avg_x_dva', 'avg_y_dva'], inplace=True)
+print(f"Found trajectory data for {len(analysis_df_temp)} trials.")
 
 # --- Add a readable column for Priming condition ---
 # We map the numeric Priming values to meaningful labels for plotting.
 priming_map = {1: 'Positive', 0: 'No', -1: 'Negative'}
-analysis_df['PrimingCondition'] = analysis_df['Priming'].map(priming_map)
+analysis_df_temp['PrimingCondition'] = analysis_df_temp['Priming'].map(priming_map)
 
 # Drop any trials that don't have a valid priming condition, just in case.
-analysis_df.dropna(subset=['PrimingCondition'], inplace=True)
+analysis_df_temp.dropna(subset=['PrimingCondition'], inplace=True)
 
-print(f"Successfully calculated capture score for {len(analysis_df)} trials.")
+print(f"Successfully calculated capture score for {len(analysis_df_temp)} trials.")
 print("Analysis will be divided by the following priming conditions:")
-print(analysis_df['PrimingCondition'].value_counts())
-analysis_df['Condition'] = np.where(analysis_df['SingletonPresent'] == 1, 'Distractor Present', 'Distractor Absent')
-print(f"Successfully calculated capture score for {len(analysis_df)} trials.")
-
-# ===================================================================
-#       VISUALIZE THE CAPTURE SCORE BY PRIMING CONDITION
-# ===================================================================
-print("\n--- Visualizing Capture Score by Priming Condition ---")
-
-# --- Plotting: Score across blocks for each priming condition ---
-plt.figure(figsize=(12, 7))
-sns.pointplot(
-    data=analysis_df,
-    x='block',
-    y='capture_score',
-    hue='PrimingCondition',
-    hue_order=['Negative', 'No', 'Positive'],  # Set a logical order
-    palette={'Positive': 'mediumseagreen', 'No': 'gray', 'Negative': 'salmon'}, # Intuitive colors
-    errorbar='ci',
-    join=True
-)
-plt.axhline(0, color='black', linestyle='--', linewidth=1, label='No Lateral Bias')
-plt.title('Capture Score Across Blocks by Priming Condition', fontsize=16)
-plt.xlabel('Block Number', fontsize=12)
-plt.ylabel('Capture Score (Positive = Target Capture)', fontsize=12)
-plt.legend(title='Priming Condition')
-plt.grid(True, which='major', axis='y', linestyle=':', linewidth=0.5)
-sns.despine()
+print(analysis_df_temp['PrimingCondition'].value_counts())
+analysis_df_temp['Condition'] = np.where(analysis_df_temp['SingletonPresent'] == 1, 'Distractor Present', 'Distractor Absent')
+print(f"Successfully calculated capture score for {len(analysis_df_temp)} trials.")
 
 # --- Step 3: Apply the new, comprehensive projection calculation ---
 print("Applying comprehensive trajectory projection calculation...")
 # This will add new columns like 'proj_target', 'proj_distractor', etc. to the DataFrame
-projection_scores_df = analysis_df.apply(
+projection_scores_df = analysis_df_temp.apply(
     calculate_trajectory_projections, axis=1, locations_map=numpad_locations_dva
 )
-analysis_df = pd.concat([analysis_df, projection_scores_df], axis=1)
+analysis_df = pd.concat([analysis_df_temp, projection_scores_df], axis=1)
 analysis_df.dropna(subset=['proj_target'], inplace=True) # Drop trials where score couldn't be computed
 
 # --- Step 4: Calculate derived, meaningful scores from the projections ---
@@ -384,35 +339,91 @@ print("Calculating new, improved scores from projections...")
 # to the strongest competing non-target item on that trial.
 # A high positive score means excellent focus on the target.
 strongest_competitor_proj = analysis_df[['proj_distractor', 'proj_control_max']].max(axis=1)
+control_proj = analysis_df['proj_control_avg']
 analysis_df['target_capture_score'] = analysis_df['proj_target']
 analysis_df['distractor_capture_score'] = analysis_df['proj_distractor']
 analysis_df['target_distractor_capture_diff'] = analysis_df['proj_target'] - analysis_df['proj_distractor']
 
-# ===================================================================
-#           NEW: DIAGNOSTIC PRINT FOR TARGET FOCUS SCORE
-# ===================================================================
-print("\n--- DIAGNOSTIC: Example 'target_focus_score' Calculations ---")
-num_examples = min(3, len(analysis_df))
-if num_examples > 0:
-    # Let's print the components for a few random trials
-    for i, trial_row in analysis_df.sample(n=num_examples).iterrows():
-        print(f"\n--- Example Trial (Index: {i}) ---")
-        print(f"Trial Info: sub-{trial_row['subject_id']}, block-{trial_row['block']}, trial-{trial_row['trial_nr']}")
+# Calculate the length of the ideal vector to the target and distractor for each trial
+analysis_df['target_vec_length'] = analysis_df['TargetDigit'].apply(get_vector_length, locations_map=numpad_locations_dva)
+analysis_df['distractor_vec_length'] = analysis_df['SingletonDigit'].apply(get_vector_length, locations_map=numpad_locations_dva)
 
-        # You can re-run the projection calculation verbosely for full detail
-        # calculate_trajectory_projections(trial_row, numpad_locations_dva, verbose=True)
+# --- Create the Standardized Scores ---
+# The standardized score is the projection value divided by the length of the ideal vector.
+# This converts the score from an absolute distance (in dva) to a relative proportion.
+analysis_df['target_capture_score_std'] = analysis_df['target_capture_score'] / (analysis_df['target_vec_length'])
+analysis_df['distractor_capture_score_std'] = analysis_df['distractor_capture_score'] / (analysis_df['distractor_vec_length'])
 
-        print(f"  - Projection on Target:      {trial_row['proj_target']:.4f}")
-        print(f"  - Projection on Distractor:  {trial_row['proj_distractor']:.4f}")
-        print(f"  - Max Control Projection:    {trial_row['proj_control_max']:.4f}")
+# The difference score is now a comparison of these relative proportions
+analysis_df['target_distractor_capture_diff_std'] = analysis_df['target_capture_score_std'] - analysis_df['distractor_capture_score_std']
 
-        # Recalculate the strongest competitor for this specific row to be accurate
-        strongest_comp = np.nanmax(
-            [trial_row.get('proj_distractor', -np.inf), trial_row.get('proj_control_max', -np.inf)])
-        print(f"  - Strongest Competitor Proj: {strongest_comp:.4f}")
-        print(
-            f"  - FINAL Target Focus Score:  {trial_row['target_capture_score']:.4f}  (Target Proj - Strongest Competitor Proj)")
+
+# --- Diagnostic Print for Standardized Scores ---
+print("\n--- DIAGNOSTIC: Example Standardized Score Calculations ---")
+# Select a few trials to show the before and after
+example_trials_std = analysis_df.dropna(subset=['distractor_vec_length']).sample(n=min(3, len(analysis_df)))
+for i, trial_row in example_trials_std.iterrows():
+    print(f"\n--- Example Trial (Index: {i}) ---")
+    print(f"  - Target: {int(trial_row['TargetDigit'])}, Distractor: {int(trial_row['SingletonDigit'])}")
+    print(f"  - Target Vector Length: {trial_row['target_vec_length']:.2f}, Distractor Vector Length: {trial_row['distractor_vec_length']:.2f}")
+    print(f"  - Original Target Score:   {trial_row['target_capture_score']:.3f} (dva)")
+    print(f"  - Standardized Target Score: {trial_row['target_capture_score_std']:.3f} (proportion)")
+    print(f"  - Original Distractor Score:   {trial_row['distractor_capture_score']:.3f} (dva)")
+    print(f"  - Standardized Distractor Score: {trial_row['distractor_capture_score_std']:.3f} (proportion)")
 print("--- END DIAGNOSTIC ---\n")
+
+
+# ===================================================================
+#      NEW: FILTER OUT NOISY TRAJECTORIES
+# ===================================================================
+print("\n--- Filtering out noisy trajectories that go beyond the response box ---")
+
+# --- Step 1: Define the boundary ---
+# The numpad corners are at (+/-1, +/-1), so the max distance from center is sqrt(2) ~= 1.41 dva.
+# We'll set a generous boundary to only catch truly erratic movements.
+TRAJECTORY_BOUNDARY_DVA = None
+print(f"Defining boundary for valid trajectories at {TRAJECTORY_BOUNDARY_DVA} dva from the center.")
+
+# --- Step 2: Identify trials that exceed the boundary ---
+# We check the maximum absolute x and y coordinate for each trial in the raw trajectory data `df`.
+max_coords_per_trial = df.groupby(['subject_id', 'block', 'trial_nr']).agg(
+    max_abs_x=('x', lambda s: s.abs().max()),
+    max_abs_y=('y', lambda s: s.abs().max())
+).reset_index()
+
+# Create a mask to find trials where any point went out of bounds.
+noisy_mask = (max_coords_per_trial['max_abs_x'] > TRAJECTORY_BOUNDARY_DVA) | \
+             (max_coords_per_trial['max_abs_y'] > TRAJECTORY_BOUNDARY_DVA)
+noisy_trials_df = max_coords_per_trial[noisy_mask]
+
+# --- Step 3: Create a set of identifiers for efficient filtering ---
+# Ensure data types match the `analysis_df` for comparison.
+noisy_trials_df['subject_id'] = noisy_trials_df['subject_id'].astype(int)
+noisy_trials_df['block'] = noisy_trials_df['block'].astype(int)
+noisy_trials_df['trial_nr'] = noisy_trials_df['trial_nr'].astype(int)
+
+# A set of tuples is very fast for checking membership.
+noisy_trial_identifiers = set(zip(
+    noisy_trials_df['subject_id'],
+    noisy_trials_df['block'],
+    noisy_trials_df['trial_nr']
+))
+
+# --- Step 4: Filter the main analysis DataFrame ---
+initial_count = len(analysis_df)
+
+# Create a boolean mask by checking if each trial in analysis_df is in our noisy set.
+# We keep the trials that are *not* in the set.
+is_not_noisy_mask = [
+    (row.subject_id, row.block, row.trial_nr) not in noisy_trial_identifiers
+    for row in analysis_df.itertuples()
+]
+
+analysis_df = analysis_df[is_not_noisy_mask].copy()
+removed_count = initial_count - len(analysis_df)
+print(f"Removed {removed_count} noisy trials ({removed_count / initial_count:.2%}).")
+print(f"Remaining trials for analysis: {len(analysis_df)}")
+
 
 # ===================================================================
 #       VISUALIZE DERIVED CAPTURE SCORES BY PRIMING & BLOCK
@@ -428,7 +439,6 @@ scores_to_plot = {
 
 # Create a figure with 3 subplots in a row, sharing the y-axis for easy comparison
 fig, axes = plt.subplots(1, 3, figsize=(24, 7), sharey=True)
-fig.suptitle('Capture Score Metrics Across Blocks by Priming Condition', fontsize=18, y=1.03)
 
 # Define common plotting parameters for a consistent look
 hue_order = ['Negative', 'No', 'Positive']
@@ -454,7 +464,7 @@ for i, (col_name, title) in enumerate(scores_to_plot.items()):
 
     # Only set the y-label for the first (leftmost) plot
     if i == 0:
-        ax.set_ylabel('Capture Score (Projection)', fontsize=12)
+        ax.set_ylabel('Capture Score', fontsize=12)
     else:
         ax.set_ylabel('')  # Hide y-label for other plots to avoid clutter
 
@@ -470,9 +480,11 @@ for i, (col_name, title) in enumerate(scores_to_plot.items()):
 plt.tight_layout() # Adjust layout to prevent title overlap
 
 # Compare capture score effect sizes versus response time and accuracy effect sizes in Priming conditions
-analysis_df_mean = analysis_df.groupby(["subject_id", "Priming"])[["rt", "select_target", "target_capture_score",
-                                                      "distractor_capture_score",
-                                                      "target_distractor_capture_diff"]].mean().reset_index()
+analysis_df_mean = analysis_df.groupby(["subject_id", "Priming"])[["rt", "select_target", "target_capture_score_std",
+                                                                   "target_capture_score", "distractor_capture_score",
+                                                                   "target_distractor_capture_diff",
+                                                      "distractor_capture_score_std",
+                                                      "target_distractor_capture_diff_std"]].mean().reset_index()
 
 # ===================================================================
 #       EFFECT SIZE COMPARISON: CAPTURE SCORE vs. RT vs. ACCURACY
@@ -487,9 +499,9 @@ df_effects = analysis_df_mean.copy()
 metrics_to_compare = {
     'Response Time (s)': 'rt',
     'Accuracy (%)': 'select_target',
-    'Capture Score (Target-Distractor)': 'target_distractor_capture_diff',
-    'Capture Score (Target)': 'target_capture_score',
-    'Capture Score (Distractor)': 'distractor_capture_score'
+    'CTAI (Target-Distractor)': 'target_distractor_capture_diff',
+    'CTAI (Target)': 'target_capture_score',
+    'CTAI (Distractor)': 'distractor_capture_score'
 }
 
 # Prepare a list to store the results
@@ -552,6 +564,23 @@ for metric_name, col_name in metrics_to_compare.items():
         "p-val": p_val_neg # Store the p-value
     })
 
+    # --- Comparison 3: Positive Priming vs. Negative Priming ---
+    ttest_pos_vs_neg = pg.ttest(
+        x=x_pos_numeric,
+        y=x_neg_numeric,  # Compare positive against negative
+        paired=True,
+        correction=False
+    )
+    cohens_d_pos_neg = ttest_pos_vs_neg['cohen-d'].iloc[0]
+    p_val_pos_neg = ttest_pos_vs_neg['p-val'].iloc[0]
+    effect_size_results.append({
+        'Metric': metric_name,
+        'Comparison': 'Positive vs. Negative Priming',
+        "Cohen's d": cohens_d_pos_neg,
+        "p-val": p_val_pos_neg
+    })
+
+
 # Convert results to a DataFrame for easy viewing
 effect_size_df = pd.DataFrame(effect_size_results)
 
@@ -573,13 +602,12 @@ def p_to_stars(p):
         return '*'
     return 'ns'
 
-# Get the number of metrics to create a grid of subplots
-n_metrics = len(metrics_to_compare)
-n_cols = 3  # Arrange plots in 2 columns
-n_rows = 2
-
-fig, axes = plt.subplots(n_rows, n_cols, figsize=(8 * n_cols, 6 * n_rows), squeeze=False)
-axes = axes.flatten()  # Flatten the 2D array of axes for easy iteration
+fig, axes = plt.subplot_mosaic(mosaic="""
+ab.
+..c
+de.
+""", figsize=(8, 18))
+axes = [ax for ax in list(axes.values())] # Flatten the 2D array of axes for easy iteration
 
 # Define the order, labels, and a safe color palette for the x-axis
 priming_order = [-1, 0, 1]
@@ -597,9 +625,9 @@ for i, (metric_name, col_name) in enumerate(metrics_to_compare.items()):
         order=priming_order,
         ax=ax,
         palette=palette_list,
-        errorbar='ci'
+        errorbar='se'
     )
-    ax.set_title(metric_name, fontsize=14, pad=40) # Increased padding for annotations
+    ax.set_title(metric_name, fontsize=14, pad=50) # Increased padding for annotations
     ax.set_xlabel("Priming Condition", fontsize=12)
     ax.set_ylabel(metric_name, fontsize=12)
     ax.set_xticklabels(priming_labels)
@@ -637,8 +665,8 @@ for i, (metric_name, col_name) in enumerate(metrics_to_compare.items()):
     y2 = bar_heights.get(0, 0)
     y_bracket_neg = max(y1, y2) + offset
 
-    # Check if the two brackets would overlap and adjust if necessary
-    if abs(y_bracket_pos - y_bracket_neg) < y_range * 0.15: # Increased threshold for overlap
+    # Check if the two inner brackets would overlap and adjust if necessary
+    if abs(y_bracket_pos - y_bracket_neg) < y_range * 0.15:
         y_bracket_neg = y_bracket_pos + y_range * 0.2  # Push the second bracket up more
 
     # Retrieve the stats
@@ -654,15 +682,32 @@ for i, (metric_name, col_name) in enumerate(metrics_to_compare.items()):
     ax.plot([x1_neg, x1_neg, x2_neg, x2_neg], [y_bracket_neg, y_bracket_neg + offset, y_bracket_neg + offset, y_bracket_neg], lw=1.5, c='k')
     ax.text((x1_neg + x2_neg) / 2, y_bracket_neg + offset * 1.5, f"d = {d_neg_val:.2f}\n{p_neg_str}", ha='center', va='bottom', color='k', fontsize=10)
 
-    # Adjust y-limit to make space for annotations
-    ax.set_ylim(top=max(y_bracket_pos, y_bracket_neg) + y_range * 0.3) # Increased top margin
+    # Comparison 3: Positive (1) vs. Negative (-1)
+    x1_pvn, x2_pvn = 2, 0  # Positions for Positive and Negative
+    # This bracket should be the highest one
+    y_bracket_pvn = max(y_bracket_pos, y_bracket_neg) + y_range * 0.2
+
+    # Retrieve the stats
+    pvn_stats = effect_size_df[
+        (effect_size_df['Metric'] == metric_name) &
+        (effect_size_df['Comparison'] == 'Positive vs. Negative Priming')
+    ].iloc[0]
+    d_pvn_val = pvn_stats["Cohen's d"]
+    p_pvn_val = pvn_stats["p-val"]
+    p_pvn_str = p_to_stars(p_pvn_val)
+
+    # Draw the annotation bracket and text
+    ax.plot([x1_pvn, x1_pvn, x2_pvn, x2_pvn], [y_bracket_pvn, y_bracket_pvn + offset, y_bracket_pvn + offset, y_bracket_pvn], lw=1.5, c='k')
+    ax.text((x1_pvn + x2_pvn) / 2, y_bracket_pvn + offset * 1.5, f"d = {d_pvn_val:.2f}\n{p_pvn_str}", ha='center', va='bottom', color='k', fontsize=10)
+
+    # Adjust y-limit to make space for ALL annotations
+    ax.set_ylim(top=y_bracket_pvn + y_range * 0.3)
 
 
-# Hide any unused subplots if the number of metrics is odd
+# Hide any unused subplots
 for j in range(i + 1, len(axes)):
     fig.delaxes(axes[j])
 
-fig.suptitle("Performance Metrics by Priming Condition with Effect Size and Significance", fontsize=18, y=1.02)
 plt.tight_layout()
 
 # ===================================================================
@@ -679,8 +724,8 @@ print("\nRunning 3xN Repeated Measures ANOVA (PrimingCondition x Block)...")
 analysis_df_anova = analysis_df.copy()
 rm_anova_results = pg.rm_anova(
     data=analysis_df_anova,
-    dv='target_capture_score',
-    within=['PrimingCondition', 'block'],  # Updated within-subject factors
+    dv='target_capture_score',  # Use the standardized score
+    within=['PrimingCondition', 'block'],
     subject='subject_id',
     detailed=True
 )
@@ -707,7 +752,7 @@ analysis_df['singleton_trial_idx'] = analysis_df.groupby('subject_id').cumcount(
 # For each subject, calculate the rolling mean of the capture score.
 # This smooths out trial-to-trial noise and reveals the underlying trend.
 # We use the same WINDOW_SIZE defined earlier in the script for consistency.
-analysis_df['capture_score_running_avg'] = analysis_df.groupby('subject_id')['capture_score'].transform(
+analysis_df['capture_score_running_avg'] = analysis_df.groupby('subject_id')['target_capture_score'].transform(
     lambda x: x.rolling(WINDOW_SIZE, center=False, min_periods=1).mean()
 )
 
@@ -771,9 +816,9 @@ initial_move_points_df = first_move_indices[['subject_id', 'block', 'trial_nr', 
 df_clean['subject_id'] = df_clean['subject_id'].astype(float)
 initial_move_points_df['subject_id'] = initial_move_points_df['subject_id'].astype(float)
 # Choose only singleton present trials in merged_df
-df_clean = df_clean.query("SingletonPresent==1")
+df_clean_sp = df_clean.copy().query("SingletonPresent==1")
 analysis_df_classification = pd.merge(
-    df_clean,
+    df_clean_sp,
     initial_move_points_df,
     on=['subject_id', 'block', 'trial_nr'],
     how='left'  # Use left merge to keep all trials
@@ -947,91 +992,6 @@ if pd.notna(last_reliable_trial):
 plt.show()
 
 # ===================================================================
-#       STATISTICAL ANALYSIS: MODELING THE LEARNING EFFECT
-# ===================================================================
-print("\n--- Modeling the Learning Effect Over Trials ---")
-
-# We will fit a logarithmic model to each subject's data to quantify the learning rate.
-# Model: suppression_effect = intercept + slope * log(trial_number)
-# A positive slope indicates that suppression increases over time.
-
-# --- Step 1: Fit a logarithmic model for each subject ---
-subject_fits = []
-
-for subject, group in analysis_df_classification.groupby('subject_id'):
-    # Ensure there are enough data points to fit a line
-    if len(group) < 3:
-        continue
-
-    # Perform linear regression on the log-transformed trial index
-    slope, intercept, r_value, p_value, std_err = linregress(
-        group['log_trial_idx'],
-        group['per_trial_effect']
-    )
-    subject_fits.append({'subject_id': subject, 'slope': slope, 'intercept': intercept})
-
-fit_results_df = pd.DataFrame(subject_fits)
-
-print(f"Successfully fitted logarithmic models for {len(fit_results_df)} subjects.")
-
-# --- Step 2: Perform a one-sample t-test on the slopes ---
-# We test if the mean of the subjects' slopes is significantly different from zero.
-
-print("\n--- One-Sample T-test on Learning Rate (Slopes) ---")
-ttest_result = pg.ttest(fit_results_df['slope'], 0, confidence=0.95)
-print(ttest_result.round(4))
-
-# --- Step 3: Visualize the model fit ---
-# We plot the running average data and overlay the curve from our model.
-avg_intercept = fit_results_df['intercept'].mean()
-avg_slope = fit_results_df['slope'].mean()
-
-# Define the x-axis range for the fitted curve. We use the `last_reliable_trial`
-# calculated in the previous plot to ensure the range is consistent.
-if pd.notna(last_reliable_trial):
-    x_trials = np.arange(0, last_reliable_trial + 1)
-else:
-    # Fallback if last_reliable_trial is not available for any reason
-    x_trials = np.arange(0, analysis_df_classification['singleton_trial_idx'].max() + 1)
-
-log_x_trials = np.log(x_trials + 1)
-
-# Calculate the predicted y-values from the average model parameters
-# Multiply by 100 to match the scale of the running average plot
-predicted_y = (avg_intercept + avg_slope * log_x_trials) * 100
-
-# Create a new plot showing both the running average and the logarithmic fit
-fig, ax = plt.subplots(figsize=(12, 7))
-
-# Plot the running average with its confidence interval using seaborn
-sns.lineplot(
-    data=analysis_df_classification,
-    x='log_trial_idx',
-    y='suppression_effect',
-    ax=ax,
-    color='gray',
-    label='Mean Suppression Effect (Running Avg)'
-)
-
-# Overlay the fitted logarithmic curve
-ax.plot(x_trials, predicted_y, color='blue', linestyle='--', linewidth=2.5, label=f'Logarithmic Fit (Mean Slope={avg_slope:.3f})')
-
-# Formatting
-ax.axhline(0, color='red', linestyle='--', linewidth=1.5)
-ax.set_title('Running Average and Logarithmic Model of Suppression Effect', fontsize=16)
-ax.set_xlabel('Trial Number (Singleton Present)', fontsize=12)
-ax.set_ylabel('Suppression Effect (% Control − % Distractor)', fontsize=12)
-ax.legend()
-ax.grid(True, which='both', linestyle='--', linewidth=0.5)
-sns.despine(ax=ax)
-
-# Apply the same x-axis limit as the previous plot
-if pd.notna(last_reliable_trial):
-    ax.set_xlim(0, last_reliable_trial)
-
-plt.show()
-
-# ===================================================================
 #       ANALYSIS: BLOCK-LEVEL SUPPRESSION EFFECT BAR PLOT
 # ===================================================================
 print("\n--- Creating Block-Level Suppression Effect Bar Plot ---")
@@ -1148,3 +1108,76 @@ visualize_full_trajectory(other_trial_for_viz, df, MOVEMENT_THRESHOLD, target_hz
 #    numpad_locations_dva,
 #    target_hz=RESAMP_FREQ)
 """
+
+# ===================================================================
+#      IN-DEPTH INVESTIGATION: GEOMETRY AND CAPTURE SCORE
+# ===================================================================
+print("\n--- In-Depth Investigation: Impact of Trial Geometry on Capture Score ---")
+
+# --- Step 1: Calculate Target-Distractor Distance for each trial ---
+# This will help us test your hypothesis about maximal distance.
+
+# Apply this function to the analysis_df
+# We'll use the df with initial movement classifications to find interesting trials
+analysis_df_geom = pd.merge(
+    analysis_df,
+    analysis_df_classification[['subject_id', 'block', 'trial_nr', 'initial_movement_direction']],
+    on=['subject_id', 'block', 'trial_nr'],
+    how='left'
+)
+
+analysis_df_geom['target_distractor_dist'] = analysis_df_geom.apply(
+    get_distance_between_digits, axis=1, locations_map=numpad_locations_dva
+)
+
+print("Calculated target-distractor distance for all relevant trials.")
+
+# --- Step 2: Find and Plot an Example of Maximal-Distance Capture ---
+# We'll find a trial that perfectly matches your scenario.
+print("\nSearching for a trial with maximal target-distractor distance and initial capture...")
+
+# Filter for trials that were captured by the distractor
+captured_trials = analysis_df_geom[
+    analysis_df_geom['initial_movement_direction'] == 'distractor'
+].copy()
+
+# Sort them by the target-distractor distance to find the most extreme examples
+captured_trials.sort_values(by='target_distractor_dist', ascending=False, inplace=True)
+
+if not captured_trials.empty:
+    # Select the top example
+    example_trial = captured_trials.sample().iloc[0]
+
+    print(f"Found example trial: sub-{example_trial['subject_id']}, block-{example_trial['block']}, trial-{example_trial['trial_nr']}")
+    print(f"  - Target: {example_trial['TargetDigit']}, Distractor: {example_trial['SingletonDigit']}")
+    print(f"  - On-screen distance: {example_trial['target_distractor_dist']:.2f} dva")
+    print(f"  - Target Capture Score: {example_trial['target_capture_score']:.3f}")
+    print(f"  - Distractor Capture Score: {example_trial['distractor_capture_score']:.3f}")
+    print(f"  - Difference Score: {example_trial['target_distractor_capture_diff']:.3f}")
+
+    # Generate the plot for our example trial
+    plot_trajectory_and_vectors(example_trial, df, numpad_locations_dva)
+
+else:
+    print("Could not find any trials that matched the specified criteria.")
+
+
+# --- Step 4: Correlate Target-Distractor Distance with Capture Score ---
+print("\n--- Correlating Target-Distractor Distance with Capture Score Difference ---")
+plt.figure(figsize=(10, 7))
+
+# Use a regression plot to see the relationship
+sns.regplot(
+    data=analysis_df_geom.dropna(subset=['target_distractor_dist', 'target_distractor_capture_diff']),
+    x='target_distractor_dist',
+    y='distractor_capture_score',
+    scatter_kws={'alpha': 0.2, 's': 15}, # Make points transparent
+    line_kws={'color': 'red'}
+)
+
+plt.title('Relationship Between On-Screen Distance and Capture Score')
+plt.xlabel('Euclidean Distance Between Target and Distractor (dva)')
+plt.ylabel('Capture Score (Target Proj. - Distractor Proj.)')
+plt.grid(True, linestyle='--')
+sns.despine()
+plt.show()
