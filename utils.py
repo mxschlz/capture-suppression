@@ -904,67 +904,50 @@ def get_all_waves(trials_df, electrode_pairs, time_window, all_times, lateral_st
     return diff_wave, mean_contra_wave, mean_ipsi_wave, window_times
 
 
-def calculate_capture_score(row, locations_map):
+def calculate_capture_score(row, locations_map, verbose=False):
     """
     Calculates a time-weighted capture score based on the full trajectory,
     adapting its logic for singleton-present and singleton-absent trials.
-
-    This function quantifies motor deviation by projecting the average trajectory
-    vector onto two competing directions.
-
-    - For Singleton-Present trials:
-      It contrasts movement towards the salient distractor vs. a neutral control item.
-      This isolates the specific effect of salience.
-      Score = projection_on_distractor - projection_on_control
-
-    - For Singleton-Absent trials:
-      It contrasts movement towards one neutral non-target vs. another.
-      This provides a baseline measure of random motor deviation.
-      Score = projection_on_NonSingleton1 - projection_on_NonSingleton2
-
-    Args:
-        row (pd.Series): A row from the analysis DataFrame. Must contain trial info
-                         like 'SingletonPresent', digit locations, and the average
-                         trajectory vector ('avg_x_dva', 'avg_y_dva').
-        locations_map (dict): A dictionary mapping numpad digits to (x, y) coordinates.
-
-    Returns:
-        float: The calculated capture score.
-            - Positive Score: Stronger pull towards the first item in the contrast (e.g., distractor).
-            - Negative Score: Stronger pull towards the second item (e.g., control).
+    ... (rest of docstring) ...
     """
     # --- 1. Get the average movement vector for the trial ---
-    # This vector represents the "center of mass" of the entire trajectory,
-    # making the score inherently time-weighted.
     try:
         avg_vec = np.array([row['avg_x_dva'], row['avg_y_dva']])
     except KeyError:
-        print("Warning: 'avg_x_dva' or 'avg_y_dva' not found. Cannot calculate score.")
+        if verbose: print("Warning: 'avg_x_dva' or 'avg_y_dva' not found.")
         return np.nan
 
     if np.linalg.norm(avg_vec) < 1e-6:
         return np.nan
 
+    if verbose:
+        print("\n--- Calculating Capture Score ---")
+        print(
+            f"Trial Info: sub-{row.get('subject_id', 'N/A')}, block-{row.get('block', 'N/A')}, trial-{row.get('trial_nr', 'N/A')}")
+        print(f"Avg Movement Vector: ({avg_vec[0]:.3f}, {avg_vec[1]:.3f})")
+
     # --- 2. Determine which items to contrast based on trial type ---
     try:
         is_singleton_present = row['SingletonPresent'] == 1
     except KeyError:
-        print("Warning: 'SingletonPresent' column not found. Cannot determine trial type.")
+        if verbose: print("Warning: 'SingletonPresent' column not found.")
         return np.nan
 
     if is_singleton_present:
-        # For singleton trials, contrast the distractor vs. a neutral control.
         primary_col, contrast_col = 'TargetDigit', 'SingletonDigit'
+        if verbose: print("Type: Singleton Present. Contrasting Target vs. Distractor.")
     else:
-        # For no-singleton trials, contrast the two neutral non-targets.
-        primary_col, contrast_col = 'TargetDigit', 'Non-Singleton2Digit'
+        primary_col, contrast_col = 'TargetDigit', random.choice(['Non-Singleton1Digit', 'Non-Singleton2Digit'])
+        if verbose: print("Type: Singleton Absent. Contrasting Target vs. Control.")
 
-    # --- 3. Get digit locations for the primary and contrast items ---
+    # --- 3. Get digit locations ---
     try:
         primary_digit = row[primary_col]
         contrast_digit = row[contrast_col]
+        if verbose: print(
+            f"Item Digits -> Primary ({primary_col}): {primary_digit}, Contrast ({contrast_col}): {contrast_digit}")
     except KeyError as e:
-        print(f"Warning: Missing required column for score calculation: {e}")
+        if verbose: print(f"Warning: Missing required column: {e}")
         return np.nan
 
     if pd.isna(primary_digit) or pd.isna(contrast_digit):
@@ -972,27 +955,99 @@ def calculate_capture_score(row, locations_map):
 
     # --- 4. Calculate projections ---
     def get_projection(digit):
-        """Helper to get the projection of the avg_vec onto a direction vector."""
-        # Ensure digit is an integer for dictionary lookup
+        if pd.isna(digit): return np.nan
         dir_vec = np.array(locations_map.get(int(digit), (0, 0)))
         norm = np.linalg.norm(dir_vec)
-        if norm < 1e-6:
-            return np.nan  # Cannot project onto a zero vector
+        if norm < 1e-6: return np.nan
         unit_vec = dir_vec / norm
         return np.dot(avg_vec, unit_vec)
 
     projection_on_primary = get_projection(primary_digit)
     projection_on_contrast = get_projection(contrast_digit)
 
+    if verbose:
+        print(f"Projection on Primary:   {projection_on_primary:.4f}")
+        print(f"Projection on Contrast:  {projection_on_contrast:.4f}")
+
     if np.isnan(projection_on_primary) or np.isnan(projection_on_contrast):
         return np.nan
 
-    # --- 5. The final score is the difference between projections ---
-    # This measures the "extra" pull towards the primary item (e.g., distractor)
-    # relative to the contrast item (e.g., control).
-    # A positive score means more pull towards the primary.
+    # --- 5. The final score is the difference ---
     capture_score = projection_on_primary - projection_on_contrast
+    if verbose:
+        print(f"Final Score (Primary - Contrast): {capture_score:.4f}")
+        print("---------------------------------")
+
     return capture_score
+
+
+def calculate_trajectory_projections(row, locations_map, verbose=False):
+    """
+    Calculates a comprehensive set of trajectory projection scores for a single trial.
+    ... (rest of docstring) ...
+    """
+    # --- 1. Get the average movement vector ---
+    try:
+        avg_vec = np.array([row['avg_x_dva'], row['avg_y_dva']])
+    except KeyError:
+        return pd.Series(
+            {'proj_target': np.nan, 'proj_distractor': np.nan, 'proj_control_max': np.nan, 'proj_control_avg': np.nan})
+
+    if np.linalg.norm(avg_vec) < 1e-6:
+        return pd.Series(
+            {'proj_target': np.nan, 'proj_distractor': np.nan, 'proj_control_max': np.nan, 'proj_control_avg': np.nan})
+
+    if verbose:
+        print("\n--- Calculating Trajectory Projections ---")
+        print(
+            f"Trial Info: sub-{row.get('subject_id', 'N/A')}, block-{row.get('block', 'N/A')}, trial-{row.get('trial_nr', 'N/A')}")
+        print(f"Avg Movement Vector: ({avg_vec[0]:.3f}, {avg_vec[1]:.3f})")
+
+    # --- 2. Helper function ---
+    def get_projection(digit, avg_vec, locations_map):
+        if pd.isna(digit): return np.nan
+        dir_vec = np.array(locations_map.get(int(digit), (0, 0)))
+        norm = np.linalg.norm(dir_vec)
+        if norm < 1e-6: return np.nan
+        unit_vec = dir_vec / norm
+        return np.dot(avg_vec, unit_vec)
+
+    # --- 3. Identify all digits ---
+    target_digit = row.get('TargetDigit')
+    distractor_digit = row.get('SingletonDigit') if row.get('SingletonPresent') == 1 else row.get(random.choice(["Non-Singleton1Digit", "Non-Singleton2Digit"]))
+    all_nontarget_cols = ['SingletonDigit', 'Non-Singleton1Digit', 'Non-Singleton2Digit']
+    control_digits = {int(d) for col in all_nontarget_cols if
+                      pd.notna(d := row.get(col)) and d != target_digit and d != distractor_digit}
+
+    if verbose:
+        print(
+            f"Identified Digits -> Target: {target_digit}, Distractor: {distractor_digit}, Controls: {control_digits or 'None'}")
+
+    # --- 4. Calculate projections ---
+    results = {}
+    results['proj_target'] = get_projection(target_digit, avg_vec, locations_map)
+    results['proj_distractor'] = get_projection(distractor_digit, avg_vec, locations_map)
+
+    if verbose:
+        print(f"Projection on Target:      {results['proj_target']:.4f}")
+        print(f"Projection on Distractor:  {results['proj_distractor']:.4f}")
+
+    if control_digits:
+        control_projs = [p for p in [get_projection(d, avg_vec, locations_map) for d in control_digits] if pd.notna(p)]
+        if verbose: print(f"Individual Control Projs:  {[round(p, 4) for p in control_projs]}")
+        if control_projs:
+            results['proj_control_max'] = max(control_projs)
+            results['proj_control_avg'] = np.mean(control_projs)
+        else:
+            results['proj_control_max'], results['proj_control_avg'] = np.nan, np.nan
+    else:
+        results['proj_control_max'], results['proj_control_avg'] = np.nan, np.nan
+
+    if verbose:
+        print(f"Max Control Projection:    {results.get('proj_control_max', np.nan):.4f}")
+        print("--------------------------------------")
+
+    return pd.Series(results)
 
 
 def plot_erp_sanity_check(times, contra_wave, ipsi_wave, diff_wave, meta_df, component_name, time_window,
@@ -1030,78 +1085,74 @@ def plot_erp_sanity_check(times, contra_wave, ipsi_wave, diff_wave, meta_df, com
     plt.show()
 
 
-def calculate_trajectory_projections(row, locations_map):
+def resample_all_trajectories(raw_df, target_hz=60, trial_cols=None):
     """
-    Calculates a comprehensive set of trajectory projection scores for a single trial.
+    Resamples all trajectories in a raw mouse-tracking dataframe to a constant sampling rate.
 
-    This function deconstructs the average trajectory vector by projecting it onto
-    the direction of every relevant stimulus category (Target, Distractor, Control, Other).
-    This provides a multi-dimensional measure of motor pull.
+    This function works by grouping the data by trial, applying linear interpolation
+    to each trial's trajectory individually, and then combining the results into a
+    single, clean dataframe. This is the recommended way to prepare trajectory data
+    for further analysis, ensuring all subsequent calculations are truly time-weighted.
 
     Args:
-        row (pd.Series): A row from the analysis DataFrame. Must contain trial info
-                         like 'SingletonPresent', digit locations, and the average
-                         trajectory vector ('avg_x_dva', 'avg_y_dva').
-        locations_map (dict): A dictionary mapping numpad digits to (x, y) coordinates.
+        raw_df (pd.DataFrame): The raw mouse-tracking DataFrame. Must contain time,
+                               x, and y coordinates, as well as columns to identify
+                               each trial.
+        target_hz (int, optional): The target sampling rate in Hz. Defaults to 60.
+        trial_cols (list of str, optional): A list of column names that uniquely
+                                            identify a trial. If None, defaults to
+                                            ['subject_id', 'block', 'trial_nr'].
 
     Returns:
-        pd.Series: A series containing the projection scores for each category, e.g.,
-                   'proj_target', 'proj_distractor', 'proj_control_max', etc.
+        pd.DataFrame: A new DataFrame containing all trajectories resampled to the
+                      target frequency. The original trial-identifying columns are
+                      preserved.
     """
-    # --- 1. Get the average movement vector for the trial ---
-    try:
-        avg_vec = np.array([row['avg_x_dva'], row['avg_y_dva']])
-    except KeyError:
-        return pd.Series({'proj_target': np.nan, 'proj_distractor': np.nan, 'proj_control_max': np.nan, 'proj_control_avg': np.nan})
+    if trial_cols is None:
+        trial_cols = ['subject_id', 'block', 'trial_nr']
 
-    if np.linalg.norm(avg_vec) < 1e-6: # No movement, no projections
-        return pd.Series({'proj_target': np.nan, 'proj_distractor': np.nan, 'proj_control_max': np.nan, 'proj_control_avg': np.nan})
+    # --- 1. Input Validation ---
+    required_cols = trial_cols + ['time', 'x', 'y']
+    missing_cols = [col for col in required_cols if col not in raw_df.columns]
+    if missing_cols:
+        raise ValueError(f"Input DataFrame is missing required columns: {missing_cols}")
 
-    # --- 2. Helper function for projection calculation ---
-    def get_projection(digit, avg_vec, locations_map):
-        """Helper to get the projection of the avg_vec onto a direction vector."""
-        if pd.isna(digit):
-            return np.nan
-        dir_vec = np.array(locations_map.get(int(digit), (0, 0)))
-        norm = np.linalg.norm(dir_vec)
-        if norm < 1e-6:
-            return np.nan  # Cannot project onto a zero vector (center)
-        unit_vec = dir_vec / norm
-        return np.dot(avg_vec, unit_vec)
+    # --- 2. Group and Resample ---
+    # We group by the trial identifiers. The `groupby` object is an iterator.
+    grouped = raw_df.groupby(trial_cols)
 
-    # --- 3. Identify and categorize all digits on screen ---
-    target_digit = row.get('TargetDigit')
-    distractor_digit = row.get('SingletonDigit') if row.get('SingletonPresent') == 1 else np.nan
+    # We will store the resampled dataframes for each trial in a list
+    resampled_trials_list = []
 
-    # Identify all presented non-target digits to define the "control" set
-    all_nontarget_cols = ['SingletonDigit', 'Non-Singleton1Digit', 'Non-Singleton2Digit'] # Add more if they exist
-    control_digits = set()
-    for col in all_nontarget_cols:
-        digit = row.get(col)
-        # A control is a non-target, non-distractor item
-        if pd.notna(digit) and digit != target_digit and digit != distractor_digit:
-            control_digits.add(int(digit))
+    print(f"Resampling {len(grouped)} trials to {target_hz} Hz...")
 
-    # --- 4. Calculate projections for each category ---
-    results = {}
+    for name, group in grouped:
+        # 'name' is a tuple of the values from trial_cols (e.g., (1, 1, 1))
+        # 'group' is the sub-DataFrame for that specific trial
 
-    # Projection onto Target
-    results['proj_target'] = get_projection(target_digit, avg_vec, locations_map)
+        # Use the existing single-trial resampling function
+        resampled_group = resample_trial_trajectory(group, target_hz=target_hz)
 
-    # Projection onto Distractor (if present)
-    results['proj_distractor'] = get_projection(distractor_digit, avg_vec, locations_map)
+        # If resampling returned an empty or invalid frame, skip it
+        if resampled_group.empty:
+            continue
 
-    # Projections onto Control items
-    if control_digits:
-        control_projs = [p for p in [get_projection(d, avg_vec, locations_map) for d in control_digits] if pd.notna(p)]
-        if control_projs:
-            results['proj_control_max'] = max(control_projs)
-            results['proj_control_avg'] = np.mean(control_projs)
-        else:
-            results['proj_control_max'] = np.nan
-            results['proj_control_avg'] = np.nan
-    else:
-        results['proj_control_max'] = np.nan
-        results['proj_control_avg'] = np.nan
+        # Add the trial identifier columns back to the resampled data
+        for i, col_name in enumerate(trial_cols):
+            resampled_group[col_name] = name[i]
 
-    return pd.Series(results)
+        resampled_trials_list.append(resampled_group)
+
+    # --- 3. Combine and Finalize ---
+    if not resampled_trials_list:
+        print("Warning: No trials could be resampled. Returning an empty DataFrame.")
+        return pd.DataFrame()
+
+    # Concatenate all the individual resampled trial DataFrames into one
+    final_df = pd.concat(resampled_trials_list, ignore_index=True)
+
+    # Reorder columns for better readability
+    final_df = final_df[trial_cols + ['time', 'x', 'y']]
+
+    print(f"Resampling complete. Original samples: {len(raw_df)}, New samples: {len(final_df)}")
+    return final_df
