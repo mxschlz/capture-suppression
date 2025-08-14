@@ -21,10 +21,10 @@ VIEWING_DISTANCE_CM = 70
 DWELL_TIME_FILTER_RADIUS = 0.4
 MOVEMENT_THRESHOLD = 0.05
 SIGMA = 25
-FILTER_PHASE = None
+FILTER_PHASE = 2
 OUTLIER_THRESHOLD = 2
 WINDOW_SIZE = 31
-RESAMP_FREQ = 60
+RESAMP_FREQ = 100
 SUB_BLOCKS_PER_BLOCK = 2
 
 # define data root dir
@@ -61,9 +61,14 @@ for subject_folder in subjects_in_folder:
         temp_df['subject_id'] = current_sub_id  # Add subject ID as an integer
         df_list.append(temp_df)
 df = pd.concat(df_list, ignore_index=True)  # Concatenate all DataFrames
+
 # Corrected line:
 df['block'] = df.groupby('subject_id')['trial_nr'].transform(
     lambda x: ((x == 0) & (x.shift(1) != 0)).cumsum() - 1)
+
+# resample data
+df = resample_all_trajectories(df, RESAMP_FREQ)
+
 rows_per_trial = df.groupby(['trial_nr', "block", 'subject_id']).size().reset_index(name='n_rows')
 
 # Calculate scaled pixel coordinates and add them to the DataFrame
@@ -111,7 +116,7 @@ hist, _, _ = np.histogram2d(y_shifted, x_shifted, bins=(HEIGHT, WIDTH), range=[[
 
 # To get dwell time in seconds, we need to divide the counts by the sampling frequency.
 # The original script calculated sfreq but didn't apply it to the final plot; this is corrected here.
-sfreq = rows_per_trial["n_rows"].mean() / 3.0  # 3 seconds per trial
+sfreq = rows_per_trial["n_rows"].mean() / 1.75 # 1.75 seconds per response duration on average
 print(f"Average sampling frequency: {sfreq:.2f} Hz")
 
 # Normalize the histogram counts to get seconds.
@@ -282,7 +287,7 @@ avg_full_trajectory_vectors_df = df.groupby(['subject_id', 'block', 'trial_nr'])
 # We use `df_clean` as our base, but this time we DO NOT filter by SingletonPresent.
 analysis_df = df_clean.copy()  # Keep all trials
 # TODO: this is temporary for coherence with the rest of the plots
-analysis_df = analysis_df.query("SingletonPresent==1")
+#analysis_df = analysis_df.query("SingletonPresent==1")
 
 
 # Ensure data types are consistent for merging.
@@ -309,9 +314,19 @@ print("Applying adaptive capture score calculation...")
 analysis_df['capture_score'] = analysis_df.apply(
     calculate_capture_score, axis=1, locations_map=numpad_locations_dva
 )
-
-# Drop any trials where the score could not be calculated
 analysis_df.dropna(subset=['capture_score'], inplace=True)
+
+# ===================================================================
+#           NEW: DIAGNOSTIC PRINT FOR CAPTURE SCORE
+# ===================================================================
+print("\n--- DIAGNOSTIC: Example 'capture_score' Calculations ---")
+# To avoid flooding the console, let's re-run the calculation with verbose=True
+# for a few random trials to see the logic in action.
+num_examples = min(3, len(analysis_df))
+if num_examples > 0:
+    for _, trial_row in analysis_df.sample(n=num_examples).iterrows():
+        _ = calculate_capture_score(trial_row, numpad_locations_dva, verbose=True)
+print("--- END DIAGNOSTIC ---\n")
 
 # --- Add a readable column for Priming condition ---
 # We map the numeric Priming values to meaningful labels for plotting.
@@ -351,8 +366,304 @@ plt.ylabel('Capture Score (Positive = Target Capture)', fontsize=12)
 plt.legend(title='Priming Condition')
 plt.grid(True, which='major', axis='y', linestyle=':', linewidth=0.5)
 sns.despine()
-plt.show()
 
+# --- Step 3: Apply the new, comprehensive projection calculation ---
+print("Applying comprehensive trajectory projection calculation...")
+# This will add new columns like 'proj_target', 'proj_distractor', etc. to the DataFrame
+projection_scores_df = analysis_df.apply(
+    calculate_trajectory_projections, axis=1, locations_map=numpad_locations_dva
+)
+analysis_df = pd.concat([analysis_df, projection_scores_df], axis=1)
+analysis_df.dropna(subset=['proj_target'], inplace=True) # Drop trials where score couldn't be computed
+
+# --- Step 4: Calculate derived, meaningful scores from the projections ---
+print("Calculating new, improved scores from projections...")
+
+# A. The new "Target Focus Score"
+# This score measures how strongly movement was directed to the target relative
+# to the strongest competing non-target item on that trial.
+# A high positive score means excellent focus on the target.
+strongest_competitor_proj = analysis_df[['proj_distractor', 'proj_control_max']].max(axis=1)
+analysis_df['target_capture_score'] = analysis_df['proj_target']
+analysis_df['distractor_capture_score'] = analysis_df['proj_distractor']
+analysis_df['target_distractor_capture_diff'] = analysis_df['proj_target'] - analysis_df['proj_distractor']
+
+# ===================================================================
+#           NEW: DIAGNOSTIC PRINT FOR TARGET FOCUS SCORE
+# ===================================================================
+print("\n--- DIAGNOSTIC: Example 'target_focus_score' Calculations ---")
+num_examples = min(3, len(analysis_df))
+if num_examples > 0:
+    # Let's print the components for a few random trials
+    for i, trial_row in analysis_df.sample(n=num_examples).iterrows():
+        print(f"\n--- Example Trial (Index: {i}) ---")
+        print(f"Trial Info: sub-{trial_row['subject_id']}, block-{trial_row['block']}, trial-{trial_row['trial_nr']}")
+
+        # You can re-run the projection calculation verbosely for full detail
+        # calculate_trajectory_projections(trial_row, numpad_locations_dva, verbose=True)
+
+        print(f"  - Projection on Target:      {trial_row['proj_target']:.4f}")
+        print(f"  - Projection on Distractor:  {trial_row['proj_distractor']:.4f}")
+        print(f"  - Max Control Projection:    {trial_row['proj_control_max']:.4f}")
+
+        # Recalculate the strongest competitor for this specific row to be accurate
+        strongest_comp = np.nanmax(
+            [trial_row.get('proj_distractor', -np.inf), trial_row.get('proj_control_max', -np.inf)])
+        print(f"  - Strongest Competitor Proj: {strongest_comp:.4f}")
+        print(
+            f"  - FINAL Target Focus Score:  {trial_row['target_capture_score']:.4f}  (Target Proj - Strongest Competitor Proj)")
+print("--- END DIAGNOSTIC ---\n")
+
+# ===================================================================
+#       VISUALIZE DERIVED CAPTURE SCORES BY PRIMING & BLOCK
+# ===================================================================
+print("\n--- Visualizing Derived Capture Scores by Priming Condition and Block ---")
+
+# Define the scores to plot and their user-friendly titles
+scores_to_plot = {
+    'target_capture_score': 'Target Capture Score',
+    'distractor_capture_score': 'Distractor Capture Score',
+    'target_distractor_capture_diff': 'Target vs. Distractor Difference'
+}
+
+# Create a figure with 3 subplots in a row, sharing the y-axis for easy comparison
+fig, axes = plt.subplots(1, 3, figsize=(24, 7), sharey=True)
+fig.suptitle('Capture Score Metrics Across Blocks by Priming Condition', fontsize=18, y=1.03)
+
+# Define common plotting parameters for a consistent look
+hue_order = ['Negative', 'No', 'Positive']
+palette = {'Positive': 'mediumseagreen', 'No': 'gray', 'Negative': 'salmon'}
+
+for i, (col_name, title) in enumerate(scores_to_plot.items()):
+    ax = axes[i]
+    sns.pointplot(
+        data=analysis_df,
+        x='block',
+        y=col_name,
+        hue='PrimingCondition',
+        hue_order=hue_order,
+        palette=palette,
+        errorbar='ci',
+        join=True,
+        ax=ax
+    )
+    # Add a reference line at 0
+    ax.axhline(0, color='black', linestyle='--', linewidth=1)
+    ax.set_title(title, fontsize=14)
+    ax.set_xlabel('Block Number', fontsize=12)
+
+    # Only set the y-label for the first (leftmost) plot
+    if i == 0:
+        ax.set_ylabel('Capture Score (Projection)', fontsize=12)
+    else:
+        ax.set_ylabel('')  # Hide y-label for other plots to avoid clutter
+
+    ax.grid(True, which='major', axis='y', linestyle=':', linewidth=0.5)
+    sns.despine(ax=ax)
+
+    # Only show the legend on the last (rightmost) plot to avoid redundancy
+    if i < len(scores_to_plot) - 1:
+        ax.get_legend().remove()
+    else:
+        ax.legend(title='Priming Condition', bbox_to_anchor=(1.02, 1), loc='upper left')
+
+plt.tight_layout() # Adjust layout to prevent title overlap
+
+# Compare capture score effect sizes versus response time and accuracy effect sizes in Priming conditions
+analysis_df_mean = analysis_df.groupby(["subject_id", "Priming"])[["rt", "select_target", "target_capture_score",
+                                                      "distractor_capture_score",
+                                                      "target_distractor_capture_diff"]].mean().reset_index()
+
+# ===================================================================
+#       EFFECT SIZE COMPARISON: CAPTURE SCORE vs. RT vs. ACCURACY
+# ===================================================================
+print("\n--- Comparing Effect Sizes: Capture Score vs. RT & Accuracy ---")
+print("Objective: Determine if the capture score is a more sensitive metric for priming effects.")
+
+# Use the subject-level mean data calculated earlier
+df_effects = analysis_df_mean.copy()
+
+# Define the metrics we want to compare and their user-friendly names
+metrics_to_compare = {
+    'Response Time (s)': 'rt',
+    'Accuracy (%)': 'select_target',
+    'Capture Score (Target-Distractor)': 'target_distractor_capture_diff',
+    'Capture Score (Target)': 'target_capture_score',
+    'Capture Score (Distractor)': 'distractor_capture_score'
+}
+
+# Prepare a list to store the results
+effect_size_results = []
+
+# Isolate the data for each priming condition for easier comparison
+data_pos = df_effects[df_effects['Priming'] == 1].set_index('subject_id')
+data_neg = df_effects[df_effects['Priming'] == -1].set_index('subject_id')
+data_no = df_effects[df_effects['Priming'] == 0].set_index('subject_id')
+
+# Ensure all subjects are present in all conditions for a true paired test
+common_subjects = data_pos.index.intersection(data_neg.index).intersection(data_no.index)
+data_pos = data_pos.loc[common_subjects]
+data_neg = data_neg.loc[common_subjects]
+data_no = data_no.loc[common_subjects]
+
+print(f"Found {len(common_subjects)} subjects with data in all three priming conditions for comparison.")
+
+# Loop through each metric to calculate and store its effect sizes
+for metric_name, col_name in metrics_to_compare.items():
+    # --- (FIX) Convert data to numeric right before the test ---
+    # This prevents the TypeError by ensuring the data is in a numeric format.
+    # `errors='coerce'` will turn any non-numeric values into NaN.
+    x_pos_numeric = pd.to_numeric(data_pos[col_name], errors='coerce')
+    y_no_numeric_for_pos = pd.to_numeric(data_no[col_name], errors='coerce')
+
+    x_neg_numeric = pd.to_numeric(data_neg[col_name], errors='coerce')
+    y_no_numeric_for_neg = pd.to_numeric(data_no[col_name], errors='coerce')
+    # -------------------------------------------------------------
+
+    # --- Comparison 1: Positive Priming vs. No Priming ---
+    ttest_pos_vs_no = pg.ttest(
+        x=x_pos_numeric,
+        y=y_no_numeric_for_pos,
+        paired=True,
+        correction=False
+    )
+    cohens_d_pos = ttest_pos_vs_no['cohen-d'].iloc[0]
+    p_val_pos = ttest_pos_vs_no['p-val'].iloc[0]  # Extract the p-value
+    effect_size_results.append({
+        'Metric': metric_name,
+        'Comparison': 'Positive vs. No Priming',
+        "Cohen's d": cohens_d_pos,
+        "p-val": p_val_pos  # Store the p-value
+    })
+
+    # --- Comparison 2: Negative Priming vs. No Priming ---
+    ttest_neg_vs_no = pg.ttest(
+        x=x_neg_numeric,
+        y=y_no_numeric_for_neg,
+        paired=True,
+        correction=False
+    )
+    cohens_d_neg = ttest_neg_vs_no['cohen-d'].iloc[0]
+    p_val_neg = ttest_neg_vs_no['p-val'].iloc[0] # Extract the p-value
+    effect_size_results.append({
+        'Metric': metric_name,
+        'Comparison': 'Negative vs. No Priming',
+        "Cohen's d": cohens_d_neg,
+        "p-val": p_val_neg # Store the p-value
+    })
+
+# Convert results to a DataFrame for easy viewing
+effect_size_df = pd.DataFrame(effect_size_results)
+
+print("\n--- Calculated Effect Sizes (Cohen's d) and p-values ---")
+print(effect_size_df)
+
+# --- Visualize Performance Metrics with Effect Size Annotations ---
+print("\n--- Visualizing Performance with Effect Size Annotations ---")
+
+# Helper function to convert p-values to significance stars
+def p_to_stars(p):
+    if p is None or np.isnan(p):
+        return ""
+    if p < 0.001:
+        return '***'
+    elif p < 0.01:
+        return '**'
+    elif p < 0.05:
+        return '*'
+    return 'ns'
+
+# Get the number of metrics to create a grid of subplots
+n_metrics = len(metrics_to_compare)
+n_cols = 3  # Arrange plots in 2 columns
+n_rows = 2
+
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(8 * n_cols, 6 * n_rows), squeeze=False)
+axes = axes.flatten()  # Flatten the 2D array of axes for easy iteration
+
+# Define the order, labels, and a safe color palette for the x-axis
+priming_order = [-1, 0, 1]
+priming_labels = ['Negative', 'No', 'Positive']
+palette_list = ['salmon', 'gray', 'mediumseagreen']
+
+for i, (metric_name, col_name) in enumerate(metrics_to_compare.items()):
+    ax = axes[i]
+
+    # --- 1. Plot the main bar plot showing the performance metric ---
+    sns.barplot(
+        data=df_effects,
+        x='Priming',
+        y=col_name,
+        order=priming_order,
+        ax=ax,
+        palette=palette_list,
+        errorbar='ci'
+    )
+    ax.set_title(metric_name, fontsize=14, pad=40) # Increased padding for annotations
+    ax.set_xlabel("Priming Condition", fontsize=12)
+    ax.set_ylabel(metric_name, fontsize=12)
+    ax.set_xticklabels(priming_labels)
+    sns.despine(ax=ax)
+
+    # --- 2. Add Effect Size and Significance Annotations ---
+    # Get the heights of the bars for annotation placement
+    bar_heights = df_effects.groupby('Priming')[col_name].mean()
+    y_min, y_max = ax.get_ylim()
+    y_range = y_max - y_min
+    offset = y_range * 0.05  # 5% of the y-axis range for spacing
+
+    # Comparison 1: Positive (1) vs. No (0)
+    x1_pos, x2_pos = 2, 1  # Positions for Positive and No
+    y1 = bar_heights.get(1, 0)
+    y2 = bar_heights.get(0, 0)
+    y_bracket_pos = max(y1, y2) + offset
+
+    # Retrieve the stats
+    pos_stats = effect_size_df[
+        (effect_size_df['Metric'] == metric_name) &
+        (effect_size_df['Comparison'] == 'Positive vs. No Priming')
+    ].iloc[0]
+    d_pos_val = pos_stats["Cohen's d"]
+    p_pos_val = pos_stats["p-val"]
+    p_pos_str = p_to_stars(p_pos_val)
+
+    # Draw the annotation bracket and text
+    ax.plot([x1_pos, x1_pos, x2_pos, x2_pos], [y_bracket_pos, y_bracket_pos + offset, y_bracket_pos + offset, y_bracket_pos], lw=1.5, c='k')
+    ax.text((x1_pos + x2_pos) / 2, y_bracket_pos + offset * 1.5, f"d = {d_pos_val:.2f}\n{p_pos_str}", ha='center', va='bottom', color='k', fontsize=10)
+
+    # Comparison 2: Negative (-1) vs. No (0)
+    x1_neg, x2_neg = 0, 1  # Positions for Negative and No
+    y1 = bar_heights.get(-1, 0)
+    y2 = bar_heights.get(0, 0)
+    y_bracket_neg = max(y1, y2) + offset
+
+    # Check if the two brackets would overlap and adjust if necessary
+    if abs(y_bracket_pos - y_bracket_neg) < y_range * 0.15: # Increased threshold for overlap
+        y_bracket_neg = y_bracket_pos + y_range * 0.2  # Push the second bracket up more
+
+    # Retrieve the stats
+    neg_stats = effect_size_df[
+        (effect_size_df['Metric'] == metric_name) &
+        (effect_size_df['Comparison'] == 'Negative vs. No Priming')
+    ].iloc[0]
+    d_neg_val = neg_stats["Cohen's d"]
+    p_neg_val = neg_stats["p-val"]
+    p_neg_str = p_to_stars(p_neg_val)
+
+    # Draw the annotation bracket and text
+    ax.plot([x1_neg, x1_neg, x2_neg, x2_neg], [y_bracket_neg, y_bracket_neg + offset, y_bracket_neg + offset, y_bracket_neg], lw=1.5, c='k')
+    ax.text((x1_neg + x2_neg) / 2, y_bracket_neg + offset * 1.5, f"d = {d_neg_val:.2f}\n{p_neg_str}", ha='center', va='bottom', color='k', fontsize=10)
+
+    # Adjust y-limit to make space for annotations
+    ax.set_ylim(top=max(y_bracket_pos, y_bracket_neg) + y_range * 0.3) # Increased top margin
+
+
+# Hide any unused subplots if the number of metrics is odd
+for j in range(i + 1, len(axes)):
+    fig.delaxes(axes[j])
+
+fig.suptitle("Performance Metrics by Priming Condition with Effect Size and Significance", fontsize=18, y=1.02)
+plt.tight_layout()
 
 # ===================================================================
 #       STATISTICAL ANALYSIS: CAPTURE SCORE BY PRIMING
@@ -365,21 +676,10 @@ print("\n--- Statistical Analysis of Capture Score (Priming x Block) ---")
 # 3. An interaction effect (does the priming effect change across blocks?)
 print("\nRunning 3xN Repeated Measures ANOVA (PrimingCondition x Block)...")
 
-# Filter out subjects who do not have data in all conditions for the ANOVA
-# This is a requirement for the rm_anova function in pingouin
 analysis_df_anova = analysis_df.copy()
-if analysis_df_anova.groupby(['subject_id', 'PrimingCondition', 'block']).size().unstack(fill_value=0).eq(0).any().any():
-    print("Warning: Some subjects may not have data for all conditions/blocks. Filtering for ANOVA.")
-    analysis_df_anova = pg.remove_rm_na(
-        data=analysis_df_anova,
-        dv='capture_score',
-        within=['PrimingCondition', 'block'],
-        subject='subject_id'
-    )
-
 rm_anova_results = pg.rm_anova(
     data=analysis_df_anova,
-    dv='capture_score',
+    dv='target_capture_score',
     within=['PrimingCondition', 'block'],  # Updated within-subject factors
     subject='subject_id',
     detailed=True
@@ -625,7 +925,7 @@ analysis_df_classification['log_trial_idx'] = np.log(analysis_df_classification[
 # --- Create the Final Plot ---
 plt.figure(figsize=(12, 7))
 # Plot the mean suppression effect
-sns.lineplot(data=analysis_df_classification, x=analysis_df_classification["log_trial_idx"], y=analysis_df_classification["suppression_effect"])
+sns.lineplot(data=analysis_df_classification, x=analysis_df_classification["singleton_trial_idx"], y=analysis_df_classification["suppression_effect"])
 
 # Add a horizontal line at y=0 for reference
 plt.axhline(0, color='red', linestyle='--', linewidth=1.5, label='No Effect (Capture = Suppression)')
@@ -639,7 +939,7 @@ plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 sns.despine()
 
 # Limit the x-axis if there are very few subjects in the last trials, which can make the CI explode.
-trial_counts = analysis_df_classification['log_trial_idx'].value_counts()
+trial_counts = analysis_df_classification['singleton_trial_idx'].value_counts()
 last_reliable_trial = trial_counts[trial_counts >= 3].index.max()
 if pd.notna(last_reliable_trial):
     plt.xlim(0, last_reliable_trial)
