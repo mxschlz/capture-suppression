@@ -6,7 +6,7 @@ from SPACEPRIME.subjects import subject_ids
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import pandas as pd
-import random
+import seaborn as sns
 
 
 def _get_subject_lateralized_data(epochs, condition_keyword, ch_left="C3", ch_right="C4"):
@@ -904,87 +904,9 @@ def get_all_waves(trials_df, electrode_pairs, time_window, all_times, lateral_st
     return diff_wave, mean_contra_wave, mean_ipsi_wave, window_times
 
 
-def calculate_capture_score(row, locations_map, verbose=False):
-    """
-    Calculates a time-weighted capture score based on the full trajectory,
-    adapting its logic for singleton-present and singleton-absent trials.
-    ... (rest of docstring) ...
-    """
-    # --- 1. Get the average movement vector for the trial ---
-    try:
-        avg_vec = np.array([row['avg_x_dva'], row['avg_y_dva']])
-    except KeyError:
-        if verbose: print("Warning: 'avg_x_dva' or 'avg_y_dva' not found.")
-        return np.nan
-
-    if np.linalg.norm(avg_vec) < 1e-6:
-        return np.nan
-
-    if verbose:
-        print("\n--- Calculating Capture Score ---")
-        print(
-            f"Trial Info: sub-{row.get('subject_id', 'N/A')}, block-{row.get('block', 'N/A')}, trial-{row.get('trial_nr', 'N/A')}")
-        print(f"Avg Movement Vector: ({avg_vec[0]:.3f}, {avg_vec[1]:.3f})")
-
-    # --- 2. Determine which items to contrast based on trial type ---
-    try:
-        is_singleton_present = row['SingletonPresent'] == 1
-    except KeyError:
-        if verbose: print("Warning: 'SingletonPresent' column not found.")
-        return np.nan
-
-    if is_singleton_present:
-        primary_col, contrast_col = 'TargetDigit', 'SingletonDigit'
-        if verbose: print("Type: Singleton Present. Contrasting Target vs. Distractor.")
-    else:
-        primary_col, contrast_col = 'TargetDigit', random.choice(['Non-Singleton1Digit', 'Non-Singleton2Digit'])
-        if verbose: print("Type: Singleton Absent. Contrasting Target vs. Control.")
-
-    # --- 3. Get digit locations ---
-    try:
-        primary_digit = row[primary_col]
-        contrast_digit = row[contrast_col]
-        if verbose: print(
-            f"Item Digits -> Primary ({primary_col}): {primary_digit}, Contrast ({contrast_col}): {contrast_digit}")
-    except KeyError as e:
-        if verbose: print(f"Warning: Missing required column: {e}")
-        return np.nan
-
-    if pd.isna(primary_digit) or pd.isna(contrast_digit):
-        return np.nan
-
-    # --- 4. Calculate projections ---
-    def get_projection(digit):
-        if pd.isna(digit): return np.nan
-        dir_vec = np.array(locations_map.get(int(digit), (0, 0)))
-        norm = np.linalg.norm(dir_vec)
-        if norm < 1e-6: return np.nan
-        unit_vec = dir_vec / norm
-        return np.dot(avg_vec, unit_vec)
-
-    projection_on_primary = get_projection(primary_digit)
-    projection_on_contrast = get_projection(contrast_digit)
-
-    if verbose:
-        print(f"Projection on Primary:   {projection_on_primary:.4f}")
-        print(f"Projection on Contrast:  {projection_on_contrast:.4f}")
-
-    if np.isnan(projection_on_primary) or np.isnan(projection_on_contrast):
-        return np.nan
-
-    # --- 5. The final score is the difference ---
-    capture_score = projection_on_primary - projection_on_contrast
-    if verbose:
-        print(f"Final Score (Primary - Contrast): {capture_score:.4f}")
-        print("---------------------------------")
-
-    return capture_score
-
-
 def calculate_trajectory_projections(row, locations_map, verbose=False):
     """
     Calculates a comprehensive set of trajectory projection scores for a single trial.
-    ... (rest of docstring) ...
     """
     # --- 1. Get the average movement vector ---
     try:
@@ -1007,14 +929,11 @@ def calculate_trajectory_projections(row, locations_map, verbose=False):
     def get_projection(digit, avg_vec, locations_map):
         if pd.isna(digit): return np.nan
         dir_vec = np.array(locations_map.get(int(digit), (0, 0)))
-        norm = np.linalg.norm(dir_vec)
-        if norm < 1e-6: return np.nan
-        unit_vec = dir_vec / norm
-        return np.dot(avg_vec, unit_vec)
+        return np.dot(avg_vec, dir_vec)
 
     # --- 3. Identify all digits ---
     target_digit = row.get('TargetDigit')
-    distractor_digit = row.get('SingletonDigit') if row.get('SingletonPresent') == 1 else row.get(random.choice(["Non-Singleton1Digit", "Non-Singleton2Digit"]))
+    distractor_digit = row.get('SingletonDigit') if row.get('SingletonPresent') == 1 else np.nan
     all_nontarget_cols = ['SingletonDigit', 'Non-Singleton1Digit', 'Non-Singleton2Digit']
     control_digits = {int(d) for col in all_nontarget_cols if
                       pd.notna(d := row.get(col)) and d != target_digit and d != distractor_digit}
@@ -1156,3 +1075,83 @@ def resample_all_trajectories(raw_df, target_hz=60, trial_cols=None):
 
     print(f"Resampling complete. Original samples: {len(raw_df)}, New samples: {len(final_df)}")
     return final_df
+
+
+def get_vector_length(digit, locations_map):
+    """Helper function to get the length of the ideal vector to a digit."""
+    if pd.isna(digit) or digit not in locations_map:
+        return np.nan
+    # Avoid division by zero for the center digit (5), which has length 0
+    length = np.linalg.norm(locations_map[digit])
+    return length if length > 0 else np.nan
+
+
+def plot_trajectory_and_vectors(trial_data, full_df, locations_map):
+    """A detailed plot to visualize the trajectory, average vector, and scores."""
+    sub = trial_data['subject_id']
+    blk = trial_data['block']
+    trl = trial_data['trial_nr']
+
+    # Get the full trajectory for this specific trial
+    trial_trajectory = full_df[
+        (full_df['subject_id'] == sub) &
+        (full_df['block'] == blk) &
+        (full_df['trial_nr'] == trl)
+    ]
+
+    # Get key locations
+    target_loc = np.array(locations_map[trial_data['TargetDigit']])
+    distractor_loc = np.array(locations_map[trial_data['SingletonDigit']])
+    avg_vec = np.array([trial_data['avg_x_dva'], trial_data['avg_y_dva']])
+
+    plt.figure(figsize=(10, 10))
+    ax = plt.gca()
+
+    # Plot the full, raw trajectory path
+    ax.plot(trial_trajectory['x'], trial_trajectory['y'], color='gray', alpha=0.6, lw=2, label='Full Trajectory Path')
+
+    # Plot ideal locations
+    ax.plot(target_loc[0], target_loc[1], 'go', markersize=15, label=f"Target ({trial_data['TargetDigit']})")
+    ax.plot(distractor_loc[0], distractor_loc[1], 'ro', markersize=15, label=f"Distractor ({trial_data['SingletonDigit']})")
+    ax.plot(0, 0, 'ko', markersize=10)
+
+    # Plot the calculated Average Trajectory Vector
+    ax.arrow(0, 0, avg_vec[0], avg_vec[1], color='purple', width=0.02,
+             head_width=0.05, length_includes_head=True, label='Avg. Trajectory Vector')
+
+    # Add annotations for the scores
+    plt.text(0.95, 0.1,
+             f"Proj. on Target: {trial_data['target_capture_score']:.3f}\n"
+             f"Proj. on Distractor: {trial_data['distractor_capture_score']:.3f}\n"
+             f"Difference: {trial_data['target_distractor_capture_diff']:.3f}",
+             transform=ax.transAxes, ha='right', va='bottom',
+             bbox=dict(boxstyle='round,pad=0.5', fc='wheat', alpha=0.7))
+
+    ax.set_title(f"Trajectory Analysis: sub-{sub}, trial-{trl}\n(Max-Distance Capture Example)")
+    ax.set_xlabel("X-position (dva)")
+    ax.set_ylabel("Y-position (dva)")
+    ax.set_aspect('equal', adjustable='box')
+    ax.grid(True, linestyle='--')
+    ax.legend()
+    sns.despine()
+    plt.show()
+
+
+def get_distance_between_digits(row, locations_map):
+    """Calculates the Euclidean distance between the target and distractor."""
+    if row['SingletonPresent'] == 0:
+        return np.nan # No distractor, no distance
+
+    target_digit = row['TargetDigit']
+    distractor_digit = row['SingletonDigit']
+
+    # Ensure both digits are in our location map
+    if target_digit not in locations_map or distractor_digit not in locations_map:
+        return np.nan
+
+    target_vec = np.array(locations_map[target_digit])
+    distractor_vec = np.array(locations_map[distractor_digit])
+
+    # Calculate Euclidean distance
+    distance = np.linalg.norm(target_vec - distractor_vec)
+    return distance
