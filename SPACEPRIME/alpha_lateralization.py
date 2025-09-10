@@ -6,8 +6,8 @@ import os  # Added for path joining
 from scipy.stats import ttest_rel, t, sem  # Import t for theoretical threshold
 from mne.stats import permutation_cluster_1samp_test  # For cluster stats
 from SPACEPRIME.subjects import subject_ids
-from SPACEPRIME import get_data_path
 import seaborn as sns  # For nicer plots
+import SPACEPRIME
 
 plt.ion()
 
@@ -51,11 +51,12 @@ subject_results = {
 processed_subjects = []
 times_vector = None  # To store time vector from the first subject
 
+tfr = SPACEPRIME.load_concatenated_tfr()
 # --- Subject Loop ---
 for subject in subject_ids[:]:
     print(f"\n--- Processing Subject: {subject} ---")
     try:
-        epoch_file_pattern = os.path.join(get_data_path(), "derivatives", "epoching", f"sub-{subject}", "eeg",
+        epoch_file_pattern = os.path.join(SPACEPRIME.get_data_path(), "derivatives", "epoching", f"sub-{subject}", "eeg",
                                           f"sub-{subject}_task-spaceprime-epo.fif")
         epoch_files = glob.glob(epoch_file_pattern)
         if not epoch_files:
