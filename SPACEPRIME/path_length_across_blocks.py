@@ -1,58 +1,15 @@
 import pandas as pd
 import os
 import glob
-import numpy as np
 import matplotlib.pyplot as plt
 from SPACEPRIME import get_data_path
 import seaborn as sns
 from SPACEPRIME.subjects import subject_ids
 from stats import remove_outliers
-import statsmodels.formula.api as smf
+from utils import degrees_va_to_pixels, calculate_trial_path_length
 
 plt.ion()
 
-
-# Define some functions
-def degrees_va_to_pixels(degrees, screen_pixels, screen_size_cm, viewing_distance_cm):
-    """
-    Converts degrees visual angle to pixels.
-
-    Args:
-        degrees: The visual angle in degrees.
-        screen_pixels: The number of pixels on the screen (horizontal or vertical).
-        screen_size_cm: The physical size of the screen in centimeters (width or height).
-        viewing_distance_cm: The viewing distance in centimeters.
-
-    Returns:
-        The number of pixels corresponding to the given visual angle.
-    """
-
-    pixels = degrees * (screen_pixels / screen_size_cm) * (viewing_distance_cm * np.tan(np.radians(1)))
-    return pixels
-
-def calculate_trial_path_length(trial_group):
-    """
-    Calculates the total Euclidean path length for a single trial's trajectory.
-    Assumes trial_group is a DataFrame with 'x_pixels' and 'y_pixels' columns
-    sorted chronologically.
-    """
-    if len(trial_group) < 2:
-        return 0.0  # Path length is 0 if less than 2 points
-
-    # Get x and y coordinates for the current trial
-    x_coords = trial_group['x_pixels'].to_numpy()
-    y_coords = trial_group['y_pixels'].to_numpy()
-
-    # Calculate the differences between consecutive points (dx, dy)
-    dx = np.diff(x_coords)
-    dy = np.diff(y_coords)
-
-    # Calculate the Euclidean distance for each segment: sqrt(dx^2 + dy^2)
-    segment_lengths = np.sqrt(dx**2 + dy**2)
-
-    # Total path length is the sum of segment lengths
-    total_path_length = np.sum(segment_lengths)
-    return total_path_length
 
 # define data root dir
 data_root = f"{get_data_path()}derivatives/preprocessing/"

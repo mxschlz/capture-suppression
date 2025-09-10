@@ -15,7 +15,7 @@ plt.ion()
 
 # 1. Data Loading & Preprocessing
 OUTLIER_RT_THRESHOLD = 2.0
-FILTER_PHASE = None
+FILTER_PHASE = 2
 
 # 2. Column Names
 SUBJECT_ID_COL = 'subject_id'
@@ -30,8 +30,8 @@ RT_SPLIT_COL = 'rt_split'
 # 3. ERP Component Definitions
 # This window is for extracting the wave from the epoch data
 COMPONENT_TIME_WINDOW = (0.0, 0.7)
-PD_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4")]
-N2AC_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4")]
+PD_ELECTRODES = [("C3", "C4")]
+N2AC_ELECTRODES = [("C3", "C4")]
 
 # 4. Statistical & Analysis Parameters
 # This window is for the fractional area latency calculation itself
@@ -45,7 +45,7 @@ SEED = 42
 
 # --- 1. Load and Preprocess Data ---
 print("--- Step 1: Loading and Preprocessing Data ---")
-epochs = SPACEPRIME.load_concatenated_epochs("spaceprime_desc-csd").crop(COMPONENT_TIME_WINDOW[0], COMPONENT_TIME_WINDOW[1])
+epochs = SPACEPRIME.load_concatenated_epochs("spaceprime").crop(COMPONENT_TIME_WINDOW[0], COMPONENT_TIME_WINDOW[1])
 df = epochs.metadata.copy()
 
 # Preprocessing
@@ -56,7 +56,7 @@ df[ACCURACY_INT_COL] = df[ACCURACY_COL].astype(int)
 df[TARGET_COL] = pd.to_numeric(df[TARGET_COL], errors='coerce').map({1: "left", 2: "mid", 3: "right"})
 df[DISTRACTOR_COL] = pd.to_numeric(df[DISTRACTOR_COL], errors='coerce').map(
     {0: "absent", 1: "left", 2: "mid", 3: "right"})
-df[SUBJECT_ID_COL] = df[SUBJECT_ID_COL].astype(str)
+df[SUBJECT_ID_COL] = df[SUBJECT_ID_COL].astype(int).astype(str)
 
 # --- ERP Data Reshaping ---
 erp_df_picks_flat = [item for pair in set(N2AC_ELECTRODES + PD_ELECTRODES) for item in pair]
@@ -81,21 +81,54 @@ is_distractor_central = merged_df[DISTRACTOR_COL] == 'mid'
 n2ac_base_df = merged_df[is_target_lateral & is_distractor_central].copy()
 pd_base_df = merged_df[is_distractor_lateral & is_target_central].copy()
 
+# load target towardness values
+target_towardness = SPACEPRIME.load_concatenated_csv("target_towardness.csv", index_col=0)
+
+# Define the columns to merge on.
+# This assumes 'target_towardness' has columns: 'subject_id', 'block', 'trial_nr'
+merge_cols = [SUBJECT_ID_COL, "block", 'trial_nr']
+
+# It's good practice to ensure the key columns are the same data type before merging
+# to prevent silent failures.
+target_towardness[SUBJECT_ID_COL] = target_towardness[SUBJECT_ID_COL].astype(int).astype(str)
+n2ac_base_df[SUBJECT_ID_COL] = n2ac_base_df[SUBJECT_ID_COL].astype(int).astype(str)
+pd_base_df[SUBJECT_ID_COL] = pd_base_df[SUBJECT_ID_COL].astype(int).astype(str)
+
+# Perform a left merge to keep all ERP data and add towardness where it matches
+n2ac_final_df = pd.merge(
+    n2ac_base_df,
+    target_towardness,
+    on=merge_cols,
+    how='left'
+)
+
+pd_final_df = pd.merge(
+    pd_base_df,
+    target_towardness,
+    on=merge_cols,
+    how='left'
+)
+
 print("Performing component-specific median splits...")
-n2ac_base_df[RT_SPLIT_COL] = n2ac_base_df.groupby(SUBJECT_ID_COL)[REACTION_TIME_COL].transform(
+n2ac_final_df[RT_SPLIT_COL] = n2ac_final_df.groupby(SUBJECT_ID_COL)[REACTION_TIME_COL].transform(
     lambda x: pd.qcut(x, 2, labels=['fast', 'slow'], duplicates='drop'))
-pd_base_df[RT_SPLIT_COL] = pd_base_df.groupby(SUBJECT_ID_COL)[REACTION_TIME_COL].transform(
+pd_final_df[RT_SPLIT_COL] = pd_final_df.groupby(SUBJECT_ID_COL)[REACTION_TIME_COL].transform(
     lambda x: pd.qcut(x, 2, labels=['fast', 'slow'], duplicates='drop'))
+n2ac_final_df["target_towardness_split"] = n2ac_final_df.groupby(SUBJECT_ID_COL)["target_towardness"].transform(
+    lambda x: pd.qcut(x, 2, labels=['low', 'high'], duplicates='drop'))
+pd_final_df["target_towardness_split"] = pd_final_df.groupby(SUBJECT_ID_COL)["target_towardness"].transform(
+    lambda x: pd.qcut(x, 2, labels=['low', 'high'], duplicates='drop'))
 
 # --- Loop through subjects and conditions to calculate ERP metrics ---
 subject_agg_data = []
 for subject_id in merged_df[SUBJECT_ID_COL].unique():
     print(f"Processing subject: {subject_id}")
 
+    # Use the final dataframes that include the split columns
     components_to_process = {
-        'N2ac': {'df': n2ac_base_df[n2ac_base_df[SUBJECT_ID_COL] == subject_id],
+        'N2ac': {'df': n2ac_final_df[n2ac_final_df[SUBJECT_ID_COL] == subject_id],
                  'stim_col': TARGET_COL, 'electrodes': N2AC_ELECTRODES, 'is_target': True},
-        'Pd':   {'df': pd_base_df[pd_base_df[SUBJECT_ID_COL] == subject_id],
+        'Pd':   {'df': pd_final_df[pd_final_df[SUBJECT_ID_COL] == subject_id],
                  'stim_col': DISTRACTOR_COL, 'electrodes': PD_ELECTRODES, 'is_target': False}
     }
 
@@ -103,14 +136,21 @@ for subject_id in merged_df[SUBJECT_ID_COL].unique():
         comp_df = params['df']
         if comp_df.empty: continue
 
-        splits = {'RT': ['fast', 'slow'], 'Accuracy': ['correct', 'incorrect']}
+        # You correctly added 'Target towardness' here!
+        splits = {'RT': ['fast', 'slow'], 'Accuracy': ['correct', 'incorrect'], 'Target towardness': ['low', 'high']}
         for split_by, conditions in splits.items():
             for cond_name in conditions:
+                # Create the correct mask based on the split type
                 if split_by == 'RT':
                     mask = (comp_df[RT_SPLIT_COL] == cond_name)
-                else: # Accuracy
+                elif split_by == 'Accuracy':
                     acc_val = 1 if cond_name == 'correct' else 0
                     mask = (comp_df[ACCURACY_INT_COL] == acc_val)
+                elif split_by == 'Target towardness':
+                    mask = (comp_df['target_towardness_split'] == cond_name)
+                else:
+                    continue # Skip if split_by is not recognized
+
                 cond_df = comp_df[mask]
 
                 if cond_df.empty: continue
@@ -162,16 +202,21 @@ df_save.to_csv(output_path, index=True)
 print("\n--- Step 3: Merged into Step 5 ---")
 
 comparisons = [
+    # Row 1: RT Split
     {'title': 'N2ac by RT', 'component': 'N2ac', 'split_by': 'RT', 'conds': ['fast', 'slow']},
-    {'title': 'N2ac by Accuracy', 'component': 'N2ac', 'split_by': 'Accuracy', 'conds': ['correct', 'incorrect']},
     {'title': 'Pd by RT', 'component': 'Pd', 'split_by': 'RT', 'conds': ['fast', 'slow']},
+    # Row 2: Accuracy Split
+    {'title': 'N2ac by Accuracy', 'component': 'N2ac', 'split_by': 'Accuracy', 'conds': ['correct', 'incorrect']},
     {'title': 'Pd by Accuracy', 'component': 'Pd', 'split_by': 'Accuracy', 'conds': ['correct', 'incorrect']},
+    # Row 3: Target Towardness Split
+    {'title': 'N2ac by Target Towardness', 'component': 'N2ac', 'split_by': 'Target towardness', 'conds': ['low', 'high']},
+    {'title': 'Pd by Target Towardness', 'component': 'Pd', 'split_by': 'Target towardness', 'conds': ['low', 'high']},
 ]
 
 
 # --- 4. Plot Grand-Average ERP Waves with Contra/Ipsi Detail ---
 print("\n--- Step 4: Visualizing Grand-Average ERP Waveforms ---")
-fig_waves, axes_waves = plt.subplots(2, 2, figsize=(20, 12), sharey=True, constrained_layout=True)
+fig_waves, axes_waves = plt.subplots(3, 2, figsize=(20, 18), sharey=True, constrained_layout=True)
 fig_waves.suptitle('Grand-Average Contralateral and Ipsilateral ERPs by Behavioral Split', fontsize=20, y=1.06)
 axes_waves = axes_waves.flatten()
 
@@ -227,14 +272,14 @@ for i, comp_info in enumerate(comparisons):
     ax.legend(handles=final_legend_handles, loc='best')
 
     ax.set_xlabel("Time (s)", fontsize=12)
-    ax.set_ylabel("Amplitude (mV/m²)", fontsize=12)
+    ax.set_ylabel("Amplitude (µV)", fontsize=12)
     ax.grid(True, linestyle=':', alpha=0.6)
 
 
 # --- 5. Plot Grand-Average Difference Waves with Metric Crosshairs & Stats ---
 print("\n--- Step 5: Visualizing Grand-Average Difference Waves with Stats ---")
 # Removed sharey=True to allow for selective y-axis inversion
-fig_diff, axes_diff = plt.subplots(2, 2, figsize=(20, 12), constrained_layout=True)
+fig_diff, axes_diff = plt.subplots(3, 2, figsize=(20, 18), constrained_layout=True)
 fig_diff.suptitle('Grand-Average Difference Waves with Latency/Amplitude Markers and Paired Stats', fontsize=20, y=1.06)
 axes_diff = axes_diff.flatten()
 
@@ -330,13 +375,18 @@ for i, comp_info in enumerate(comparisons):
     ax.legend(handles=line_handles, loc='best', title="Paired Comparisons")
 
     ax.set_xlabel("Time (s)", fontsize=12)
-    ax.set_ylabel("Amplitude (mV/m²)", fontsize=12)
+    ax.set_ylabel("Amplitude (µV)", fontsize=12)
     ax.grid(True, linestyle=':', alpha=0.6)
 
+# --- 4. Save and Show Plot ---
+# Save the figure for your poster (SVG is great for scaling)
+output_filename = "G:\\Meine Ablage\\PhD\\Conferences\\ICON25\\Poster\\ERP_Behavioral_Split_Poster_Plot.svg"
+plt.savefig(output_filename, bbox_inches='tight')
+print(f"\n--- Plot saved as {output_filename} ---")
 
 # --- 6. Plot Trial Count Balance ---
 print("\n--- Step 6: Visualizing Trial Count Balance ---")
-fig_counts, axes_counts = plt.subplots(2, 2, figsize=(16, 12), sharey=True)
+fig_counts, axes_counts = plt.subplots(3, 2, figsize=(16, 18), sharey=True)
 fig_counts.suptitle('Trial Counts per Condition, Showing Within-Subject Change', fontsize=18, y=1.02)
 axes_counts = axes_counts.flatten()
 
@@ -352,7 +402,7 @@ for i, comp_info in enumerate(comparisons):
                   capsize=0.1, ax=ax, color='black')
     ax.set_title(comp_info['title'], fontsize=14)
     ax.set_xlabel('Condition', fontsize=12)
-    ax.set_ylabel('Total Trial Count' if i in [0, 2] else '')
+    ax.set_ylabel('Total Trial Count' if i % 2 == 0 else '')
     ax.grid(axis='y', linestyle='--', alpha=0.7)
 
 plt.tight_layout(rect=[0, 0, 1, 0.96])

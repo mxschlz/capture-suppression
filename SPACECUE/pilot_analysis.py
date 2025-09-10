@@ -54,7 +54,7 @@ x_labels_cue = ["distractor", "neutral", "target"]
 for params in plot_params_cue_instruction:
     ax = axes[params["ax_idx"]]
     sns.barplot(data=df_mean, x="CueInstruction", y=params["y_var"], ax=ax,
-                errorbar=("se", 1), order=x_order_cue, hue="cohort")
+                errorbar=("se", 1), order=x_order_cue)
     ax.set_xticklabels(x_labels_cue)
     ax.set_ylim(params["ylim"])
     ax.set_title(params["title"])

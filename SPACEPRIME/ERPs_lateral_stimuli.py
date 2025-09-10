@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import os
 from SPACEPRIME import get_data_path, load_concatenated_epochs
 from mne.stats import permutation_cluster_1samp_test
-from scipy.stats import ttest_rel, t
+from scipy.stats import t
 from SPACEPRIME.subjects import subject_ids
 from SPACEPRIME.plotting import difference_topos # Assuming this function is available and works as expected
 import seaborn as sns
@@ -22,21 +22,21 @@ PHASE_COL = 'phase'
 
 # --- 2. General Script Parameters ---
 # Whether to plot the topographies or not (because that takes a while)
-PLOT_TOPOS = True
+PLOT_TOPOS = False
 
 # Paths
 SETTINGS_PATH = os.path.join(get_data_path(), "settings")
 MONTAGE_FNAME = "CACS-64_NO_REF.bvef" # Relative to SETTINGS_PATH
 
 # ROIs for Contra/Ipsi Calculation
-LEFT_ROI_DISTRACTOR = ["FC3", "FC5", "C3"]
-RIGHT_ROI_DISTRACTOR = ["FC4", "FC6", "C4"]
-LEFT_ROI_TARGET = ["FC3", "FC5", "C3"]
-RIGHT_ROI_TARGET = ["FC4", "FC6", "C4"]
+LEFT_ROI_DISTRACTOR = ["C3"]
+RIGHT_ROI_DISTRACTOR = ["C4"]
+LEFT_ROI_TARGET = ["C3"]
+RIGHT_ROI_TARGET = ["C4"]
 
 # Epoching and Plotting
 EPOCH_TMIN, EPOCH_TMAX = 0.0, 0.7  # Seconds
-AMPLITUDE_SCALE_FACTOR = 1      # Volts to Microvolts for plotting (Corrected from 1e7)
+AMPLITUDE_SCALE_FACTOR = 1e6
 
 # Cluster Permutation Test Parameters
 N_JOBS = 5
@@ -58,10 +58,10 @@ TOPO_TIME_STEP = 0.01             # Time step for topomap sequence within signif
 TOPO_CMAP = 'RdBu_r'              # Colormap for topographies
 
 # --- Parameters for Sensor-Space Cluster Permutation Test ---
-PLOT_SIGNIFICANT_SENSORS_TOPO = True # Whether to run and plot sensor cluster results
+PLOT_SIGNIFICANT_SENSORS_TOPO = False # Whether to run and plot sensor cluster results
 # Define time windows for averaging topo data for cluster analysis (in seconds)
-N2AC_TOPO_CLUSTER_WINDOW = (0.2, 0.4) # Example: 220-380ms for N2ac-like activity
-PD_TOPO_CLUSTER_WINDOW = (0.25, 0.4)   # Example: 290-380ms for Pd-like activity
+N2AC_TOPO_CLUSTER_WINDOW = (0.55, 0.6) # Example: 220-380ms for N2ac-like activity
+PD_TOPO_CLUSTER_WINDOW = (0.3, 0.4)   # Example: 290-380ms for Pd-like activity
 # Alpha for sensor cluster p-values (can be same as ALPHA_STAT_CLUSTER)
 ALPHA_SENSOR_CLUSTER = 0.05
 # Mask parameters for plotting significant sensors
@@ -259,8 +259,8 @@ fig_erp, ax_erp = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
 ax_erp = ax_erp.flatten()
 
 erp_plot_params = {
-    'Target': {'ax': ax_erp[0], 'contra': ga_data['target_contra'], 'ipsi': ga_data['target_ipsi'], 'diff': ga_data['target_diff'], 'color_diff': 'green'},
-    'Distractor': {'ax': ax_erp[1], 'contra': ga_data['distractor_contra'], 'ipsi': ga_data['distractor_ipsi'], 'diff': ga_data['distractor_diff'], 'color_diff': 'darkorange'}
+    'Target': {'ax': ax_erp[0], 'contra': ga_data['target_contra'], 'ipsi': ga_data['target_ipsi'], 'diff': ga_data['target_diff'], 'color_diff': 'black'},
+    'Distractor': {'ax': ax_erp[1], 'contra': ga_data['distractor_contra'], 'ipsi': ga_data['distractor_ipsi'], 'diff': ga_data['distractor_diff'], 'color_diff': 'black'}
 }
 
 # Group Level Statistics (Cluster Permutation Test)
@@ -295,16 +295,51 @@ else:
     t_thresh_cluster = None
 
 
+# Define colors before the loop for clarity and easy modification
+CONTRA_COLOR = "#C51B7D"  # Deep Orange
+IPSI_COLOR = "#8C510A"    # Dark Teal
+
 for cond_name, params in erp_plot_params.items():
     ax = params['ax']
-    ax.plot(times_vector, params['contra'] * AMPLITUDE_SCALE_FACTOR, color="r", label="Contra")
-    ax.plot(times_vector, params['ipsi'] * AMPLITUDE_SCALE_FACTOR, color="b", label="Ipsi")
-    ax.plot(times_vector, params['diff'] * AMPLITUDE_SCALE_FACTOR, color=params['color_diff'], label="Contra-Ipsi", linewidth=2)
+    # Plot mean ERP waves with new, consistent colors
+    ax.plot(times_vector, params['contra'] * AMPLITUDE_SCALE_FACTOR, color=CONTRA_COLOR, linestyle='-', label="Contra")
+    ax.plot(times_vector, params['ipsi'] * AMPLITUDE_SCALE_FACTOR, color=IPSI_COLOR, linestyle='--', label="Ipsi")
+    ax.plot(times_vector, params['diff'] * AMPLITUDE_SCALE_FACTOR, color=params['color_diff'], label="Contra-Ipsi", linewidth=2.5)
+
+    # --- Add shaded error bands (SEM) that match the line colors ---
+    if n_subs > 1:
+        # Error band for Contra wave
+        contra_data_all_subs = subject_data[f'{cond_name.lower()}_contra']
+        sem_contra = np.std(contra_data_all_subs, axis=0, ddof=1) / np.sqrt(n_subs)
+        mean_contra = params['contra']
+        ax.fill_between(times_vector,
+                        (mean_contra - sem_contra) * AMPLITUDE_SCALE_FACTOR,
+                        (mean_contra + sem_contra) * AMPLITUDE_SCALE_FACTOR,
+                        color=CONTRA_COLOR, alpha=0.2, label='_nolegend_')
+
+        # Error band for Ipsi wave
+        ipsi_data_all_subs = subject_data[f'{cond_name.lower()}_ipsi']
+        sem_ipsi = np.std(ipsi_data_all_subs, axis=0, ddof=1) / np.sqrt(n_subs)
+        mean_ipsi = params['ipsi']
+        ax.fill_between(times_vector,
+                        (mean_ipsi - sem_ipsi) * AMPLITUDE_SCALE_FACTOR,
+                        (mean_ipsi + sem_ipsi) * AMPLITUDE_SCALE_FACTOR,
+                        color=IPSI_COLOR, alpha=0.2, label='_nolegend_')
+
+        # Error band for Difference wave
+        diff_data_all_subs = subject_data[f'{cond_name.lower()}_diff']
+        sem_diff = np.std(diff_data_all_subs, axis=0, ddof=1) / np.sqrt(n_subs)
+        mean_diff = params['diff']
+        ax.fill_between(times_vector,
+                        (mean_diff - sem_diff) * AMPLITUDE_SCALE_FACTOR,
+                        (mean_diff + sem_diff) * AMPLITUDE_SCALE_FACTOR,
+                        color=params['color_diff'], alpha=0.2, label='_nolegend_')
+
     ax.axhline(y=0, color='k', linestyle='--', linewidth=0.8)
     ax.axvline(x=0, color='k', linestyle=':', linewidth=0.8)
     ax.legend(loc='upper right')
     ax.set_title(f"{cond_name} Lateralization (N={n_subs})")
-    ax.set_ylabel("Amplitude [mV/m²]")
+    ax.set_ylabel("Amplitude [µV]")
     ax.set_xlabel("Time [s]")
     sns.despine(ax=ax)
 
@@ -327,28 +362,36 @@ for cond_name, params in erp_plot_params.items():
             handles, labels = ax.get_legend_handles_labels()
             ax.legend(handles, labels, loc='upper right', frameon=True)
 
-
-# Optional: T-stats on twin axes (can be commented out if plots are too busy)
-if n_subs >=2:
-    t_target_paired, _ = ttest_rel(subject_data['target_contra'], subject_data['target_ipsi'], axis=0, nan_policy='omit')
-    t_distractor_paired, _ = ttest_rel(subject_data['distractor_contra'], subject_data['distractor_ipsi'], axis=0, nan_policy='omit')
-
-    twin1 = ax_erp[0].twinx()
-    twin1.tick_params(axis='y', labelcolor="purple", color="purple")
-    twin1.plot(times_vector, t_target_paired, color="purple", linestyle=":", alpha=0.5, linewidth=1)
-    #sns.despine(ax=twin1, right=False, left=True) # Despine original right, keep new one
-    ax_erp[0].spines['right'].set_visible(False) # Hide original right spine
-
-    twin2 = ax_erp[1].twinx()
-    twin2.set_ylabel("Paired T-Value", color="purple", alpha=0.7)
-    twin2.sharey(twin1)
-    twin2.tick_params(axis='y', labelcolor="purple", color="purple")
-    twin2.plot(times_vector, t_distractor_paired, color="purple", linestyle=":", alpha=0.5, linewidth=1)
-    #sns.despine(ax=twin2, right=False, left=True)
-    ax_erp[1].spines['right'].set_visible(False)
-
 fig_erp.tight_layout()
 fig_erp.canvas.draw_idle()
+
+print("\n--- P-values for Significant ERP Time Clusters ---")
+for cond_name in ['Target', 'Distractor']:
+    if cluster_results.get(cond_name):
+        res = cluster_results[cond_name]
+        significant_clusters_found = False
+
+        # Iterate through each cluster found for the condition
+        for i, p_val in enumerate(res['p_values']):
+            # Check if the cluster's p-value is below the significance threshold
+            if p_val < ALPHA_STAT_CLUSTER:
+                significant_clusters_found = True
+
+                # Get the time points for this specific significant cluster
+                cluster_mask = res['clusters'][i]
+                cluster_times = times_vector[cluster_mask]
+
+                start_time_ms = cluster_times[0] * 1000
+                end_time_ms = cluster_times[-1] * 1000
+
+                print(f"  {cond_name} -> "
+                      f"Time Window: {start_time_ms:.0f}-{end_time_ms:.0f} ms, "
+                      f"p-value: {p_val:.4f}")
+
+        if not significant_clusters_found:
+            print(f"  {cond_name}: No significant time clusters found.")
+    else:
+        print(f"  {cond_name}: No cluster analysis results available.")
 
 # --- Sensor-Space Cluster Permutation Test ---
 significant_sensors_masks = {'Target': None, 'Distractor': None}  # To store masks for plotting
@@ -640,7 +683,7 @@ if PLOT_SIGNIFICANT_SENSORS_TOPO and n_subs >= 2:
             show=False,
             sensors=False,
             outlines='head',
-            mask=mask,
+            mask=None,
             mask_params=SENSOR_MASK_PARAMS
         )
 
@@ -652,6 +695,7 @@ if PLOT_SIGNIFICANT_SENSORS_TOPO and n_subs >= 2:
         fig_summary_topo.subplots_adjust(right=0.85)
         cbar_ax = fig_summary_topo.add_axes([0.88, 0.25, 0.03, 0.5])
         cbar = plt.colorbar(im, cax=cbar_ax)
-        cbar.set_label('Amplitude Difference [mV/m²]')
+        # Corrected the unit from [mV/m²] to [µV] to match the data scaling
+        cbar.set_label('Amplitude Difference [µV]')
     fig_summary_topo.suptitle(f"Summary of Sensor-Space Cluster Analysis (N={n_subs})", fontsize=14, y=0.98)
     fig_summary_topo.tight_layout(rect=[0, 0, 0.85, 0.92])

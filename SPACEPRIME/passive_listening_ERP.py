@@ -1,112 +1,104 @@
 import mne
+import numpy as np
 import matplotlib.pyplot as plt
-from utils import get_passive_listening_ERPs
-from mne.stats import permutation_cluster_test
-from scipy.stats import t
+from utils import get_passive_listening_ERPs_grand_average
+from mne.stats import permutation_cluster_1samp_test
 import seaborn as sns
+
+# Set plot style
+plt.style.use('seaborn-v0_8-talk')
 plt.ion()
 
+# 1. Get the data using the new function
+# This dictionary contains grand-averages, subject-level data, and times
+results = get_passive_listening_ERPs_grand_average()
+times = results['times']
+grand_average = results['grand_average']
+subject_data = results['subject_data']
 
-# get all the epochs
-epochs, contra_distractor_epochs_data, ipsi_distractor_epochs_data, contra_target_epochs_data, ipsi_target_epochs_data, contra_control_epochs_data, ipsi_control_epochs_data, diff_target, diff_distractor, diff_control = get_passive_listening_ERPs()
+# --- 2. Perform Statistical Analysis (the correct way) ---
+# We will run a cluster-based permutation test on the difference waves (Contra - Ipsi)
+# for each subject. This is a robust way to test for significance across time.
 
-# get time points from epochs
-times =  epochs.times
+# Define conditions to loop through
+conditions = {
+    "target": "Target",
+    "singleton": "Singleton",  # Note: 'singleton' corresponds to 'distractor' in the old script
+    "control": "Control"
+}
 
-from scipy.stats import ttest_ind
-result_target = ttest_ind(contra_target_epochs_data, ipsi_target_epochs_data, axis=0)
-result_distractor = ttest_ind(contra_distractor_epochs_data, ipsi_distractor_epochs_data, axis=0)
-result_control = ttest_ind(contra_control_epochs_data, ipsi_control_epochs_data, axis=0)
-# plot the data
-times = epochs.times
-fig, ax = plt.subplots(1, 3, figsize=(12, 6), sharey=True)
-ax = ax.flatten()
-# first plot
-ax[0].plot(times, contra_target_epochs_data.mean(axis=0)*10e5, color="r")
-ax[0].plot(times, ipsi_target_epochs_data.mean(axis=0)*10e5, color="b")
-ax[0].plot(times, diff_target[0]*10e5, color="g")
-ax[0].hlines(y=0, xmin=times[0], xmax=times[-1])
-#ax[0].legend(["Contra", "Ipsi", "Contra-Ipsi"])
-ax[0].set_title("Target lateral")
-ax[0].set_ylabel("Amplitude [µV]")
-ax[0].set_xlabel("Time [s]")
-# second plot
-ax[1].plot(times, contra_distractor_epochs_data.mean(axis=0)*10e5, color="r")
-ax[1].plot(times, ipsi_distractor_epochs_data.mean(axis=0)*10e5, color="b")
-ax[1].plot(times, diff_distractor[0]*10e5, color="g")
-ax[1].hlines(y=0, xmin=times[0], xmax=times[-1])
-#ax[1].legend(["Contra", "Ipsi", "Contra-Ipsi"])
-ax[1].set_title("Distractor lateral")
-ax[1].set_xlabel("Time [s]")
-# control
-ax[2].plot(times, contra_control_epochs_data.mean(axis=0)*10e5, color="r")
-ax[2].plot(times, ipsi_control_epochs_data.mean(axis=0)*10e5, color="b")
-ax[2].plot(times, diff_control[0]*10e5, color="g")
-ax[2].hlines(y=0, xmin=times[0], xmax=times[-1])
-#ax[2].legend(["Contra", "Ipsi", "Contra-Ipsi"])
-ax[2].set_title("Control lateral")
-ax[2].set_xlabel("Time [s]")# add t stats on same plot with different axis
-twin1 = ax[0].twinx()
-twin1.tick_params(axis='y', labelcolor="brown")
-twin1.plot(times, result_target[0], color="brown", linestyle="dashed", alpha=0.5)
-# fourth plot
-twin2 = ax[1].twinx()
-twin2.tick_params(axis='y', labelcolor="brown")
-twin1.sharey(twin2)
-twin2.plot(times, result_distractor[0], color="brown", linestyle="dashed", alpha=0.5)
-# control
-twin3 = ax[2].twinx()
-twin3.tick_params(axis='y', labelcolor="brown")
-twin2.sharey(twin3)
-twin3.plot(times, result_control[0], color="brown", linestyle="dashed", alpha=0.5)
-# set axis label to right plot
-twin3.set_ylabel("T-Value", color="brown")
-# despine
-sns.despine(fig=fig, right=False)
+stats_results = {}
+for key in conditions.keys():
+    # Create the subject-level difference wave: (n_subjects, n_times)
+    contra = np.array(subject_data[f'contra_{key}'])
+    ipsi = np.array(subject_data[f'ipsi_{key}'])
 
-# --- STATISTICS ---
-run_on = "Target"  # can be Target or Distractor
-n_permutations = 10000  # number of permutations
-# some stats
-n_jobs = -1
-pval = 0.05
-tail = 0
-# Now we need to set the threshold parameter. For this time-series data (1 electrode pair over time) which is NOT SUITED
-# FOR SPATIAL COMPARISON BUT TEMPORAL COMPARISON, we should use a single t-value. A reasonable starting point would be
-# a t-value corresponding to an uncorrected p-value of 0.05 for a single comparison. We can calculate this using
-# scipy.stats.f.ppf.
-n1 = contra_target_epochs_data.shape[0] if run_on == "Target" else contra_distractor_epochs_data.shape[0]
-n2 = ipsi_target_epochs_data.shape[0] if run_on == "Target" else contra_distractor_epochs_data.shape[0]
-df = n1 + n2 - 2
-if tail == 0:
-    threshold = t.ppf(1 - pval / 2, df)  # Two-tailed
-else:  # tail == -1 or tail == 1
-    threshold = t.ppf(pval, df) if tail == -1 else t.ppf(1 - pval, df)
-print(f"Using threshold: {threshold}")
+    # Ensure we have data to process
+    if contra.size == 0 or ipsi.size == 0:
+        print(f"Skipping stats for '{key}' due to missing data.")
+        continue
 
-# mne.viz.plot_ch_adjacency(epochs.info, adjacency, epochs.info["ch_names"])
-X = [contra_target_epochs_data, ipsi_target_epochs_data] if run_on == "Target" else [contra_distractor_epochs_data, ipsi_distractor_epochs_data]
-t_obs, clusters, cluster_pv, h0 = permutation_cluster_test(X, threshold=threshold, n_permutations=n_permutations,
-                                                           n_jobs=n_jobs, out_type="mask", tail=tail, stat_fun=mne.stats.ttest_ind_no_p)
-times = epochs.times
-fig, (ax, ax2) = plt.subplots(2, 1, figsize=(8, 4))
-ax.set_title("Contra minus ipsi")
-ax.plot(
-    times,
-    diff_target[0]*10e5 if run_on=="Target" else diff_distractor[0]*10e5,
-    label="ERP Contrast (Contra minus ipsi)")
-ax.set_ylabel("EEG (µV)")
-ax.legend()
+    subject_diff = contra - ipsi
 
-for i_c, c in enumerate(clusters):
-    c = c[0]
-    if cluster_pv[i_c] <= pval:
-        h = ax2.axvspan(times[c.start], times[c.stop - 1], color="r", alpha=0.3)
-    else:
-        h = 0
-        ax2.axvspan(times[c.start], times[c.stop - 1], color=(0.3, 0.3, 0.3), alpha=0.3)
+    # Run the cluster permutation test
+    # We test the difference wave against 0.
+    t_obs, clusters, cluster_p_values, _ = permutation_cluster_1samp_test(
+        subject_diff,
+        n_permutations=1024,  # For a real analysis, 5000+ is recommended
+        threshold=None,  # Use default t-threshold
+        tail=0,  # Two-tailed test
+        n_jobs=-1,  # Use all available CPU cores
+        verbose=False
+    )
 
-hf = plt.plot(times, t_obs, "g")
-ax2.legend((h,), ("cluster p-value < 0.05",))
-ax2.set_xlabel("time (ms)")
-ax2.set_ylabel("statistic value")  # which statistic?
+    # Find significant clusters (p < 0.05)
+    significant_clusters = [clusters[i] for i, p_val in enumerate(cluster_p_values) if p_val < 0.05]
+
+    stats_results[key] = {
+        't_obs': t_obs,
+        'significant_clusters': significant_clusters
+    }
+
+# --- 3. Plot the Results ---
+fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
+axes = axes.flatten()
+
+# Conversion factor from V to µV
+to_microvolts = 1e6
+
+for ax, (key, title) in zip(axes, conditions.items()):
+    # Plot grand-average contralateral and ipsilateral waveforms
+    ax.plot(times, grand_average[f'contra_{key}'][0] * to_microvolts, color="crimson", label="Contralateral")
+    ax.plot(times, grand_average[f'ipsi_{key}'][0] * to_microvolts, color="steelblue", label="Ipsilateral")
+
+    # Plot the grand-average difference wave
+    diff_wave = grand_average[f'contra_{key}'][0] - grand_average[f'ipsi_{key}'][0]
+    ax.plot(times, diff_wave * to_microvolts, color="black", linestyle='--', label="Difference (Contra-Ipsi)")
+
+    # Add a horizontal line at 0
+    ax.axhline(0, color='gray', linestyle='-', linewidth=0.5)
+
+    # Shade significant time windows identified by the cluster test
+    if key in stats_results:
+        for cluster in stats_results[key]['significant_clusters']:
+            ax.fill_between(
+                times[cluster[1]],
+                ax.get_ylim()[0],
+                ax.get_ylim()[1],
+                color='orange',
+                alpha=0.3,
+                label='p < 0.05'
+            )
+
+    ax.set_title(f"{title} Lateralization")
+    ax.set_xlabel("Time [s]")
+
+# Set labels and legend for the figure
+axes[0].set_ylabel("Amplitude [µV]")
+handles, labels = axes[0].get_legend_handles_labels()
+# Remove duplicate labels for the fill_between
+unique_labels = dict(zip(labels, handles))
+fig.legend(unique_labels.values(), unique_labels.keys(), loc='upper right')
+
+sns.despine(fig=fig)
+fig.tight_layout(rect=[0, 0, 1, 0.96])  # Adjust layout to make space for legend

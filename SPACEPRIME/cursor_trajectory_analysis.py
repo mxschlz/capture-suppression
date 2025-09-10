@@ -4,8 +4,9 @@ from utils import *
 import seaborn as sns
 from SPACEPRIME.subjects import subject_ids
 from stats import remove_outliers
-from scipy.stats import ttest_rel
+from scipy.stats import ttest_rel, spearmanr
 import pingouin as pg
+import SPACEPRIME
 
 plt.ion()
 
@@ -35,7 +36,7 @@ data_root = f"{get_data_path()}derivatives/preprocessing/"
 all_subject_ids = subject_ids
 
 # Define a list of subjects to exclude from all analyses in this script
-subjects_to_exclude = [108]
+subjects_to_exclude = []
 print(f"--- Subject Exclusion ---")
 print(f"Excluding subjects: {subjects_to_exclude}")
 
@@ -257,15 +258,15 @@ data_driven_rois = correct_clicks_df.groupby('TargetDigit').agg(
 # --- Create a robust, final ROI map ---
 # Start with a default grid as a fallback for any digits that were never correctly clicked.
 numpad_locations_dva = {
-    7: (-1, 1), 8: (0, 1), 9: (1, 1),
-    4: (-1, 0), 5: (0, 0), 6: (1, 0),
-    1: (-1, -1), 2: (0, -1), 3: (1, -1),
+    7: (-0.6, -0.6), 8: (0, -0.6), 9: (0.6, -0.6),
+    4: (-0.6, 0), 5: (0, 0), 6: (0.6, 0),
+    1: (-0.6, 0.6), 2: (0, 0.6), 3: (0.6, 0.6),
 }
 
 # Update the default map with the data-driven values. This overwrites the defaults
 # for any digit we have data for, ensuring our map is as accurate as possible.
-data_driven_map = {digit: (coords['x_dva'], coords['y_dva']) for digit, coords in data_driven_rois.items()}
-numpad_locations_dva.update(data_driven_map)
+#data_driven_map = {digit: (coords['x_dva'], coords['y_dva']) for digit, coords in data_driven_rois.items()}
+#numpad_locations_dva.update(data_driven_map)
 
 print("Using data-driven ROI locations with default fallbacks.")
 print("Final ROI map:", {k: tuple(round(vi, 2) for vi in v) for k, v in sorted(numpad_locations_dva.items())})
@@ -328,6 +329,7 @@ print("Applying comprehensive trajectory projection calculation...")
 projection_scores_df = analysis_df_temp.apply(
     calculate_trajectory_projections, axis=1, locations_map=numpad_locations_dva
 )
+
 analysis_df = pd.concat([analysis_df_temp, projection_scores_df], axis=1)
 analysis_df.dropna(subset=['proj_target'], inplace=True) # Drop trials where score couldn't be computed
 
@@ -338,11 +340,10 @@ print("Calculating new, improved scores from projections...")
 # This score measures how strongly movement was directed to the target relative
 # to the strongest competing non-target item on that trial.
 # A high positive score means excellent focus on the target.
-strongest_competitor_proj = analysis_df[['proj_distractor', 'proj_control_max']].max(axis=1)
-control_proj = analysis_df['proj_control_avg']
-analysis_df['target_capture_score'] = analysis_df['proj_target']
-analysis_df['distractor_capture_score'] = analysis_df['proj_distractor']
-analysis_df['target_distractor_capture_diff'] = analysis_df['proj_target'] - analysis_df['proj_distractor']
+control_proj = analysis_df['proj_control_max']
+analysis_df['target_towardness'] = analysis_df['proj_target']
+analysis_df['distractor_towardness'] = analysis_df['proj_distractor']
+analysis_df['target_distractor_towardness_diff'] = analysis_df['target_towardness'] - analysis_df['distractor_towardness']
 
 # Calculate the length of the ideal vector to the target and distractor for each trial
 analysis_df['target_vec_length'] = analysis_df['TargetDigit'].apply(get_vector_length, locations_map=numpad_locations_dva)
@@ -351,27 +352,11 @@ analysis_df['distractor_vec_length'] = analysis_df['SingletonDigit'].apply(get_v
 # --- Create the Standardized Scores ---
 # The standardized score is the projection value divided by the length of the ideal vector.
 # This converts the score from an absolute distance (in dva) to a relative proportion.
-analysis_df['target_capture_score_std'] = analysis_df['target_capture_score'] / (analysis_df['target_vec_length'])
-analysis_df['distractor_capture_score_std'] = analysis_df['distractor_capture_score'] / (analysis_df['distractor_vec_length'])
+analysis_df['target_towardness_std'] = analysis_df['target_towardness'] / (analysis_df['target_vec_length'])
+analysis_df['distractor_towardness_std'] = analysis_df['distractor_towardness'] / (analysis_df['distractor_vec_length'])
 
 # The difference score is now a comparison of these relative proportions
-analysis_df['target_distractor_capture_diff_std'] = analysis_df['target_capture_score_std'] - analysis_df['distractor_capture_score_std']
-
-
-# --- Diagnostic Print for Standardized Scores ---
-print("\n--- DIAGNOSTIC: Example Standardized Score Calculations ---")
-# Select a few trials to show the before and after
-example_trials_std = analysis_df.dropna(subset=['distractor_vec_length']).sample(n=min(3, len(analysis_df)))
-for i, trial_row in example_trials_std.iterrows():
-    print(f"\n--- Example Trial (Index: {i}) ---")
-    print(f"  - Target: {int(trial_row['TargetDigit'])}, Distractor: {int(trial_row['SingletonDigit'])}")
-    print(f"  - Target Vector Length: {trial_row['target_vec_length']:.2f}, Distractor Vector Length: {trial_row['distractor_vec_length']:.2f}")
-    print(f"  - Original Target Score:   {trial_row['target_capture_score']:.3f} (dva)")
-    print(f"  - Standardized Target Score: {trial_row['target_capture_score_std']:.3f} (proportion)")
-    print(f"  - Original Distractor Score:   {trial_row['distractor_capture_score']:.3f} (dva)")
-    print(f"  - Standardized Distractor Score: {trial_row['distractor_capture_score_std']:.3f} (proportion)")
-print("--- END DIAGNOSTIC ---\n")
-
+analysis_df['target_distractor_towardness_diff_std'] = analysis_df['target_towardness_std'] - analysis_df['distractor_towardness_std']
 
 # ===================================================================
 #      NEW: FILTER OUT NOISY TRAJECTORIES
@@ -381,7 +366,7 @@ print("\n--- Filtering out noisy trajectories that go beyond the response box --
 # --- Step 1: Define the boundary ---
 # The numpad corners are at (+/-1, +/-1), so the max distance from center is sqrt(2) ~= 1.41 dva.
 # We'll set a generous boundary to only catch truly erratic movements.
-TRAJECTORY_BOUNDARY_DVA = None
+TRAJECTORY_BOUNDARY_DVA = 2
 print(f"Defining boundary for valid trajectories at {TRAJECTORY_BOUNDARY_DVA} dva from the center.")
 
 # --- Step 2: Identify trials that exceed the boundary ---
@@ -432,9 +417,9 @@ print("\n--- Visualizing Derived Capture Scores by Priming Condition and Block -
 
 # Define the scores to plot and their user-friendly titles
 scores_to_plot = {
-    'target_capture_score': 'Target Capture Score',
-    'distractor_capture_score': 'Distractor Capture Score',
-    'target_distractor_capture_diff': 'Target vs. Distractor Difference'
+    'target_towardness': 'Target towardness',
+    'distractor_towardness': 'Distractor towardness',
+    'target_distractor_towardness_diff': 'Target vs. Distractor Difference'
 }
 
 # Create a figure with 3 subplots in a row, sharing the y-axis for easy comparison
@@ -453,7 +438,7 @@ for i, (col_name, title) in enumerate(scores_to_plot.items()):
         hue='PrimingCondition',
         hue_order=hue_order,
         palette=palette,
-        errorbar='ci',
+        errorbar=('se', 2),
         join=True,
         ax=ax
     )
@@ -480,11 +465,11 @@ for i, (col_name, title) in enumerate(scores_to_plot.items()):
 plt.tight_layout() # Adjust layout to prevent title overlap
 
 # Compare capture score effect sizes versus response time and accuracy effect sizes in Priming conditions
-analysis_df_mean = analysis_df.groupby(["subject_id", "Priming"])[["rt", "select_target", "target_capture_score_std",
-                                                                   "target_capture_score", "distractor_capture_score",
-                                                                   "target_distractor_capture_diff",
-                                                      "distractor_capture_score_std",
-                                                      "target_distractor_capture_diff_std"]].mean().reset_index()
+analysis_df_mean = analysis_df.groupby(["subject_id", "Priming"])[["rt", "select_target", "target_towardness_std",
+                                                                   "target_towardness", "distractor_towardness",
+                                                                   "target_distractor_towardness_diff",
+                                                      "distractor_towardness_std",
+                                                      "target_distractor_towardness_diff_std"]].mean().reset_index()
 
 # ===================================================================
 #       EFFECT SIZE COMPARISON: CAPTURE SCORE vs. RT vs. ACCURACY
@@ -499,9 +484,9 @@ df_effects = analysis_df_mean.copy()
 metrics_to_compare = {
     'Response Time (s)': 'rt',
     'Accuracy (%)': 'select_target',
-    'CTAI (Target-Distractor)': 'target_distractor_capture_diff',
-    'CTAI (Target)': 'target_capture_score',
-    'CTAI (Distractor)': 'distractor_capture_score'
+    'Towardness (Target) (dva)': 'target_towardness',
+    'Towardness (Distractor) (dva)': 'distractor_towardness',
+    'Towardness (Target-Distractor) (dva)': 'target_distractor_towardness_diff'
 }
 
 # Prepare a list to store the results
@@ -604,9 +589,8 @@ def p_to_stars(p):
 
 fig, axes = plt.subplot_mosaic(mosaic="""
 ab.
-..c
-de.
-""", figsize=(8, 18))
+ecd
+""", figsize=(18, 8))
 axes = [ax for ax in list(axes.values())] # Flatten the 2D array of axes for easy iteration
 
 # Define the order, labels, and a safe color palette for the x-axis
@@ -625,7 +609,7 @@ for i, (metric_name, col_name) in enumerate(metrics_to_compare.items()):
         order=priming_order,
         ax=ax,
         palette=palette_list,
-        errorbar='se'
+        errorbar=('se', 2)
     )
     ax.set_title(metric_name, fontsize=14, pad=50) # Increased padding for annotations
     ax.set_xlabel("Priming Condition", fontsize=12)
@@ -711,6 +695,67 @@ for j in range(i + 1, len(axes)):
 plt.tight_layout()
 
 # ===================================================================
+#       CORRELATION MATRIX OF PERFORMANCE METRICS
+# ===================================================================
+# Compare capture score effect sizes versus response time and accuracy effect sizes in Priming conditions
+corr_df = analysis_df.groupby(["subject_id"])[["rt", "select_target", "target_towardness_std",
+                                                                   "target_towardness", "distractor_towardness",
+                                                                   "target_distractor_towardness_diff",
+                                                      "distractor_towardness_std",
+                                                      "target_distractor_towardness_diff_std"]].mean().reset_index()
+
+# Select the columns for the correlation matrix from the df_effects DataFrame.
+# These are the subject-level average scores for each metric, across all conditions.
+metric_cols = list(metrics_to_compare.values())
+correlation_df = corr_df[metric_cols]
+
+# For a more readable plot, let's rename the columns to their user-friendly names.
+correlation_df = correlation_df.rename(columns={v: k for k, v in metrics_to_compare.items()})
+
+
+# Visualize the correlation matrix as a heatmap for better interpretation.
+sns.pairplot(
+    correlation_df
+)
+plt.xticks(rotation=45, ha="right") # Rotate labels for better readability
+plt.yticks(rotation=0)
+plt.tight_layout() # Adjust layout to prevent labels from being cut off
+
+
+# Calculate the Pearson correlation matrix.
+corr_matrix = correlation_df.corr(method="spearman")
+p_values = df_effects[metric_cols].corr(method=lambda x, y: spearmanr(x, y)[1])
+mask = np.triu(np.ones_like(corr_matrix, dtype=bool))
+
+
+fig, ax = plt.subplots(figsize=(12, 10))
+sns.heatmap(corr_matrix, mask=mask, cmap='vlag', center=0, annot=False, linewidths=.5, vmin=-1, vmax=1, ax=ax)
+
+# Add custom annotations with significance
+for i in range(len(corr_matrix)):
+    for j in range(i):  # Only iterate through lower triangle
+        r, p = corr_matrix.iloc[i, j], p_values.iloc[i, j]
+        text = f"{r:.2f}"
+        if p < 0.001:
+            text += "***"
+        elif p < 0.01:
+            text += "**"
+        elif p < 0.05:
+            text += "*"
+        ax.text(j + 0.5, i + 0.5, text, ha="center", va="center", color="white" if abs(r) > 0.6 else "black")
+
+ax.set_title('Spearman correlation matrix', fontsize=15, fontweight='bold')
+ax.text(0.98, 0.98, "* p<0.05\n** p<0.01\n*** p<0.001", transform=ax.transAxes, ha='right', va='top',
+        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+plt.tight_layout()
+plt.show()
+
+# save target towardness
+towardness_df = analysis_df[['subject_id', 'block', 'trial_nr', 'target_towardness']]
+output_path = f'{SPACEPRIME.get_data_path()}concatenated\\target_towardness.csv'
+towardness_df.to_csv(output_path, index=True)
+
+# ===================================================================
 #       STATISTICAL ANALYSIS: CAPTURE SCORE BY PRIMING
 # ===================================================================
 print("\n--- Statistical Analysis of Capture Score (Priming x Block) ---")
@@ -724,7 +769,7 @@ print("\nRunning 3xN Repeated Measures ANOVA (PrimingCondition x Block)...")
 analysis_df_anova = analysis_df.copy()
 rm_anova_results = pg.rm_anova(
     data=analysis_df_anova,
-    dv='target_capture_score',  # Use the standardized score
+    dv='target_towardness',  # Use the standardized score
     within=['PrimingCondition', 'block'],
     subject='subject_id',
     detailed=True
@@ -752,7 +797,7 @@ analysis_df['singleton_trial_idx'] = analysis_df.groupby('subject_id').cumcount(
 # For each subject, calculate the rolling mean of the capture score.
 # This smooths out trial-to-trial noise and reveals the underlying trend.
 # We use the same WINDOW_SIZE defined earlier in the script for consistency.
-analysis_df['capture_score_running_avg'] = analysis_df.groupby('subject_id')['target_capture_score'].transform(
+analysis_df['towardness_running_avg'] = analysis_df.groupby('subject_id')['target_towardness'].transform(
     lambda x: x.rolling(WINDOW_SIZE, center=False, min_periods=1).mean()
 )
 
@@ -766,14 +811,14 @@ plt.figure(figsize=(12, 7))
 sns.lineplot(
     data=analysis_df,
     x='singleton_trial_idx',
-    y='capture_score_running_avg'
+    y='towardness_running_avg'
 )
 
 # Add a horizontal line at y=0 for a clear reference point
 plt.axhline(0, color='red', linestyle='--', linewidth=1.5, label='Capture = Target capture')
 
 # Formatting the plot
-plt.title(f'Running Average of Capture Score (Window Size = {WINDOW_SIZE})', fontsize=16)
+plt.title(f'Running Average of towardness (Window Size = {WINDOW_SIZE})', fontsize=16)
 plt.xlabel('Trial Number (Singleton Present)', fontsize=12)
 plt.ylabel('capture Score (Negative = Capture, Positive = Target)', fontsize=12)
 plt.legend()
@@ -1095,89 +1140,334 @@ other_trial_for_viz = analysis_df_classification[analysis_df_classification['ini
 visualize_full_trajectory(other_trial_for_viz, df, MOVEMENT_THRESHOLD, target_hz=RESAMP_FREQ)
 
 # Call the new diagnostic function
-#visualize_absolute_trajectory(control_trial_for_viz, df, numpad_locations_dva, target_hz=RESAMP_FREQ)
+visualize_absolute_trajectory(control_trial_for_viz, df, numpad_locations_dva, target_hz=RESAMP_FREQ)
 
 # Use the exact same trial that shows the doubling effect
-#distractor_trial_for_viz = analysis_df[analysis_df['initial_movement_direction'] == 'distractor'].iloc[10]
+distractor_trial_for_viz = analysis_df[analysis_df['initial_movement_direction'] == 'distractor'].iloc[10]
 
 # Run the absolute plot and carefully check the coordinates printed in the legend
-#print("Checking the absolute start and end points for the trial...")
-#visualize_absolute_trajectory(
-#    distractor_trial_for_viz,
-#    df,
-#    numpad_locations_dva,
-#    target_hz=RESAMP_FREQ)
+print("Checking the absolute start and end points for the trial...")
+visualize_absolute_trajectory(
+    distractor_trial_for_viz,
+    df,
+    numpad_locations_dva,
+    target_hz=RESAMP_FREQ)
 """
 
-# ===================================================================
-#      IN-DEPTH INVESTIGATION: GEOMETRY AND CAPTURE SCORE
-# ===================================================================
-print("\n--- In-Depth Investigation: Impact of Trial Geometry on Capture Score ---")
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+# from matplotlib.collections import LineCollection # This is no longer needed
 
-# --- Step 1: Calculate Target-Distractor Distance for each trial ---
-# This will help us test your hypothesis about maximal distance.
 
-# Apply this function to the analysis_df
-# We'll use the df with initial movement classifications to find interesting trials
-analysis_df_geom = pd.merge(
+def plot_poster_trajectory_with_projection(trial_info, full_trajectory_df, locations_map):
+    """
+    Generates a minimalist, poster-quality visualization with a square
+    coordinate system, ending at the button click.
+
+    This version explicitly visualizes the 'target_towardness' by projecting
+    the average trajectory vector onto the ideal target vector, using a
+    colorblind-friendly and highly distinguishable color palette.
+
+    Args:
+        trial_info (pd.Series): A row from the analysis DataFrame containing trial metadata.
+        full_trajectory_df (pd.DataFrame): The raw DataFrame with all cursor data points.
+        locations_map (dict): A dictionary mapping digits to their (x, y) coordinates in dva.
+
+    Returns:
+        tuple: A tuple containing the matplotlib figure and axes objects (fig, ax).
+    """
+    # --- 1. Extract Trial Information ---
+    sub = int(trial_info['subject_id'])
+    blk = int(trial_info['block'])
+    trn = int(trial_info['trial_nr'])
+    target_digit = int(trial_info['TargetDigit'])
+    distractor_digit = int(trial_info['SingletonDigit'])
+    target_towardness = trial_info['target_towardness']  # Get the pre-calculated score
+
+    # --- Get the trajectory for this specific trial, UP TO THE CLICK (time <= 0) ---
+    trial_trajectory = full_trajectory_df.query(
+        'subject_id == @sub and block == @blk and trial_nr == @trn and time <= 0'
+    ).copy()
+
+    # --- 2. Set up the Plot ---
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.set_aspect('equal', adjustable='box')
+    sns.set_style("white")  # A clean white background
+
+    # --- 3. Plot the Cursor Trajectory and Calculate its Average Vector ---
+    avg_vec = np.array([0, 0])
+    if not trial_trajectory.empty and len(trial_trajectory) > 1:
+        x = trial_trajectory['x'].values
+        y = trial_trajectory['y'].values
+
+        # --- MODIFIED PART: Plot trajectory as fewer, uniform black arrows ---
+        # To reduce visual clutter and create uniform arrows, we'll subsample the trajectory
+        # and normalize the direction vectors.
+        subsample_rate = 5  # Plot an arrow every N points. Increase to reduce arrow density.
+        x_sub = x[::subsample_rate]
+        y_sub = y[::subsample_rate]
+
+        # We need at least two points to draw arrows between them.
+        if len(x_sub) > 1:
+            # Calculate the change in x and y for each segment of the subsampled trajectory.
+            u = np.diff(x_sub)
+            v = np.diff(y_sub)
+
+            # Normalize the (u, v) vectors to make all arrows the same length.
+            # This makes the visualization focus on direction, not speed.
+            magnitudes = np.sqrt(u**2 + v**2)
+            # Create a mask to handle segments with no movement (to avoid division by zero).
+            has_moved_mask = magnitudes > 1e-6
+
+            # Only calculate normalized vectors for segments where there was movement.
+            u_norm = np.zeros_like(u)
+            v_norm = np.zeros_like(v)
+            u_norm[has_moved_mask] = u[has_moved_mask] / magnitudes[has_moved_mask]
+            v_norm[has_moved_mask] = v[has_moved_mask] / magnitudes[has_moved_mask]
+
+            # Plot using quiver.
+            # The 'scale' parameter now controls the uniform length of all arrows.
+            # A larger scale value makes the arrows shorter.
+            ax.quiver(
+                x_sub[:-1][has_moved_mask], y_sub[:-1][has_moved_mask],
+                u_norm[has_moved_mask], v_norm[has_moved_mask],
+                color='black',
+                angles='xy',
+                scale_units='xy',
+                scale=30,      # Increase this value to make arrows shorter.
+                width=0.004,   # Arrow body thickness.
+                headwidth=4,   # Arrow head width.
+                headlength=5,  # Arrow head length.
+                zorder=1
+            )
+        # The color bar is removed as it's no longer needed.
+        # --- END OF MODIFICATION ---
+
+        # Use new, consistent colors
+        ax.plot(x[0], y[0], 'o', color='#2ca02c', markersize=12, label='Start', zorder=3) # Tableau Green
+        ax.plot(x[-1], y[-1], 'X', color='black', markersize=12, label='End (Click)', zorder=3)
+        avg_vec = trial_trajectory[['x', 'y']].mean().to_numpy()
+
+    # --- 4. Plot Directional & Projection Vectors ---
+    start_vec = np.array([0, 0])
+    target_vec = np.array(locations_map[target_digit])
+    distractor_vec = np.array(locations_map[distractor_digit])
+
+    # --- Visualize Target Towardness ---
+    target_vec_norm = np.linalg.norm(target_vec)
+    if target_vec_norm > 1e-6:
+        unit_target_vec = target_vec / target_vec_norm
+        projection_vec = unit_target_vec * target_towardness
+
+        # Helper line from average vector tip to its projection on the target vector
+        ax.plot([avg_vec[0], projection_vec[0]], [avg_vec[1], projection_vec[1]],
+                color='gray', linestyle='--', linewidth=1.5, zorder=2, label='Projection Line')
+
+        # Arrow for the "Target Towardness" score itself
+        ax.arrow(start_vec[0], start_vec[1], projection_vec[0], projection_vec[1],
+                 color='#17becf', label=f'Target Towardness ({target_towardness:.2f})', # Tableau Cyan
+                 width=0.02, head_width=0.07, length_includes_head=True, zorder=4,
+                 edgecolor='black', linewidth=0.5)
+
+    # --- Plot Ideal and Average Vectors with new color palette ---
+    arrow_props = dict(width=0.015, head_width=0.06, length_includes_head=True, zorder=3, linestyle="-")
+    ax.arrow(start_vec[0], start_vec[1], target_vec[0], target_vec[1],
+             color='#1f77b4', label=f'To Target ({target_digit})', **arrow_props) # Tableau Blue
+    ax.arrow(start_vec[0], start_vec[1], distractor_vec[0], distractor_vec[1],
+             color='#d62728', label=f'To Distractor ({distractor_digit})', **arrow_props) # Tableau Red
+    ax.arrow(start_vec[0], start_vec[1], avg_vec[0], avg_vec[1],
+             color='#9467bd', label='Average Trajectory', **arrow_props) # Tableau Purple
+
+    # --- 5. Final Touches & Axis Scaling ---
+    ax.set_title(f'Trajectory Example: Sub-{sub}, Trial-{trn}', fontsize=16, fontweight='bold')
+    ax.set_xlabel('X Position (dva)', fontsize=12)
+    ax.set_ylabel('Y Position (dva)', fontsize=12)
+    ax.grid(True, linestyle='--', alpha=0.6)
+
+    all_points = np.array([start_vec, target_vec, distractor_vec, avg_vec, projection_vec])
+    if not trial_trajectory.empty:
+        all_points = np.vstack([all_points, trial_trajectory[['x', 'y']].values])
+
+    x_min, y_min = all_points.min(axis=0)
+    x_max, y_max = all_points.max(axis=0)
+    x_center, y_center = (x_max + x_min) / 2, (y_max + y_min) / 2
+    max_range = max(x_max - x_min, y_max - y_min, 0.1)
+    padding = max_range * 0.15
+    half_range_with_pad = (max_range / 2) + padding
+    ax.set_xlim(x_center - half_range_with_pad, x_center + half_range_with_pad)
+    ax.set_ylim(y_center - half_range_with_pad, y_center + half_range_with_pad)
+
+    ax.legend(loc='center left', bbox_to_anchor=(1.05, 0.5), fontsize=10)
+    sns.despine(trim=True)
+    plt.tight_layout(rect=[0, 0, 0.85, 1])
+
+    return fig, ax
+
+
+# ===================================================================
+#       GENERATE THE PLOT FOR A PERFECT EXAMPLE TRIAL
+# ===================================================================
+print("\n--- Searching for a poster-worthy example trial... ---")
+
+# --- Merge analysis dataframes to get all metrics in one place ---
+# This gives us access to both 'initial_movement_direction' and 'target_towardness'
+full_analysis_df = pd.merge(
     analysis_df,
     analysis_df_classification[['subject_id', 'block', 'trial_nr', 'initial_movement_direction']],
     on=['subject_id', 'block', 'trial_nr'],
-    how='left'
+    how='inner'
 )
+print(f"Created a combined analysis dataframe with {len(full_analysis_df)} trials.")
 
-analysis_df_geom['target_distractor_dist'] = analysis_df_geom.apply(
-    get_distance_between_digits, axis=1, locations_map=numpad_locations_dva
-)
+# --- Define pairs of digits that are opposite each other on the numpad ---
+# These pairs have the maximal angular distance.
+opposite_pairs = [
+    (1, 9), (9, 1),
+    (3, 7), (7, 3),
+    (2, 8), (8, 2),
+    (4, 6), (6, 4)
+]
 
-print("Calculated target-distractor distance for all relevant trials.")
+# --- Create a boolean mask for trials where the target and distractor are opposites ---
+is_opposite_mask = pd.Series(False, index=full_analysis_df.index)
+for t, d in opposite_pairs:
+    is_opposite_mask |= (
+        (full_analysis_df['TargetDigit'] == t) &
+        (full_analysis_df['SingletonDigit'] == d)
+    )
+print(f"Found {is_opposite_mask.sum()} trials with maximally distant target/distractor pairs.")
 
-# --- Step 2: Find and Plot an Example of Maximal-Distance Capture ---
-# We'll find a trial that perfectly matches your scenario.
-print("\nSearching for a trial with maximal target-distractor distance and initial capture...")
 
-# Filter for trials that were captured by the distractor
-captured_trials = analysis_df_geom[
-    analysis_df_geom['initial_movement_direction'] == 'distractor'
-].copy()
+# --- Find a trial that meets all our criteria for a great example ---
+# 1. Initial movement is towards the target.
+# 2. Final response is to the distractor (a "change of mind").
+# 3. Target and distractor are on opposite sides of the screen.
+candidate_trials = full_analysis_df[
+    (full_analysis_df['initial_movement_direction'] == 'distractor') &
+    (full_analysis_df['response'] == full_analysis_df['TargetDigit']) &
+    (is_opposite_mask)
+]
 
-# Sort them by the target-distractor distance to find the most extreme examples
-captured_trials.sort_values(by='target_distractor_dist', ascending=False, inplace=True)
+if not candidate_trials.empty:
+    # Select one of these interesting trials at random
+    #example_trial_for_poster = candidate_trials.sample(n=1).iloc[0]
+    example_trial_for_poster = candidate_trials.query("subject_id==136&block==7.0&trial_nr==171").iloc[0]
 
-if not captured_trials.empty:
-    # Select the top example
-    example_trial = captured_trials.sample().iloc[0]
+    print(f"Found a great example! Plotting trial {example_trial_for_poster['trial_nr']}, block {example_trial_for_poster['block']}, from subject {example_trial_for_poster['subject_id']}.")
+    print(f"  -> Target: {int(example_trial_for_poster['TargetDigit'])}, Distractor: {int(example_trial_for_poster['SingletonDigit'])}")
 
-    print(f"Found example trial: sub-{example_trial['subject_id']}, block-{example_trial['block']}, trial-{example_trial['trial_nr']}")
-    print(f"  - Target: {example_trial['TargetDigit']}, Distractor: {example_trial['SingletonDigit']}")
-    print(f"  - On-screen distance: {example_trial['target_distractor_dist']:.2f} dva")
-    print(f"  - Target Capture Score: {example_trial['target_capture_score']:.3f}")
-    print(f"  - Distractor Capture Score: {example_trial['distractor_capture_score']:.3f}")
-    print(f"  - Difference Score: {example_trial['target_distractor_capture_diff']:.3f}")
+    # Call the updated plotting function, which now returns the figure
+    fig, ax = plot_poster_trajectory_with_projection(
+        trial_info=example_trial_for_poster,
+        full_trajectory_df=df,
+        locations_map=numpad_locations_dva
+    )
 
-    # Generate the plot for our example trial
-    plot_trajectory_and_vectors(example_trial, df, numpad_locations_dva)
+    # --- Save and Show the Figure ---
+    output_path = "G:\\Meine Ablage\\PhD\\Conferences\\ICON25\\Poster\\cursor_trajectory_with_projection.svg"
+    plt.savefig(output_path, bbox_inches='tight')
+    print(f"Plot saved to: {output_path}")
+
+    plt.show()
 
 else:
-    print("Could not find any trials that matched the specified criteria.")
+    print("Could not find a trial that matched the specified criteria (initial target move, final distractor response, and maximal distance).")
 
 
-# --- Step 4: Correlate Target-Distractor Distance with Capture Score ---
-print("\n--- Correlating Target-Distractor Distance with Capture Score Difference ---")
-plt.figure(figsize=(10, 7))
+# ===================================================================
+#       POSTER PLOT: TARGET TOWARDNESS VS. CONTROL PROJECTION
+# ===================================================================
+print("\n--- Generating Poster Plot: Target Towardness vs. Control Projection ---")
 
-# Use a regression plot to see the relationship
-sns.regplot(
-    data=analysis_df_geom.dropna(subset=['target_distractor_dist', 'target_distractor_capture_diff']),
-    x='target_distractor_dist',
-    y='distractor_capture_score',
-    scatter_kws={'alpha': 0.2, 's': 15}, # Make points transparent
-    line_kws={'color': 'red'}
+# --- Step 1: Prepare data for plotting ---
+# We need to "melt" the dataframe to plot two different columns on the same y-axis.
+# This converts 'target_towardness' and 'proj_control_max' from wide to long format.
+
+analysis_df["target_towardness_contrast"] = analysis_df["target_towardness"] - control_proj
+analysis_df_mean = analysis_df.groupby(["subject_id", "block", "Priming"])["target_towardness_contrast"].mean().reset_index()
+plot_data = analysis_df_mean.melt(
+    id_vars=['subject_id', 'block', 'Priming'],
+    value_vars=['target_towardness_contrast'],
+    var_name='Projection Type',
+    value_name='Projection Score (dva)'
 )
 
-plt.title('Relationship Between On-Screen Distance and Capture Score')
-plt.xlabel('Euclidean Distance Between Target and Distractor (dva)')
-plt.ylabel('Capture Score (Target Proj. - Distractor Proj.)')
-plt.grid(True, linestyle='--')
+# Improve the legend labels for clarity
+plot_data['Projection Type'] = plot_data['Projection Type'].map({
+    'target_towardness': 'Toward Target'
+})
+
+
+# --- Step 2: Create the pointplot ---
+plt.figure(figsize=(10, 7))
+
+ax = sns.lineplot(
+    data=plot_data,
+    x='block',
+    y='Projection Score (dva)',
+    hue="Priming",
+    color='darkblue',
+    errorbar=("se", 2),  # Show standard error (x2 for ~95% CI)
+    linewidth=3.5,  # Thicker line for better visibility from a distance
+    marker='o',  # Add markers to emphasize each block's data point
+    markersize=9,  # Make markers larger and clearer
+    legend=True,  # Explicitly disable the legend
+)
+
+# --- Step 3: Formatting for poster quality ---
+# Add a reference line at y=0
+ax.axhline(0, color='black', linestyle='--', linewidth=1.5, alpha=0.7)
+
+# Set clear titles and labels with appropriate font sizes
+ax.set_title('Trajectory Projection Toward Target vs. Control Items', fontsize=18, fontweight='bold', pad=20)
+ax.set_xlabel('Block Number', fontsize=14)
+ax.set_ylabel('Projection Score (dva)', fontsize=14)
+
+# Customize ticks and legend
+ax.tick_params(axis='both', which='major', labelsize=12)
+
+# Clean up the plot aesthetics
 sns.despine()
+plt.grid(True, which='major', axis='y', linestyle=':', linewidth=0.7)
+plt.tight_layout()
+
+# Show the final plot
 plt.show()
+
+# --- Save and Show the Figure ---
+output_path = "G:\\Meine Ablage\\PhD\\Conferences\\ICON25\\Poster\\target_towardness_over_blocks.svg"
+plt.savefig(output_path, bbox_inches='tight')
+
+from scipy.stats import page_trend_test
+
+print("\n--- Page's Trend Test for Monotonic Increase ---")
+
+# The data needs to be in a "wide" format: (subjects x conditions)
+# You already created this for the Cronbach's Alpha calculation.
+# We'll reuse df_pivot.
+df_pivot = plot_data.pivot(index="subject_id", columns="block", values='Projection Score (dva)')
+
+# The test can't handle missing values, so we'll drop any subjects
+# who might be missing a block for any reason.
+df_pivot_clean = df_pivot.dropna()
+
+print(f"Running test on {len(df_pivot_clean)} complete subjects out of {len(df_pivot)} total.")
+
+# Perform the test.
+# We use alternative='greater' because we hypothesize an INCREASING trend
+# in rt_diff (from negative capture to positive suppression).
+# The default predicted_ranks=(1, 2, 3...) is exactly what we want.
+L_statistic, p_value = page_trend_test(df_pivot_clean)
+
+print(f"\nPage's L statistic: {L_statistic:.2f}")
+print(f"P-value: {p_value:.5f}")
+
+# --- Interpretation ---
+if p_value < 0.05:
+    print("\n> Conclusion: The result is significant. We can reject the null hypothesis.")
+    print("> There is strong evidence for a monotonically increasing trend in the RT difference across blocks.")
+    print("> This supports the interpretation of a systematic shift from attentional capture to suppression.")
+else:
+    print("\n> Conclusion: The result is not significant.")
+    print("> We cannot conclude there is a monotonic trend in the RT difference across blocks.")

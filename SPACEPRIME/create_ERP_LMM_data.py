@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import SPACEPRIME
-from utils import get_jackknife_contra_ipsi_wave, calculate_fractional_area_latency, get_single_trial_contra_ipsi_wave
+from utils import get_contra_ipsi_diff_wave, calculate_fractional_area_latency, get_single_trial_contra_ipsi_wave
 import pandas as pd
 import seaborn as sns
 import numpy as np
@@ -40,8 +40,8 @@ PRIMING_REF_STR = PRIMING_MAP.get(0)
 # --- 3. ERP Component Definitions ---
 PD_TIME_WINDOW = (0.2, 0.4)
 N2AC_TIME_WINDOW = (0.2, 0.4)
-PD_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4")]
-N2AC_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4")]
+PD_ELECTRODES = [("C3", "C4")]
+N2AC_ELECTRODES = [("C3", "C4")]
 # NEW: Define reference electrode pair for LMM
 N2AC_ELECTRODE_REF = f"{N2AC_ELECTRODES[0][0]}-{N2AC_ELECTRODES[0][1]}"
 PD_ELECTRODE_REF = f"{PD_ELECTRODES[0][0]}-{PD_ELECTRODES[0][1]}"
@@ -71,7 +71,7 @@ if ACCURACY_COL in df.columns:
 df[TARGET_COL] = pd.to_numeric(df[TARGET_COL], errors='coerce').map(TARGET_LOC_MAP)
 df[DISTRACTOR_COL] = pd.to_numeric(df[DISTRACTOR_COL], errors='coerce').map(DISTRACTOR_LOC_MAP)
 df[PRIMING_COL] = pd.to_numeric(df[PRIMING_COL], errors='coerce').map(PRIMING_MAP)
-df[SUBJECT_ID_COL] = df[SUBJECT_ID_COL].astype(str)
+df[SUBJECT_ID_COL] = df[SUBJECT_ID_COL].astype(int).astype(str)
 
 print("Preprocessing and column mapping complete.")
 
@@ -138,13 +138,18 @@ for subject_id in n2ac_analysis_df[SUBJECT_ID_COL].unique():
                 'jackknifed_rt': jackknifed_rt * -1,
                 'jackknifed_acc': jackknifed_acc * -1,
                 'jackknifed_bis': jackknifed_bis * -1,
+                BLOCK_COL: trial_row[BLOCK_COL],
+                'trial_nr': trial_row["trial_nr"]
             }
 
             # Jackknife ERP calculation for the specific pair
-            n2ac_wave, n2ac_times = get_jackknife_contra_ipsi_wave(
-                sample_df=jackknife_sample_df, lateral_stim_loc=trial_row[TARGET_COL],
-                electrode_pairs=[electrode_pair],  # MODIFIED: Pass only the current pair
-                time_window=N2AC_TIME_WINDOW, all_times=all_times)
+            n2ac_wave, n2ac_times = get_contra_ipsi_diff_wave(
+                trials_df=jackknife_sample_df,
+                electrode_pairs=[electrode_pair],
+                time_window=N2AC_TIME_WINDOW,
+                all_times=all_times,
+                lateral_stim_col=TARGET_COL  # Use the column name
+            )
 
             # Single-Trial ERP calculation for the specific pair
             st_n2ac_wave, st_n2ac_times = get_single_trial_contra_ipsi_wave(
@@ -202,13 +207,18 @@ for subject_id in pd_analysis_df[SUBJECT_ID_COL].unique():
                 'jackknifed_rt': jackknifed_rt * -1,
                 'jackknifed_acc': jackknifed_acc * -1,
                 'jackknifed_bis': jackknifed_bis * -1,
+                BLOCK_COL: trial_row[BLOCK_COL],
+                'trial_nr': trial_row["trial_nr"]
             }
 
             # Jackknife ERP calculation for the specific pair
-            pd_wave, pd_times = get_jackknife_contra_ipsi_wave(
-                sample_df=jackknife_sample_df, lateral_stim_loc=trial_row[DISTRACTOR_COL],
-                electrode_pairs=[electrode_pair], # MODIFIED
-                time_window=PD_TIME_WINDOW, all_times=all_times)
+            pd_wave, pd_times = get_contra_ipsi_diff_wave(
+                trials_df=jackknife_sample_df,
+                electrode_pairs=[electrode_pair],
+                time_window=PD_TIME_WINDOW,
+                all_times=all_times,
+                lateral_stim_col=DISTRACTOR_COL # Use the column name
+            )
 
             # Single-Trial ERP calculation for the specific pair
             st_pd_wave, st_pd_times = get_single_trial_contra_ipsi_wave(
@@ -243,6 +253,42 @@ pd_final_df = pd.DataFrame(pd_results_list)
 # --- NEW: Split predictors into within- and between-subject components ---
 n2ac_final_df = add_within_between_predictors(n2ac_final_df, SUBJECT_ID_COL, PERCENTAGES_TO_TEST)
 pd_final_df = add_within_between_predictors(pd_final_df, SUBJECT_ID_COL, PERCENTAGES_TO_TEST)
+
+# load target towardness values
+target_towardness = SPACEPRIME.load_concatenated_csv("target_towardness.csv", index_col=0)
+
+# Define the columns to merge on.
+# This assumes 'target_towardness' has columns: 'subject_id', 'block', 'trial_nr'
+merge_cols = [SUBJECT_ID_COL, BLOCK_COL, 'trial_nr']
+
+# It's good practice to ensure the key columns are the same data type before merging
+# to prevent silent failures.
+target_towardness[SUBJECT_ID_COL] = target_towardness[SUBJECT_ID_COL].astype(int).astype(str)
+n2ac_final_df[SUBJECT_ID_COL] = n2ac_final_df[SUBJECT_ID_COL].astype(int).astype(str)
+pd_final_df[SUBJECT_ID_COL] = pd_final_df[SUBJECT_ID_COL].astype(int).astype(str)
+
+# Perform a left merge to keep all ERP data and add towardness where it matches
+n2ac_final_df = pd.merge(
+    n2ac_final_df,
+    target_towardness,
+    on=merge_cols,
+    how='left'
+)
+
+pd_final_df = pd.merge(
+    pd_final_df,
+    target_towardness,
+    on=merge_cols,
+    how='left'
+)
+
+print("Merge complete.")
+# You can add a check to see how many rows were successfully merged
+# (assuming the new column is named 'target_towardness')
+print(f"N2ac towardness values found for {n2ac_final_df['target_towardness'].notna().sum()} of {len(n2ac_final_df)} trials.")
+print(f"Pd towardness values found for {pd_final_df['target_towardness'].notna().sum()} of {len(pd_final_df)} trials.")
+# --- END OF NEW SECTION ---
+
 
 # Save the new long-format dataframes
 n2ac_output_path = f'{SPACEPRIME.get_data_path()}concatenated\\{paradigm}_n2ac_erp_behavioral_lmm_long_data_between-within.csv'

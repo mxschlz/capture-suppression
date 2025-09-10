@@ -54,7 +54,6 @@ MANUAL_P_VALUES = {
 
 # --- NEW: Configuration for Plotting Aesthetics ---
 # Smoothing parameters for ERP waves (use window_length=1 for no smoothing)
-# TODO: temporally set this off
 SMOOTHING_WINDOW_LENGTH = 21  # Must be an odd integer (e.g., 11, 15, 21)
 SMOOTHING_POLYORDER = 3  # Polynomial order for Savitzky-Golay filter
 
@@ -172,19 +171,17 @@ for subject_id in merged_df[SUBJECT_ID_COL].unique():
 agg_df = pd.DataFrame(subject_agg_data)
 print("Aggregation complete. Resulting data shape:", agg_df.shape)
 
-# --- 3. Generate and Beautify Poster Plots ---
-print("\n--- Step 3: Generating Poster-Quality Plots ---")
+# --- 3. Generate Minimalist Plots with Analysis Details and Axes ---
+print("\n--- Step 3: Generating Minimalist Plots with Analysis Details and Axes ---")
 
-# Define the specific comparisons for the poster
+# Define the specific comparisons
 poster_comparisons = [
-    {'title': 'N2ac by Target Towardness', 'component': 'N2ac', 'split_by': 'Target towardness',
-     'conds': ['low', 'high']},
-    {'title': 'Pd by Target Towardness', 'component': 'Pd', 'split_by': 'Target towardness', 'conds': ['low', 'high']},
+    {'component': 'N2ac', 'split_by': 'Target towardness', 'conds': ['low', 'high']},
+    {'component': 'Pd', 'split_by': 'Target towardness', 'conds': ['low', 'high']},
 ]
 
 # Create a 1x2 figure for the two plots
 fig, axes = plt.subplots(1, 2, figsize=(16, 7), constrained_layout=True, sharey=True)
-fig.suptitle('Grand-Average Difference Waves by Target Towardness', fontsize=24, y=1.08)
 axes = axes.flatten()
 
 # Use a colorblind-friendly palette
@@ -192,12 +189,7 @@ colors = sns.color_palette("magma", 2)
 
 for i, comp_info in enumerate(poster_comparisons):
     ax = axes[i]
-    ax.set_title(comp_info['title'], fontsize=20, pad=15)
     plot_df = agg_df[(agg_df['component'] == comp_info['component']) & (agg_df['split_by'] == comp_info['split_by'])]
-
-    # --- Retrieve p-values from your manual input ---
-    p_val_lat = MANUAL_P_VALUES[comp_info['component']][comp_info['split_by']]['latency']
-    p_val_amp = MANUAL_P_VALUES[comp_info['component']][comp_info['split_by']]['amplitude']
 
     # --- Plotting Loop ---
     for j, cond_name in enumerate(comp_info['conds']):
@@ -205,10 +197,7 @@ for i, comp_info in enumerate(poster_comparisons):
         cond_df = plot_df[plot_df['condition'] == cond_name].dropna(subset=['wave'])
         if cond_df.empty: continue
 
-        n_subjects = len(cond_df)
         times_for_plot = cond_df['times'].iloc[0]
-
-        # Grand average of the difference wave
         ga_wave = np.mean(np.stack(cond_df['wave'].values), axis=0)
         sem_wave = sem(np.stack(cond_df['wave'].values), axis=0)
 
@@ -217,25 +206,25 @@ for i, comp_info in enumerate(poster_comparisons):
             ga_wave_smooth = savgol_filter(ga_wave, SMOOTHING_WINDOW_LENGTH, SMOOTHING_POLYORDER)
             sem_upper_smooth = savgol_filter(ga_wave + sem_wave, SMOOTHING_WINDOW_LENGTH, SMOOTHING_POLYORDER)
             sem_lower_smooth = savgol_filter(ga_wave - sem_wave, SMOOTHING_WINDOW_LENGTH, SMOOTHING_POLYORDER)
-        else:  # No smoothing
+        else:
             ga_wave_smooth = ga_wave
             sem_upper_smooth = ga_wave + sem_wave
             sem_lower_smooth = ga_wave - sem_wave
 
-        # Calculate latency on the original (unsmoothed) grand-average wave
+        # --- Calculate latency and amplitude for crosshairs ---
         is_target_comp = comp_info['component'] == 'N2ac'
         latency_on_ga = calculate_fractional_area_latency(
             ga_wave, times_for_plot, percentage=LATENCY_PERCENTAGE,
             is_target=is_target_comp, analysis_window_times=LATENCY_ANALYSIS_WINDOW
         )
-        # --- CORRECTED: Get amplitude from the SMOOTHED wave for accurate plotting ---
-        amplitude_for_plot = np.interp(latency_on_ga, times_for_plot, ga_wave_smooth) if not np.isnan(latency_on_ga) else np.nan
+        amplitude_for_plot = np.interp(latency_on_ga, times_for_plot, ga_wave_smooth) if not np.isnan(
+            latency_on_ga) else np.nan
 
         # Plot the smoothed difference wave and SEM band
-        ax.plot(times_for_plot, ga_wave_smooth, color=color, lw=3, label=f'{cond_name} Towardness (N={n_subjects})')
+        ax.plot(times_for_plot, ga_wave_smooth, color=color, lw=3)
         ax.fill_between(times_for_plot, sem_lower_smooth, sem_upper_smooth, color=color, alpha=0.2)
 
-        # Plot crosshair lines and marker
+        # --- Plot crosshair lines and marker ---
         if not np.isnan(latency_on_ga) and not np.isnan(amplitude_for_plot):
             ax.plot([latency_on_ga, latency_on_ga], [0, amplitude_for_plot],
                     color=color, linestyle=':', linewidth=4, zorder=10, alpha=1.0)
@@ -244,40 +233,23 @@ for i, comp_info in enumerate(poster_comparisons):
             ax.plot(latency_on_ga, amplitude_for_plot, 'o',
                     markerfacecolor='black', markeredgecolor=color, markeredgewidth=2, markersize=10, zorder=11)
 
-    # --- Aesthetics and Legend ---
-    ax.axvspan(LATENCY_ANALYSIS_WINDOW[0], LATENCY_ANALYSIS_WINDOW[1], color='grey', alpha=0.1, zorder=0,
-               label='Analysis Window')
+    # --- Minimalist Aesthetics ---
+    # Draw the analysis window
+    ax.axvspan(LATENCY_ANALYSIS_WINDOW[0], LATENCY_ANALYSIS_WINDOW[1], color='grey', alpha=0.2, zorder=0)
+
     ax.axhline(0, color='k', linestyle='--', lw=1.5)
     ax.axvline(0, color='k', linestyle='-', lw=1)
     if 'times_for_plot' in locals():
         ax.set_xlim(times_for_plot[0], times_for_plot[-1])
 
-    # --- UPDATED: Add stats as a text box on the plot ---
-    p_text_lat = format_p_value_with_asterisks(p_val_lat)
-    p_text_amp = format_p_value_with_asterisks(p_val_amp)
-
-    # Determine position for the text box. 0.95 is near the top in axes coordinates.
-    text_y_pos = 0.95
-    v_align = 'top'
-
-    # Create the text string and add it to the plot
-    stats_text = f"Latency: {p_text_lat}\nAmplitude: {p_text_amp}"
-    ax.text(0.05, text_y_pos, stats_text, transform=ax.transAxes, fontsize=14,
-            verticalalignment=v_align, bbox=dict(boxstyle='round,pad=0.5', fc='white', alpha=0.7))
-
-    # --- MODIFIED: Consolidate all labeled items into a single legend ---
-    handles, labels = ax.get_legend_handles_labels()
-    ax.legend(handles, labels, loc='lower right', fontsize=12)
-
-    ax.set_xlabel("Time (s)", fontsize=16)
-    ax.set_ylabel("Amplitude (µV)", fontsize=16)
-    ax.tick_params(axis='both', which='major', labelsize=12)
-    sns.despine(ax=ax)
+    # --- MODIFIED: Remove ticks and labels, but keep the main axis lines ---
+    ax.tick_params(axis='both', which='both', bottom=False, top=False, left=False, right=False,
+                   labelbottom=False, labelleft=False)
+    sns.despine(ax=ax)  # Removes top and right spines, keeping the bottom and left ones.
 
 # --- 4. Save and Show Plot ---
-# Save the figure for your poster (SVG is great for scaling)
-output_filename = "G:\\Meine Ablage\\PhD\\Conferences\\ICON25\\Poster\\ERP_Towardness_Split_Poster_Plot.svg"
-plt.savefig(output_filename, bbox_inches='tight')
-print(f"\n--- Plot saved as {output_filename} ---")
+# Save the figure (updated filename for this specific version)
+output_filename = "G:\\Meine Ablage\\PhD\\Conferences\\ICON25\\Poster\\ERP_Towardness_Split_Minimalist_With_Axes.svg"
+plt.savefig(output_filename, bbox_inches='tight', transparent=True)
+print(f"\n--- Minimalist plot with axes saved as {output_filename} ---")
 
-plt.show()

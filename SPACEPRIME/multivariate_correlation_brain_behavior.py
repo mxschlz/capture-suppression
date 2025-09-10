@@ -291,7 +291,7 @@ final_df = pd.concat([correlation_df,erp_wide_df], axis=1)
 # TODO: to remove or not to remove ...
 if 10 in final_df.index:
     print("Warning: Removing subject at hardcoded index 10 from correlation analysis.")
-    final_df = final_df.drop(index=10).reset_index(drop=True)
+    #final_df = final_df.drop(index=10).reset_index(drop=True)
 
 
 print("\nGenerating sanity-check plots for ERP components...")

@@ -147,64 +147,6 @@ def get_passive_listening_ERPs_grand_average():
 
     return results
 
-def get_jackknife_contra_ipsi_wave(sample_df, lateral_stim_loc, electrode_pairs, time_window, all_times, plot=False):
-    """
-    Calculates the average contralateral-ipsilateral difference wave from a jackknife sample.
-
-    Args:
-        sample_df (pd.DataFrame): DataFrame containing the ERP data for the jackknife sample (all trials but one).
-        lateral_stim_loc (str): Location of the lateralized stimulus ('left' or 'right').
-        electrode_pairs (list): List of tuples, where each tuple is a (left_hemi_el, right_hemi_el) pair.
-        time_window (tuple): The (start, end) time in seconds for the analysis.
-        all_times (np.ndarray): Array of all time points in the epoch.
-        plot (bool, optional): If True, displays a plot of the resulting difference wave. Defaults to False.
-
-    Returns:
-        tuple: A tuple containing:
-            - np.ndarray: The final averaged contra-ipsi difference wave.
-            - np.ndarray: The time points corresponding to the wave.
-    """
-    # Create a boolean mask for the desired time window
-    time_mask = (all_times >= time_window[0]) & (all_times <= time_window[1])
-    window_times = all_times[time_mask]
-
-    diff_waves_for_pairs = []
-    for left_el, right_el in electrode_pairs:
-        # Extract ERP data for the electrode pair from the sample trials
-        left_el_data = sample_df[left_el].loc[:, time_mask].values
-        right_el_data = sample_df[right_el].loc[:, time_mask].values
-
-        # Average across trials to get a single wave for each electrode
-        avg_left_wave = np.mean(left_el_data, axis=0)
-        avg_right_wave = np.mean(right_el_data, axis=0)
-
-        # Calculate contralateral - ipsilateral difference
-        if lateral_stim_loc == 'left':
-            # Contralateral is Right Hemisphere, Ipsilateral is Left Hemisphere
-            diff_wave = avg_right_wave - avg_left_wave
-        else:  # lateral_stim_loc == 'right'
-            # Contralateral is Left Hemisphere, Ipsilateral is Right Hemisphere
-            diff_wave = avg_left_wave - avg_right_wave
-        diff_waves_for_pairs.append(diff_wave)
-
-    # Average the difference waves across all specified electrode pairs
-    mean_diff_wave = np.mean(diff_waves_for_pairs, axis=0)
-
-    if plot:
-        plt.figure(figsize=(8, 5))
-        plt.plot(window_times, mean_diff_wave, label='Contra-Ipsi Difference', color='black')
-        plt.axhline(0, color='gray', linestyle='--', linewidth=1)
-        if window_times[0] <= 0 <= window_times[-1]:
-            plt.axvline(0, color='gray', linestyle='--', linewidth=1)
-        plt.title(f"Jackknife Contra-Ipsi Difference Wave (Stimulus: {lateral_stim_loc})")
-        plt.xlabel("Time (s)")
-        plt.ylabel("Amplitude (µV)")
-        plt.legend()
-        plt.grid(True, linestyle=':', alpha=0.6)
-        plt.show(block=True)
-
-    return mean_diff_wave, window_times
-
 
 def calculate_fractional_area_latency(erp_wave, times, percentage=0.5, plot=False, is_target=False, analysis_window_times=None):
     """
