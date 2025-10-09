@@ -13,6 +13,12 @@ import pingouin as pg
 plt.ion()
 
 
+# --- 0. Configuration ---
+# Define an output directory for plots
+output_dir = "plots"
+os.makedirs(output_dir, exist_ok=True)
+
+
 # --- 1. Data Loading & Preprocessing ---
 OUTLIER_RT_THRESHOLD = 2.0
 FILTER_PHASE = 2
@@ -176,159 +182,98 @@ print(stats_sloc_df)
 
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 
-# --- 4. Plotting Setup ---
-# --- Panel A: Distractor Absent ---
-fig_a, ax_a = plt.subplots(figsize=(8, 6))
+# --- 4. Combined Plotting: Mosaic Layout ---
+# Create a figure using subplot_mosaic for a more intuitive layout.
+# 'a' will be the top-center plot, with 'b', 'c', and 'd' along the bottom row.
+fig, axes = plt.subplot_mosaic(
+    mosaic="""
+    .a.
+    bcd
+    """,
+    figsize=(12, 10),
+    sharex=True,
+    sharey=True
+)
 
-# Filter data for distractor-absent trials
+# --- Define which axis is for which plot ---
+# With mosaic, axes is a dictionary. We access each subplot by its label.
+ax_a = axes['a']
+axes_b = [axes['b'], axes['c'], axes['d']] # Group the bottom axes for iteration
+
+# --- 4a. Plotting Panel A: Distractor Absent ---
 df_absent = df_mean[df_mean[DISTRACTOR_COL] == 'absent']
+target_order = ["left", "mid", "right"]
 
-# Define order for bars
-bar_order = ["left", "mid", "right"]
-
-# Create the bar plots
 sns.barplot(
     data=df_absent,
-    x=TARGET_COL, # This is the x-axis for Panel A
+    x=TARGET_COL,
     y='target_towardness',
-    order=bar_order,
-    color="green",
-    errorbar=('se', 1), # Show standard error
+    order=target_order,
+    color="darkgreen",
+    errorbar=('se', 1),
     ax=ax_a
 )
+ax_a.set_title("A: Distractor Absent", fontsize=14, weight='bold')
+ax_a.axhline(0, color='grey', linestyle='--', lw=1)
 
 # --- Print Stats for Panel A ---
 print("\n--- Panel A: Distractor Absent Stats ---")
-for loc in bar_order:
+for loc in target_order:
     data = df_absent[df_absent[TARGET_COL] == loc]['target_towardness']
     mean = data.mean()
     sem = data.sem()
     n = len(data)
     print(f"  Target: {loc.capitalize()} | Mean: {mean:.3f}, SEM: {sem:.3f}, N: {n}")
 
-# --- Final Touches for Panel A ---
-ax_a.set_title("Panel A: Distractor Absent", fontsize=14, weight='bold')
-ax_a.set_xlabel("Target Location", fontsize=12)
-ax_a.set_ylabel("Target Towardness", fontsize=12)
-ax_a.set_ylim(0, 0.5) # Set symmetrical y-axis as requested
-ax_a.axhline(0, color='grey', linestyle='--', lw=1)
-sns.despine(ax=ax_a)
-fig_a.tight_layout()
 
-# --- Panel B: Custom Bar Plots for Distractor-Present Trials ---
+# --- 4b. Plotting Panels B, C, and D: Distractor Present ---
+df_present = df_mean[df_mean[DISTRACTOR_COL] != 'absent']
+distractor_locations_present = ["left", "mid", "right"]
+panel_labels = ["B: Distractor Left", "C: Distractor Mid", "D: Distractor Right"]
 
-# Filter for distractor-present trials only
-df_present = df_mean[df_mean[DISTRACTOR_COL] != 'absent'].copy()
+# --- Print Stats for Distractor Present Conditions ---
+print("\n--- Distractor Present Stats ---")
 
-# Create a new figure and subplot for Panel B
-fig_b, ax_b1 = plt.subplots(figsize=(8, 6))
+# Loop through the bottom axes to create the distractor-present plots
+for ax, dist_loc, panel_label in zip(axes_b, distractor_locations_present, panel_labels):
+    df_subplot = df_present[df_present[DISTRACTOR_COL] == dist_loc]
 
-# --- Create the three specific bars as requested ---
+    # --- Print stats for this subplot ---
+    print(f"  Condition: {dist_loc.capitalize()}")
+    for target_loc in target_order:
+        data = df_subplot[df_subplot[TARGET_COL] == target_loc]['target_towardness']
+        mean = data.mean()
+        sem = data.sem()
+        n = len(data)
+        print(f"    Target: {target_loc.capitalize():<5} | Mean: {mean:.3f}, SEM: {sem:.3f}, N: {n}")
 
-# 1. Calculate means and standard errors for each specific condition
-bar_data = [
-    # Bar 1: All left target trials
-    df_present[df_present[TARGET_COL] == 'left']['target_towardness'],
-    # Bar 2: All mid distractor trials
-    df_present[df_present[DISTRACTOR_COL] == 'mid']['target_towardness'],
-    # Bar 3: All right target trials
-    df_present[df_present[TARGET_COL] == 'right']['target_towardness']
-]
-bar_means = [d.mean() for d in bar_data]
-bar_errors = [d.sem() for d in bar_data]
-bar_labels = ['Target: Left', 'Distractor: Mid', 'Target: Right']
-bar_colors = ['green', 'red', 'green']
+    # Create the bar plot
+    sns.barplot(
+        data=df_subplot,
+        x=TARGET_COL,
+        y='target_towardness',
+        order=target_order,
+        color="darkred",
+        errorbar=('se', 1),
+        ax=ax
+    )
+    ax.set_title(panel_label, fontsize=14, weight='bold')
+    ax.axhline(0, color='grey', linestyle='--', lw=1)
 
-# 2. Plot the bars manually
-ax_b1.bar(bar_labels, bar_means, yerr=bar_errors, capsize=5, color=bar_colors)
 
-# --- Print Stats for Panel B, Plot 1 ---
-print("\n--- Panel B (Set 1) Stats ---")
-for i, label in enumerate(bar_labels):
-    mean = bar_means[i]
-    sem = bar_errors[i]
-    n = len(bar_data[i]) # Number of subjects
-    print(f"  {label} | Mean: {mean:.3f}, SEM: {sem:.3f}, N: {n}")
+# --- 5. Final Figure-Wide Touches ---
+# Set shared axis labels for the entire figure
+fig.supxlabel("Target Location", fontsize=14)
+fig.supylabel("Target Towardness", fontsize=14)
 
-# --- Final Touches for the new Panel B subplot ---
-ax_b1.set_ylabel("Target Towardness", fontsize=12)
-ax_b1.set_ylim(0, 0.5) # Set symmetrical y-axis as requested
-ax_b1.axhline(0, color='grey', linestyle='--', lw=1)
-ax_b1.tick_params(axis='x', rotation=45)
-ax_b1.set_title("Panel B (Set 1)", fontsize=14, weight='bold')
-sns.despine(ax=ax_b1)
-fig_b.tight_layout()
+# Set a consistent Y-limit for all plots by accessing the dictionary's values
+plt.setp(list(axes.values()), ylim=(0, 0.5))
 
-# --- Panel B, Plot 2 ---
-fig_b2, ax_b2 = plt.subplots(figsize=(8, 6))
+# Clean up the overall figure appearance
+sns.despine(fig=fig)
+fig.tight_layout(rect=[0.02, 0.02, 1, 0.98]) # Adjust layout for super-labels
 
-# --- Create the three specific bars for the second plot ---
-bar_data_2 = [
-    # Bar 1: All left distractor trials
-    df_present[df_present[DISTRACTOR_COL] == 'left']['target_towardness'],
-    # Bar 2: All mid target trials
-    df_present[df_present[TARGET_COL] == 'mid']['target_towardness'],
-    # Bar 3: All right target trials
-    df_present[df_present[TARGET_COL] == 'right']['target_towardness']
-]
-bar_means_2 = [d.mean() for d in bar_data_2]
-bar_errors_2 = [d.sem() for d in bar_data_2]
-bar_labels_2 = ['Distractor: Left', 'Target: Mid', 'Target: Right']
-bar_colors_2 = ['red', 'green', 'green']
+# Save the combined figure with a new name reflecting the layout
+fig.savefig(os.path.join(output_dir, "combined_spatial_performance_mosaic.svg"))
 
-# Plot the bars
-ax_b2.bar(bar_labels_2, bar_means_2, yerr=bar_errors_2, capsize=5, color=bar_colors_2)
-
-# --- Print Stats for Panel B, Plot 2 ---
-print("\n--- Panel B (Set 2) Stats ---")
-for i, label in enumerate(bar_labels_2):
-    mean = bar_means_2[i]
-    sem = bar_errors_2[i]
-    n = len(bar_data_2[i]) # Number of subjects
-    print(f"  {label} | Mean: {mean:.3f}, SEM: {sem:.3f}, N: {n}")
-
-# Final touches for the plot
-ax_b2.set_ylabel("Target Towardness", fontsize=12)
-ax_b2.axhline(0, color='grey', linestyle='--', lw=1)
-ax_b2.set_ylim(0, 0.5) # Set symmetrical y-axis as requested
-ax_b2.tick_params(axis='x', rotation=45)
-ax_b2.set_title("Panel B (Set 2)", fontsize=14, weight='bold')
-sns.despine(ax=ax_b2)
-fig_b2.tight_layout()
-
-# --- Panel B, Plot 3 ---
-fig_b3, ax_b3 = plt.subplots(figsize=(8, 6))
-
-# --- Create the three specific bars for the third plot ---
-bar_data_3 = [
-    # Bar 1: All left target trials
-    df_present[df_present[TARGET_COL] == 'left']['target_towardness'],
-    # Bar 2: All mid target trials
-    df_present[df_present[TARGET_COL] == 'mid']['target_towardness'],
-    # Bar 3: All right distractor trials
-    df_present[df_present[DISTRACTOR_COL] == 'right']['target_towardness']
-]
-bar_means_3 = [d.mean() for d in bar_data_3]
-bar_errors_3 = [d.sem() for d in bar_data_3]
-bar_labels_3 = ['Target: Left', 'Target: Mid', 'Distractor: Right']
-bar_colors_3 = ['green', 'green', 'red']
-
-# Plot the bars
-ax_b3.bar(bar_labels_3, bar_means_3, yerr=bar_errors_3, capsize=5, color=bar_colors_3)
-
-# --- Print Stats for Panel B, Plot 3 ---
-print("\n--- Panel B (Set 3) Stats ---")
-for i, label in enumerate(bar_labels_3):
-    mean = bar_means_3[i]
-    sem = bar_errors_3[i]
-    n = len(bar_data_3[i]) # Number of subjects
-    print(f"  {label} | Mean: {mean:.3f}, SEM: {sem:.3f}, N: {n}")
-
-# Final touches for the plot
-ax_b3.set_ylabel("Target Towardness", fontsize=12)
-ax_b3.axhline(0, color='grey', linestyle='--', lw=1)
-ax_b3.set_ylim(0, 0.5) # Set symmetrical y-axis as requested
-ax_b3.tick_params(axis='x', rotation=45)
-ax_b3.set_title("Panel B (Set 3)", fontsize=14, weight='bold')
-sns.despine(ax=ax_b3)
-fig_b3.tight_layout()
+plt.show() # Display the final combined plot
