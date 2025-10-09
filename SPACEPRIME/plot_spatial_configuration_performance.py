@@ -174,145 +174,161 @@ stats_sloc_df = pd.DataFrame(stats_results_sloc)
 print("\n--- Pairwise T-test Results (Singleton Location) ---")
 print(stats_sloc_df)
 
-# --- 4a. Color Palette Definition ---
-location_colors = {
-    "left": "#AA3377",   # Purple
-    "mid": "#888888",    # Dark Grey
-    "right": "#CCBB44",  # Yellow
-    "absent": "#EEEEEE"  # Lighter Grey
-}
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 
-# --- 4. Combined Plotting on a Single Canvas ---
-fig, axes = plt.subplots(nrows=2, ncols=3, figsize=(10, 15), sharey=True)
+# --- 4. Plotting Setup ---
+# --- Panel A: Distractor Absent ---
+fig_a, ax_a = plt.subplots(figsize=(8, 6))
 
-# --- Plot 1: Top Row (TargetLoc on X-axis) ---
-col_order = ["left", "right", "mid"]
-x_order_target = ["left", "mid", "right"]
+# Filter data for distractor-absent trials
+df_absent = df_mean[df_mean[DISTRACTOR_COL] == 'absent']
 
-# --- Pre-calculate annotation heights for top row for consistency across panels ---
-offset = 0.05
-pairs_pos_top = [
-    (("left", "mid"), (0, 1)),
-    (("left", "right"), (0, 2)),
-    (("mid", "right"), (1, 2))
+# Define order for bars
+bar_order = ["left", "mid", "right"]
+
+# Create the bar plots
+sns.barplot(
+    data=df_absent,
+    x=TARGET_COL, # This is the x-axis for Panel A
+    y='target_towardness',
+    order=bar_order,
+    color="green",
+    errorbar=('se', 1), # Show standard error
+    ax=ax_a
+)
+
+# --- Print Stats for Panel A ---
+print("\n--- Panel A: Distractor Absent Stats ---")
+for loc in bar_order:
+    data = df_absent[df_absent[TARGET_COL] == loc]['target_towardness']
+    mean = data.mean()
+    sem = data.sem()
+    n = len(data)
+    print(f"  Target: {loc.capitalize()} | Mean: {mean:.3f}, SEM: {sem:.3f}, N: {n}")
+
+# --- Final Touches for Panel A ---
+ax_a.set_title("Panel A: Distractor Absent", fontsize=14, weight='bold')
+ax_a.set_xlabel("Target Location", fontsize=12)
+ax_a.set_ylabel("Target Towardness", fontsize=12)
+ax_a.set_ylim(0, 0.5) # Set symmetrical y-axis as requested
+ax_a.axhline(0, color='grey', linestyle='--', lw=1)
+sns.despine(ax=ax_a)
+fig_a.tight_layout()
+
+# --- Panel B: Custom Bar Plots for Distractor-Present Trials ---
+
+# Filter for distractor-present trials only
+df_present = df_mean[df_mean[DISTRACTOR_COL] != 'absent'].copy()
+
+# Create a new figure and subplot for Panel B
+fig_b, ax_b1 = plt.subplots(figsize=(8, 6))
+
+# --- Create the three specific bars as requested ---
+
+# 1. Calculate means and standard errors for each specific condition
+bar_data = [
+    # Bar 1: All left target trials
+    df_present[df_present[TARGET_COL] == 'left']['target_towardness'],
+    # Bar 2: All mid distractor trials
+    df_present[df_present[DISTRACTOR_COL] == 'mid']['target_towardness'],
+    # Bar 3: All right target trials
+    df_present[df_present[TARGET_COL] == 'right']['target_towardness']
 ]
+bar_means = [d.mean() for d in bar_data]
+bar_errors = [d.sem() for d in bar_data]
+bar_labels = ['Target: Left', 'Distractor: Mid', 'Target: Right']
+bar_colors = ['green', 'red', 'green']
 
-# Find the max bar height for each comparison across ALL relevant panels
-max_heights_top = []
-for pair, _ in pairs_pos_top:
-    max_val = df_mean[df_mean[TARGET_COL].isin(pair)].groupby(DISTRACTOR_COL)['target_towardness'].max().max()
-    max_heights_top.append(max_val)
+# 2. Plot the bars manually
+ax_b1.bar(bar_labels, bar_means, yerr=bar_errors, capsize=5, color=bar_colors)
 
-y_bracket_levels_top = [h + offset * 1.5 for h in max_heights_top]
-if len(y_bracket_levels_top) > 1:
-    y_bracket_levels_top[1] = max(y_bracket_levels_top[0], y_bracket_levels_top[2]) + offset * 2.0
+# --- Print Stats for Panel B, Plot 1 ---
+print("\n--- Panel B (Set 1) Stats ---")
+for i, label in enumerate(bar_labels):
+    mean = bar_means[i]
+    sem = bar_errors[i]
+    n = len(bar_data[i]) # Number of subjects
+    print(f"  {label} | Mean: {mean:.3f}, SEM: {sem:.3f}, N: {n}")
 
-for i, s_loc in enumerate(col_order):
-    ax = axes[0, i]
-    df_plot = df_mean[df_mean[DISTRACTOR_COL] == s_loc]
+# --- Final Touches for the new Panel B subplot ---
+ax_b1.set_ylabel("Target Towardness", fontsize=12)
+ax_b1.set_ylim(0, 0.5) # Set symmetrical y-axis as requested
+ax_b1.axhline(0, color='grey', linestyle='--', lw=1)
+ax_b1.tick_params(axis='x', rotation=45)
+ax_b1.set_title("Panel B (Set 1)", fontsize=14, weight='bold')
+sns.despine(ax=ax_b1)
+fig_b.tight_layout()
 
-    sns.barplot(data=df_plot, x=TARGET_COL, y="target_towardness",
-                   order=x_order_target, palette=location_colors, ax=ax, errorbar=('se', 1),
-                   width=1.0)
+# --- Panel B, Plot 2 ---
+fig_b2, ax_b2 = plt.subplots(figsize=(8, 6))
 
-    ax.set_title(f"{DISTRACTOR_COL} = {s_loc}")
-    ax.set_xlabel(TARGET_COL)
-    if i > 0:
-        ax.set_ylabel("")
-
-    # --- Annotations for the top row (using pre-calculated heights) ---
-    for j, (pair, (x1, x2)) in enumerate(pairs_pos_top):
-        stats = stats_df[(stats_df[DISTRACTOR_COL] == s_loc) & (stats_df['pair'] == pair)]
-        if stats.empty:
-            continue
-
-        p_str = p_to_stars(stats['p_val_corrected'].iloc[0])
-        y_bracket = y_bracket_levels_top[j]
-
-        ax.plot([x1, x1, x2, x2], [y_bracket, y_bracket + offset, y_bracket + offset, y_bracket], lw=1.5, c='k')
-        ax.text((x1 + x2) / 2, y_bracket + offset * 1.5, p_str, ha='center', va='bottom', color='k')
-
-    # Set a uniform Y-limit for the entire row after calculating all heights
-    ax.set_ylim(top=max(y_bracket_levels_top) + offset * 2.5)
-
-# --- Plot 2: Bottom Row (SingletonLoc on X-axis) ---
-col_order_sloc = ["left", "right", "mid"]
-x_order_sloc = ["absent", "left", "mid", "right"]
-
-# --- Pre-calculate annotation heights for bottom row ---
-pairs_pos_bottom = [
-    (("absent", "left"), (0, 1)),   # Level 1
-    (("left", "right"), (1, 3)),    # Level 1
-    (("absent", "right"), (0, 3)),  # Level 2
-    (("left", "mid"), (1, 2)),      # Level 2
-    (("right", "mid"), (3, 2)),     # Level 1
-    (("absent", "mid"), (0, 2)),     # Level 3
+# --- Create the three specific bars for the second plot ---
+bar_data_2 = [
+    # Bar 1: All left distractor trials
+    df_present[df_present[DISTRACTOR_COL] == 'left']['target_towardness'],
+    # Bar 2: All mid target trials
+    df_present[df_present[TARGET_COL] == 'mid']['target_towardness'],
+    # Bar 3: All right target trials
+    df_present[df_present[TARGET_COL] == 'right']['target_towardness']
 ]
+bar_means_2 = [d.mean() for d in bar_data_2]
+bar_errors_2 = [d.sem() for d in bar_data_2]
+bar_labels_2 = ['Distractor: Left', 'Target: Mid', 'Target: Right']
+bar_colors_2 = ['red', 'green', 'green']
 
-max_heights_bottom = []
-for pair, _ in pairs_pos_bottom: # TODO: this is not working as intended
-    max_val = df_mean[df_mean[DISTRACTOR_COL].isin(pair)].groupby(TARGET_COL)['target_towardness'].max().max()
-    max_heights_bottom.append(max_val)
+# Plot the bars
+ax_b2.bar(bar_labels_2, bar_means_2, yerr=bar_errors_2, capsize=5, color=bar_colors_2)
 
-y_bracket_levels_bottom = []
-current_y = df_mean['target_towardness'].max() + offset * 0.5 # Start from global max with a small offset
-for h in max_heights_bottom:
-    current_y = max(current_y, h) + offset * 0.5
-    y_bracket_levels_bottom.append(current_y)
+# --- Print Stats for Panel B, Plot 2 ---
+print("\n--- Panel B (Set 2) Stats ---")
+for i, label in enumerate(bar_labels_2):
+    mean = bar_means_2[i]
+    sem = bar_errors_2[i]
+    n = len(bar_data_2[i]) # Number of subjects
+    print(f"  {label} | Mean: {mean:.3f}, SEM: {sem:.3f}, N: {n}")
 
-for i, t_loc in enumerate(col_order_sloc):
-    ax = axes[1, i]
-    df_plot = df_mean[df_mean[TARGET_COL] == t_loc]
+# Final touches for the plot
+ax_b2.set_ylabel("Target Towardness", fontsize=12)
+ax_b2.axhline(0, color='grey', linestyle='--', lw=1)
+ax_b2.set_ylim(0, 0.5) # Set symmetrical y-axis as requested
+ax_b2.tick_params(axis='x', rotation=45)
+ax_b2.set_title("Panel B (Set 2)", fontsize=14, weight='bold')
+sns.despine(ax=ax_b2)
+fig_b2.tight_layout()
 
-    sns.barplot(data=df_plot, x=DISTRACTOR_COL, y="target_towardness",
-                   order=x_order_sloc, palette=location_colors, ax=ax, errorbar=('se', 1),
-                   width=1.0)
+# --- Panel B, Plot 3 ---
+fig_b3, ax_b3 = plt.subplots(figsize=(8, 6))
 
-    ax.set_title(f"{TARGET_COL} = {t_loc}")
-    ax.set_xlabel(DISTRACTOR_COL)
-    if i > 0:
-        ax.set_ylabel("")
+# --- Create the three specific bars for the third plot ---
+bar_data_3 = [
+    # Bar 1: All left target trials
+    df_present[df_present[TARGET_COL] == 'left']['target_towardness'],
+    # Bar 2: All mid target trials
+    df_present[df_present[TARGET_COL] == 'mid']['target_towardness'],
+    # Bar 3: All right distractor trials
+    df_present[df_present[DISTRACTOR_COL] == 'right']['target_towardness']
+]
+bar_means_3 = [d.mean() for d in bar_data_3]
+bar_errors_3 = [d.sem() for d in bar_data_3]
+bar_labels_3 = ['Target: Left', 'Target: Mid', 'Distractor: Right']
+bar_colors_3 = ['green', 'green', 'red']
 
-    # --- Annotations for the bottom row (using pre-calculated heights) ---
-    for j, (pair, (x1, x2)) in enumerate(pairs_pos_bottom):
-        stats = stats_sloc_df[(stats_sloc_df[TARGET_COL] == t_loc) & (stats_sloc_df['pair'] == pair)]
-        if stats.empty:
-            continue
+# Plot the bars
+ax_b3.bar(bar_labels_3, bar_means_3, yerr=bar_errors_3, capsize=5, color=bar_colors_3)
 
-        p_str = p_to_stars(stats['p_val_corrected'].iloc[0])
-        y_bracket = y_bracket_levels_bottom[j]
+# --- Print Stats for Panel B, Plot 3 ---
+print("\n--- Panel B (Set 3) Stats ---")
+for i, label in enumerate(bar_labels_3):
+    mean = bar_means_3[i]
+    sem = bar_errors_3[i]
+    n = len(bar_data_3[i]) # Number of subjects
+    print(f"  {label} | Mean: {mean:.3f}, SEM: {sem:.3f}, N: {n}")
 
-        ax.plot([x1, x1, x2, x2], [y_bracket, y_bracket + offset, y_bracket + offset, y_bracket], lw=1.5, c='k')
-        ax.text((x1 + x2) / 2, y_bracket + offset * 1.5, p_str, ha='center', va='bottom', color='k')
-
-    # Set a uniform Y-limit for the entire row
-    ax.set_ylim(top=max(y_bracket_levels_bottom) + offset * 3.0)
-
-
-# --- 5. Final Touches ---
-sns.despine(fig=fig)
-# Use tight_layout to adjust for titles and labels.
-# We need to draw the figure first to allow tight_layout to calculate the correct positions.
-fig.canvas.draw()
-
-# Get the positions of the rightmost subplots in figure coordinates
-ax_top_right = axes[0, 2]
-ax_bottom_right = axes[1, 2]
-
-bbox_top = ax_top_right.get_position()
-bbox_bottom = ax_bottom_right.get_position()
-
-# Define the rectangle that encloses both subplots
-rect_x0 = bbox_bottom.x0 - 0.03
-rect_y0 = bbox_bottom.y0 - 0.05
-rect_width = bbox_top.x1 - rect_x0 + 0.03
-rect_height = bbox_top.y1 - rect_y0 + 0.05
-
-# Add the rectangle to the figure
-rect = Rectangle((rect_x0, rect_y0), rect_width, rect_height,
-                 transform=fig.transFigure,
-                 facecolor='none',
-                 edgecolor='grey', lw=2, linestyle='--', zorder=0)
-fig.add_artist(rect)
-
-plt.show()
+# Final touches for the plot
+ax_b3.set_ylabel("Target Towardness", fontsize=12)
+ax_b3.axhline(0, color='grey', linestyle='--', lw=1)
+ax_b3.set_ylim(0, 0.5) # Set symmetrical y-axis as requested
+ax_b3.tick_params(axis='x', rotation=45)
+ax_b3.set_title("Panel B (Set 3)", fontsize=14, weight='bold')
+sns.despine(ax=ax_b3)
+fig_b3.tight_layout()
