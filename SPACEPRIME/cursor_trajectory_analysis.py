@@ -331,6 +331,7 @@ projection_scores_df = analysis_df_temp.apply(
 )
 
 analysis_df = pd.concat([analysis_df_temp, projection_scores_df], axis=1)
+analysis_df = analysis_df[analysis_df["TargetDigit"] != 5]
 analysis_df.dropna(subset=['proj_target'], inplace=True) # Drop trials where score couldn't be computed
 
 # --- Step 4: Calculate derived, meaningful scores from the projections ---
@@ -1398,6 +1399,18 @@ plot_data['Projection Type'] = plot_data['Projection Type'].map({
     'target_towardness': 'Toward Target'
 })
 
+# do pairwise tests
+analysis_df_stats = analysis_df.groupby(["subject_id", "Priming"])["target_towardness"].mean().reset_index()
+ttest_result_pg = pg.pairwise_tests(data=analysis_df_stats, dv="target_towardness", within="Priming",
+                                   subject="subject_id", effsize="cohen", return_desc=True, padjust="bonf", parametric=True,
+                                   within_first=False, interaction=False)
+
+print(ttest_result_pg.round(4))
+
+analysis_df_mean_dp = analysis_df.groupby(["subject_id", "SingletonPresent"])["target_towardness"].mean().reset_index()
+ttest_dp = pg.pairwise_tests(data=analysis_df_mean_dp, dv="target_towardness", within="SingletonPresent",
+                                   subject="subject_id", effsize="cohen", return_desc=True, padjust="bonf", parametric=True,
+                                   within_first=False, interaction=False)
 
 # --- Step 2: Create the pointplot ---
 plt.figure(figsize=(10, 7))
