@@ -82,6 +82,10 @@ df_final = pd.merge(
 # transform to subject averages
 df_mean = df_final.groupby(["subject_id", "TargetLoc", "SingletonLoc"])[["target_towardness", "rt", "select_target"]].mean().reset_index()
 
+# Create a new column to distinguish between distractor present and absent trials
+df_mean['distractor_presence'] = np.where(df_mean[DISTRACTOR_COL] == 'absent', 'absent', 'present')
+
+
 
 # --- 3. Statistical Analysis ---
 # Helper function to convert p-values to significance stars
@@ -96,107 +100,52 @@ def p_to_stars(p):
         return '*'
     return 'ns'
 
-# Perform pairwise t-tests for each distractor location condition
-stats_results = []
-singleton_locations = df_mean[DISTRACTOR_COL].unique()
-target_locations = ["left", "mid", "right"]
+# --- 3a. Pairwise tests comparing Target Locations within each Distractor condition ---
+stats_df = df_mean.groupby(DISTRACTOR_COL).apply(
+    lambda df: pg.pairwise_tests(
+        data=df.reset_index(),
+        dv='target_towardness',
+        within=TARGET_COL,
+        subject=SUBJECT_ID_COL,
+        padjust='bonf',
+	    effsize="cohen"
+    )
+).reset_index()
 
-for s_loc in singleton_locations:
-    df_distractor = df_mean[df_mean[DISTRACTOR_COL] == s_loc]
-
-    # Define pairs for comparison
-    pairs = [("left", "mid"), ("left", "right"), ("mid", "right")]
-    n_comparisons_top = len(pairs)
-
-    for t_loc1, t_loc2 in pairs:
-        # Prepare data for paired t-test
-        data1 = df_distractor[df_distractor[TARGET_COL] == t_loc1].set_index(SUBJECT_ID_COL)['target_towardness']
-        data2 = df_distractor[df_distractor[TARGET_COL] == t_loc2].set_index(SUBJECT_ID_COL)['target_towardness']
-
-        # Align subjects
-        common_subjects = data1.index.intersection(data2.index)
-        if len(common_subjects) < 2: # Need at least 2 pairs for a t-test
-            continue
-
-        x = data1.loc[common_subjects]
-        y = data2.loc[common_subjects]
-
-        # Perform t-test
-        ttest_res = pg.ttest(x, y, paired=True)
-        p_val = ttest_res['p-val'].iloc[0]
-        p_val_corrected = min(p_val * n_comparisons_top, 1.0)
-        cohen_d = ttest_res["cohen-d"].iloc[0]
-
-        stats_results.append({
-            DISTRACTOR_COL: s_loc,
-            'pair': (t_loc1, t_loc2),
-            'p_val': p_val,
-            'p_val_corrected': p_val_corrected,
-            'cohen_d': cohen_d
-        })
-
-stats_df = pd.DataFrame(stats_results)
 print("--- Pairwise T-test Results ---")
 print(stats_df)
 
-# --- 3b. Statistical Analysis for Singleton Location comparison ---
-stats_results_sloc = []
-target_locations = ["left", "mid", "right"] # Use a fixed order to match plotting
-singleton_locations_with_absent = ["absent", "left", "mid", "right"]
+# --- 3b. Pairwise tests comparing Distractor Locations within each Target condition ---
+stats_sloc_df = df_mean.groupby(TARGET_COL).apply(
+    lambda df: pg.pairwise_tests(
+        data=df.reset_index(),
+        dv='target_towardness',
+        within=DISTRACTOR_COL,
+        subject=SUBJECT_ID_COL,
+        padjust='bonf',
+	    effsize="cohen"
+    )
+).reset_index()
 
-for t_loc in target_locations:
-    df_target = df_mean[df_mean[TARGET_COL] == t_loc]
-
-    # Define pairs for comparison
-    pairs = [("absent", "left"), ("absent", "right"), ("absent", "mid"),
-             ("left", "right"), ("left", "mid"), ("right", "mid")]
-    n_comparisons_sloc = len(pairs)
-
-    for s_loc1, s_loc2 in pairs:
-        # Prepare data for paired t-test
-        data1 = df_target[df_target[DISTRACTOR_COL] == s_loc1].set_index(SUBJECT_ID_COL)['target_towardness']
-        data2 = df_target[df_target[DISTRACTOR_COL] == s_loc2].set_index(SUBJECT_ID_COL)['target_towardness']
-
-        # Align subjects
-        common_subjects = data1.index.intersection(data2.index)
-        if len(common_subjects) < 2: # Need at least 2 pairs for a t-test
-            continue
-
-        x = data1.loc[common_subjects]
-        y = data2.loc[common_subjects]
-
-        # Perform t-test
-        ttest_res = pg.ttest(x, y, paired=True)
-        p_val = ttest_res['p-val'].iloc[0]
-        p_val_corrected = min(p_val * n_comparisons_sloc, 1.0)
-        stats_results_sloc.append({
-            TARGET_COL: t_loc,
-            'pair': (s_loc1, s_loc2),
-            'p_val_corrected': p_val_corrected,
-            'cohen_d': ttest_res["cohen-d"].iloc[0]
-        })
-
-stats_sloc_df = pd.DataFrame(stats_results_sloc)
 print("\n--- Pairwise T-test Results (Singleton Location) ---")
 print(stats_sloc_df)
 
-from matplotlib.offsetbox import OffsetImage, AnnotationBbox
-
 # --- 4. Combined Plotting: Mosaic Layout ---
 # Create a figure using subplot_mosaic for a more intuitive layout.
-# 'a' will be the top-center plot, with 'b', 'c', and 'd' along the bottom row.
+# 'e' is the new summary plot. 'a' is distractor absent. 'b', 'c', 'd' are distractor present.
 fig, axes = plt.subplot_mosaic(
     mosaic="""
-    .a.
+    eaa
     bcd
     """,
-    figsize=(12, 10),
-    sharex=True,
-    sharey=True
+    figsize=(15, 10),
+    sharey=True,
+    gridspec_kw={'width_ratios': [1, 1, 1]} # Ensure columns have equal width
 )
 
 # --- Define which axis is for which plot ---
 # With mosaic, axes is a dictionary. We access each subplot by its label.
+ax_e = axes['e']
 ax_a = axes['a']
 axes_b = [axes['b'], axes['c'], axes['d']] # Group the bottom axes for iteration
 
@@ -204,6 +153,7 @@ axes_b = [axes['b'], axes['c'], axes['d']] # Group the bottom axes for iteration
 df_absent = df_mean[df_mean[DISTRACTOR_COL] == 'absent']
 target_order = ["left", "mid", "right"]
 
+axes['a'].sharex(axes['b']) # Share x-axis between a and bcd
 sns.barplot(
     data=df_absent,
     x=TARGET_COL,
@@ -224,6 +174,36 @@ for loc in target_order:
     sem = data.sem()
     n = len(data)
     print(f"  Target: {loc.capitalize()} | Mean: {mean:.3f}, SEM: {sem:.3f}, N: {n}")
+
+# --- 4aa. Plotting Panel E: Distractor Present vs. Absent ---
+df_presence_summary = df_mean.groupby(['subject_id', 'distractor_presence'])['target_towardness'].mean().reset_index()
+
+sns.barplot(
+    data=df_presence_summary,
+    x='distractor_presence',
+    y='target_towardness',
+    order=['absent', 'present'],
+    palette={"absent": "darkgreen", "present": "darkred"},
+    errorbar=('se', 1),
+    ax=ax_e
+)
+ax_e.set_title("E: Distractor Presence", fontsize=14, weight='bold')
+ax_e.set_xlabel("Distractor Presence", fontsize=12)
+ax_e.axhline(0, color='grey', linestyle='--', lw=1)
+
+# --- Stats for Panel E ---
+print("\n--- Panel E: Distractor Presence Stats ---")
+data_abs = df_presence_summary[df_presence_summary['distractor_presence'] == 'absent']['target_towardness']
+data_pres = df_presence_summary[df_presence_summary['distractor_presence'] == 'present']['target_towardness']
+
+ttest_presence = pg.ttest(data_abs, data_pres, paired=True)
+print("  Paired T-test (Absent vs. Present):")
+print(f"    t = {ttest_presence['T'].iloc[0]:.3f}, p = {ttest_presence['p-val'].iloc[0]:.3f}, Cohen's d = {ttest_presence['cohen-d'].iloc[0]:.3f}")
+
+for cond in ['absent', 'present']:
+    data = df_presence_summary[df_presence_summary['distractor_presence'] == cond]['target_towardness']
+    print(f"  Condition: {cond.capitalize():<7} | Mean: {data.mean():.3f}, SEM: {data.sem():.3f}, N: {len(data)}")
+
 
 
 # --- 4b. Plotting Panels B, C, and D: Distractor Present ---
@@ -267,7 +247,7 @@ fig.supxlabel("Target Location", fontsize=14)
 fig.supylabel("Target Towardness", fontsize=14)
 
 # Set a consistent Y-limit for all plots by accessing the dictionary's values
-plt.setp(list(axes.values()), ylim=(0, 0.5))
+plt.setp(list(axes.values()), ylim=(0.0, 0.5))
 
 # Clean up the overall figure appearance
 sns.despine(fig=fig)
