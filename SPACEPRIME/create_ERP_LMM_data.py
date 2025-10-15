@@ -1,10 +1,11 @@
 import matplotlib.pyplot as plt
 import SPACEPRIME
-from utils import get_contra_ipsi_diff_wave, calculate_fractional_area_latency, get_single_trial_contra_ipsi_wave
+from utils import get_contra_ipsi_diff_wave, calculate_fractional_area_latency, get_single_trial_contra_ipsi_wave, plot_jackknife_sanity_check
 import pandas as pd
 import seaborn as sns
 import numpy as np
 from stats import remove_outliers, add_within_between_predictors  # Assuming this is your custom outlier removal function
+from scipy.stats import pearsonr
 
 plt.ion()
 
@@ -46,6 +47,9 @@ N2AC_ELECTRODES = [("C3", "C4")]
 N2AC_ELECTRODE_REF = f"{N2AC_ELECTRODES[0][0]}-{N2AC_ELECTRODES[0][1]}"
 PD_ELECTRODE_REF = f"{PD_ELECTRODES[0][0]}-{PD_ELECTRODES[0][1]}"
 
+# --- 4. Debugging and Sanity Checks ---
+PERFORM_SANITY_CHECK_PLOT = False  # Set to True to generate diagnostic plots
+MAX_SANITY_PLOTS = 10              # Max number of plots to generate before the script continues
 
 # --- Latency Robustness Check Configuration ---
 PERCENTAGES_TO_TEST = [0.3, 0.5, 0.7] # Using 50% as the standard
@@ -95,6 +99,33 @@ n2ac_analysis_df = merged_df[is_target_lateral & is_distractor_central].copy()
 pd_analysis_df = merged_df[is_distractor_lateral & is_target_central].copy()
 print(f"N2ac trials: {len(n2ac_analysis_df)}, Pd trials: {len(pd_analysis_df)}")
 
+# --- NEW: Report Trial Counts per Subject for Publication ---
+print("\n--- Analyzing Trial Counts per Subject ---")
+
+# For N2ac component
+if not n2ac_analysis_df.empty:
+    n2ac_trial_counts = n2ac_analysis_df.groupby(SUBJECT_ID_COL).size()
+    print("N2ac trials per subject:")
+    # The .to_string() method ensures all subjects are printed
+    print(n2ac_trial_counts.to_string())
+
+    print("\nSummary statistics for N2ac trial counts:")
+    # The describe() method gives you mean, std, min, max, etc.
+    print(n2ac_trial_counts.describe())
+else:
+    print("No trials found for N2ac analysis.")
+
+
+# For Pd component
+if not pd_analysis_df.empty:
+    pd_trial_counts = pd_analysis_df.groupby(SUBJECT_ID_COL).size()
+    print("\nPd trials per subject:")
+    print(pd_trial_counts.to_string())
+
+    print("\nSummary statistics for Pd trial counts:")
+    print(pd_trial_counts.describe())
+else:
+    print("No trials found for Pd analysis.")
 
 # --- MODIFIED: ERP Calculation Section ---
 # We will now build lists of dictionaries, which will be converted to long-format DataFrames.
@@ -107,6 +138,9 @@ plot_erp_wave = False  # Set to True to debug/visualize a single trial's calcula
 
 # --- N2ac Calculation Loop ---
 print("\n--- Calculating N2ac Latencies & Amplitudes (per electrode) ---")
+
+sanity_plots_made = 0 # Initialize counter
+
 grand_mean_rt_n2ac = n2ac_analysis_df[REACTION_TIME_COL].mean()
 grand_std_rt_n2ac = n2ac_analysis_df[REACTION_TIME_COL].std(ddof=1)
 grand_mean_acc_n2ac = n2ac_analysis_df[ACCURACY_INT_COL].mean()
@@ -158,6 +192,28 @@ for subject_id in n2ac_analysis_df[SUBJECT_ID_COL].unique():
                 time_window=N2AC_TIME_WINDOW, all_times=all_times
             )
 
+            # --- NEW: Sanity Check Plotting ---
+            if PERFORM_SANITY_CHECK_PLOT and sanity_plots_made < MAX_SANITY_PLOTS:
+                print(f"\n>>> Generating sanity check plot #{sanity_plots_made + 1}...")
+                plot_jackknife_sanity_check(
+                    single_trial_wave=st_n2ac_wave,
+                    single_trial_times=st_n2ac_times,
+                    jackknife_wave=n2ac_wave,
+                    jackknife_times=n2ac_times,
+                    jackknife_df=jackknife_sample_df,
+                    trial_info={
+                        'subject_id': subject_id,
+                        'trial_idx': trial_idx,
+                        'trial_nr': trial_row['trial_nr']
+                    },
+                    component_name='N2ac',
+                    electrode_pair=electrode_pair,
+                    time_window=N2AC_TIME_WINDOW,
+                    all_times=all_times,
+                    lateral_stim_col=TARGET_COL
+                )
+                sanity_plots_made += 1
+
             for p in PERCENTAGES_TO_TEST:
                 p_int = int(p * 100)
                 # Jackknife metrics
@@ -167,13 +223,15 @@ for subject_id in n2ac_analysis_df[SUBJECT_ID_COL].unique():
                 result_row[f'jk_amplitude_{p_int}'] = jk_amp * -1
 
                 # Single-trial metrics
-                st_lat = calculate_fractional_area_latency(st_n2ac_wave, st_n2ac_times, percentage=p, plot=False, is_target=True) if st_n2ac_wave is not None else np.nan
+                st_lat = calculate_fractional_area_latency(st_n2ac_wave, st_n2ac_times, percentage=p, plot=plot_erp_wave, is_target=True) if st_n2ac_wave is not None else np.nan
                 st_amp = np.interp(st_lat, st_n2ac_times, st_n2ac_wave.astype(float)) if not np.isnan(st_lat) else np.nan
                 result_row[f'st_latency_{p_int}'] = st_lat
                 result_row[f'st_amplitude_{p_int}'] = st_amp
 
             n2ac_results_list.append(result_row)
 
+
+sanity_plots_made = 0 # Initialize counter
 
 # --- Pd Calculation Loop (Apply the same logic) ---
 print("\n--- Calculating Pd Latencies & Amplitudes (per electrode) ---")
@@ -227,6 +285,28 @@ for subject_id in pd_analysis_df[SUBJECT_ID_COL].unique():
                 time_window=PD_TIME_WINDOW, all_times=all_times
             )
 
+            # --- NEW: Sanity Check Plotting ---
+            if PERFORM_SANITY_CHECK_PLOT and sanity_plots_made < MAX_SANITY_PLOTS:
+                print(f"\n>>> Generating sanity check plot #{sanity_plots_made + 1}...")
+                plot_jackknife_sanity_check(
+                    single_trial_wave=st_pd_wave,
+                    single_trial_times=st_pd_times,
+                    jackknife_wave=pd_wave,
+                    jackknife_times=pd_times,
+                    jackknife_df=jackknife_sample_df,
+                    trial_info={
+                        'subject_id': subject_id,
+                        'trial_idx': trial_idx,
+                        'trial_nr': trial_row['trial_nr']
+                    },
+                    component_name='Pd',
+                    electrode_pair=electrode_pair,
+                    time_window=PD_TIME_WINDOW,
+                    all_times=all_times,
+                    lateral_stim_col=DISTRACTOR_COL
+                )
+                sanity_plots_made += 1
+
             for p in PERCENTAGES_TO_TEST:
                 p_int = int(p * 100)
                 # Jackknife metrics
@@ -236,7 +316,7 @@ for subject_id in pd_analysis_df[SUBJECT_ID_COL].unique():
                 result_row[f'jk_amplitude_{p_int}'] = jk_amp * -1
 
                 # Single-trial metrics
-                st_lat = calculate_fractional_area_latency(st_pd_wave, st_pd_times, percentage=p, plot=False, is_target=False) if st_pd_wave is not None else np.nan
+                st_lat = calculate_fractional_area_latency(st_pd_wave, st_pd_times, percentage=p, plot=plot_erp_wave, is_target=False) if st_pd_wave is not None else np.nan
                 st_amp = np.interp(st_lat, st_pd_times, st_pd_wave.astype(float)) if not np.isnan(st_lat) else np.nan
                 result_row[f'st_latency_{p_int}'] = st_lat
                 result_row[f'st_amplitude_{p_int}'] = st_amp
@@ -249,6 +329,32 @@ print("\n--- Saving Long-Format Data to CSV ---")
 # Convert the lists of dictionaries into DataFrames
 n2ac_final_df = pd.DataFrame(n2ac_results_list)
 pd_final_df = pd.DataFrame(pd_results_list)
+
+print("\n--- Descriptive Statistics for Calculated ERP Metrics ---")
+
+def print_descriptive_stats(df, component_name):
+    """Helper function to select metric columns and print descriptive stats."""
+    if df.empty:
+        print(f"No data for {component_name}, skipping descriptive statistics.")
+        return
+
+    # Use a regular expression to select all columns starting with 'jk_' or 'st_'
+    metric_cols = df.filter(regex='^(jk_|st_)').columns
+
+    if metric_cols.empty:
+        print(f"No metric columns found for {component_name}.")
+        return
+
+    print(f"\nDescriptive statistics for {component_name} metrics:")
+    # The .describe() method provides count, mean, std, min, max, and quartiles.
+    # We use .to_string() to ensure all columns are printed without being truncated.
+    print(df[metric_cols].describe().to_string())
+
+# Get and print stats for the N2ac component
+print_descriptive_stats(n2ac_final_df, "N2ac")
+
+# Get and print stats for the Pd component
+print_descriptive_stats(pd_final_df, "Pd")
 
 # --- NEW: Split predictors into within- and between-subject components ---
 n2ac_final_df = add_within_between_predictors(n2ac_final_df, SUBJECT_ID_COL, PERCENTAGES_TO_TEST)
@@ -405,3 +511,92 @@ if n2ac_has_data or pd_has_data:
     plt.show()
 else:
     print("No data available for latency robustness plots.")
+
+# --- NEW: Correlate Metrics Between N2ac and Pd ---
+print("\n--- Correlating N2ac and Pd Metrics at the Subject Level ---")
+
+def plot_component_correlation(df1, df2, metric_col, df1_name='N2ac', df2_name='Pd'):
+    """
+    Calculates subject-level averages for a given metric from two dataframes,
+    merges them, and creates a regression plot to visualize their correlation.
+
+    Args:
+        df1 (pd.DataFrame): DataFrame for the first component (e.g., n2ac_final_df).
+        df2 (pd.DataFrame): DataFrame for the second component (e.g., pd_final_df).
+        metric_col (str): The name of the column to correlate (e.g., 'jk_latency_50').
+        df1_name (str): Name of the first component for plot labels.
+        df2_name (str): Name of the second component for plot labels.
+    """
+    if df1.empty or df2.empty or metric_col not in df1.columns or metric_col not in df2.columns:
+        print(f"Skipping correlation plot for '{metric_col}': Data or column is missing.")
+        return
+
+    # 1. Calculate subject-level averages for the specified metric
+    avg1 = df1.groupby(SUBJECT_ID_COL)[metric_col].mean().rename(f"{df1_name}_{metric_col}")
+    avg2 = df2.groupby(SUBJECT_ID_COL)[metric_col].mean().rename(f"{df2_name}_{metric_col}")
+
+    # 2. Merge the two series into a single dataframe on subject_id.
+    # 'inner' join ensures we only include subjects present in both datasets.
+    merged_avg_df = pd.merge(avg1, avg2, on=SUBJECT_ID_COL, how='inner')
+
+    if merged_avg_df.empty:
+        print(f"Skipping correlation plot for '{metric_col}': No common subjects found after averaging.")
+        return
+
+    # 3. Calculate Pearson correlation and p-value
+    try:
+        # Drop any potential NaNs before calculating correlation
+        clean_df = merged_avg_df.dropna(subset=[f"{df1_name}_{metric_col}", f"{df2_name}_{metric_col}"])
+        if len(clean_df) < 2:
+            raise ValueError("Not enough data points to compute correlation.")
+        r, p = pearsonr(clean_df[f"{df1_name}_{metric_col}"], clean_df[f"{df2_name}_{metric_col}"])
+        stat_text = f'r = {r:.2f}, p = {p:.3f}\nn = {len(clean_df)}'
+    except ValueError as e:
+        print(f"Could not compute correlation for {metric_col}: {e}")
+        stat_text = 'Cannot compute correlation'
+
+    # 4. Create the regression plot
+    plt.figure(figsize=(8, 8))
+    ax = sns.regplot(
+        data=merged_avg_df,
+        x=f"{df1_name}_{metric_col}",
+        y=f"{df2_name}_{metric_col}",
+        scatter_kws={'alpha': 0.6}
+    )
+
+    # Add the correlation stats to the plot
+    ax.text(0.05, 0.95, stat_text, transform=ax.transAxes, fontsize=12,
+            verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', fc='wheat', alpha=0.5))
+
+    # Add titles and labels
+    metric_name_clean = metric_col.replace('_', ' ').replace('jk', 'Jackknife').replace('50', '(50%)').title()
+    plt.title(f'Subject-Level Correlation: {df1_name} vs. {df2_name} {metric_name_clean}', fontsize=16)
+    plt.xlabel(f'Average {df1_name} {metric_name_clean}', fontsize=12)
+    plt.ylabel(f'Average {df2_name} {metric_name_clean}', fontsize=12)
+    plt.grid(True, linestyle=':', alpha=0.6)
+    plt.tight_layout()
+    plt.show()
+
+# --- Example Usage ---
+# Define which latency/amplitude percentage to use for the correlation
+METRIC_PERCENTAGE = 50
+
+# Correlate the jackknife latencies between N2ac and Pd
+print(f"\nPlotting correlation for Jackknife Latency ({METRIC_PERCENTAGE}%)...")
+plot_component_correlation(
+    df1=n2ac_final_df,
+    df2=pd_final_df,
+    metric_col=f'st_latency_{METRIC_PERCENTAGE}',
+    df1_name='N2ac',
+    df2_name='Pd'
+)
+
+# Correlate the jackknife amplitudes between N2ac and Pd
+print(f"\nPlotting correlation for Jackknife Amplitude ({METRIC_PERCENTAGE}%)...")
+plot_component_correlation(
+    df1=n2ac_final_df,
+    df2=pd_final_df,
+    metric_col=f'st_amplitude_{METRIC_PERCENTAGE}',
+    df1_name='N2ac',
+    df2_name='Pd'
+)
