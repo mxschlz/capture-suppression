@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import SPACEPRIME
-from utils import get_contra_ipsi_diff_wave, calculate_fractional_area_latency, get_single_trial_contra_ipsi_wave, plot_jackknife_sanity_check
+from utils import get_contra_ipsi_diff_wave, calculate_erp_metrics, get_single_trial_contra_ipsi_wave, plot_jackknife_sanity_check
 import pandas as pd
 import seaborn as sns
 import numpy as np
@@ -216,17 +216,27 @@ for subject_id in n2ac_analysis_df[SUBJECT_ID_COL].unique():
 
             for p in PERCENTAGES_TO_TEST:
                 p_int = int(p * 100)
+
                 # Jackknife metrics
-                jk_lat = calculate_fractional_area_latency(n2ac_wave, n2ac_times, percentage=p, plot=plot_erp_wave, is_target=True) if n2ac_wave is not None else np.nan
-                jk_amp = np.interp(jk_lat, n2ac_times, n2ac_wave) if not np.isnan(jk_lat) else np.nan
-                result_row[f'jk_latency_{p_int}'] = jk_lat * -1
-                result_row[f'jk_amplitude_{p_int}'] = jk_amp * -1
+                jk_metrics = calculate_erp_metrics(
+                    n2ac_wave, n2ac_times, percentage=p, plot=plot_erp_wave,
+                    is_negative_component=True, analysis_window_times=None  # Wave is pre-windowed
+                )
+                result_row[f'jk_latency_{p_int}'] = jk_metrics['latency'] * -1 if pd.notna(
+                    jk_metrics['latency']) else np.nan
+                result_row[f'jk_amp_at_lat_{p_int}'] = jk_metrics['amplitude_at_latency'] * -1 if pd.notna(
+                    jk_metrics['amplitude_at_latency']) else np.nan
+                result_row[f'jk_mean_amp_{p_int}'] = jk_metrics['mean_amplitude'] * -1 if pd.notna(
+                    jk_metrics['mean_amplitude']) else np.nan
 
                 # Single-trial metrics
-                st_lat = calculate_fractional_area_latency(st_n2ac_wave, st_n2ac_times, percentage=p, plot=plot_erp_wave, is_target=True) if st_n2ac_wave is not None else np.nan
-                st_amp = np.interp(st_lat, st_n2ac_times, st_n2ac_wave.astype(float)) if not np.isnan(st_lat) else np.nan
-                result_row[f'st_latency_{p_int}'] = st_lat
-                result_row[f'st_amplitude_{p_int}'] = st_amp
+                st_metrics = calculate_erp_metrics(
+                    st_n2ac_wave, st_n2ac_times, percentage=p, plot=plot_erp_wave,
+                    is_negative_component=True, analysis_window_times=None  # Wave is pre-windowed
+                )
+                result_row[f'st_latency_{p_int}'] = st_metrics['latency']
+                result_row[f'st_amp_at_lat_{p_int}'] = st_metrics['amplitude_at_latency']
+                result_row[f'st_mean_amp_{p_int}'] = st_metrics['mean_amplitude']
 
             n2ac_results_list.append(result_row)
 
@@ -309,17 +319,24 @@ for subject_id in pd_analysis_df[SUBJECT_ID_COL].unique():
 
             for p in PERCENTAGES_TO_TEST:
                 p_int = int(p * 100)
+
                 # Jackknife metrics
-                jk_lat = calculate_fractional_area_latency(pd_wave, pd_times, percentage=p, plot=plot_erp_wave, is_target=False) if pd_wave is not None else np.nan
-                jk_amp = np.interp(jk_lat, pd_times, pd_wave) if not np.isnan(jk_lat) else np.nan
-                result_row[f'jk_latency_{p_int}'] = jk_lat * -1
-                result_row[f'jk_amplitude_{p_int}'] = jk_amp * -1
+                jk_metrics = calculate_erp_metrics(
+                    pd_wave, pd_times, percentage=p, plot=plot_erp_wave,
+                    is_negative_component=False, analysis_window_times=None # Wave is pre-windowed
+                )
+                result_row[f'jk_latency_{p_int}'] = jk_metrics['latency'] * -1 if pd.notna(jk_metrics['latency']) else np.nan
+                result_row[f'jk_amp_at_lat_{p_int}'] = jk_metrics['amplitude_at_latency'] * -1 if pd.notna(jk_metrics['amplitude_at_latency']) else np.nan
+                result_row[f'jk_mean_amp_{p_int}'] = jk_metrics['mean_amplitude'] * -1 if pd.notna(jk_metrics['mean_amplitude']) else np.nan
 
                 # Single-trial metrics
-                st_lat = calculate_fractional_area_latency(st_pd_wave, st_pd_times, percentage=p, plot=plot_erp_wave, is_target=False) if st_pd_wave is not None else np.nan
-                st_amp = np.interp(st_lat, st_pd_times, st_pd_wave.astype(float)) if not np.isnan(st_lat) else np.nan
-                result_row[f'st_latency_{p_int}'] = st_lat
-                result_row[f'st_amplitude_{p_int}'] = st_amp
+                st_metrics = calculate_erp_metrics(
+                    st_pd_wave, st_pd_times, percentage=p, plot=plot_erp_wave,
+                    is_negative_component=False, analysis_window_times=None # Wave is pre-windowed
+                )
+                result_row[f'st_latency_{p_int}'] = st_metrics['latency']
+                result_row[f'st_amp_at_lat_{p_int}'] = st_metrics['amplitude_at_latency']
+                result_row[f'st_mean_amp_{p_int}'] = st_metrics['mean_amplitude']
 
             pd_results_list.append(result_row)
 
@@ -515,20 +532,23 @@ else:
 # --- NEW: Correlate Metrics Between N2ac and Pd ---
 print("\n--- Correlating N2ac and Pd Metrics at the Subject Level ---")
 
-def plot_component_correlation(df1, df2, metric_col, df1_name='N2ac', df2_name='Pd'):
+def plot_component_correlation(df1, df2, metric_col, ax, df1_name='N2ac', df2_name='Pd'):
     """
     Calculates subject-level averages for a given metric from two dataframes,
-    merges them, and creates a regression plot to visualize their correlation.
+    merges them, and creates a regression plot on a given axes object.
 
     Args:
         df1 (pd.DataFrame): DataFrame for the first component (e.g., n2ac_final_df).
         df2 (pd.DataFrame): DataFrame for the second component (e.g., pd_final_df).
-        metric_col (str): The name of the column to correlate (e.g., 'jk_latency_50').
+        metric_col (str): The name of the column to correlate (e.g., 'st_latency_50').
+        ax (matplotlib.axes.Axes): The axes object to plot on.
         df1_name (str): Name of the first component for plot labels.
         df2_name (str): Name of the second component for plot labels.
     """
     if df1.empty or df2.empty or metric_col not in df1.columns or metric_col not in df2.columns:
         print(f"Skipping correlation plot for '{metric_col}': Data or column is missing.")
+        ax.text(0.5, 0.5, "Data or column missing", ha='center', va='center', fontsize=12)
+        ax.set_title(f"Correlation for {metric_col}")
         return
 
     # 1. Calculate subject-level averages for the specified metric
@@ -536,16 +556,16 @@ def plot_component_correlation(df1, df2, metric_col, df1_name='N2ac', df2_name='
     avg2 = df2.groupby(SUBJECT_ID_COL)[metric_col].mean().rename(f"{df2_name}_{metric_col}")
 
     # 2. Merge the two series into a single dataframe on subject_id.
-    # 'inner' join ensures we only include subjects present in both datasets.
     merged_avg_df = pd.merge(avg1, avg2, on=SUBJECT_ID_COL, how='inner')
 
     if merged_avg_df.empty:
         print(f"Skipping correlation plot for '{metric_col}': No common subjects found after averaging.")
+        ax.text(0.5, 0.5, "No common subjects", ha='center', va='center', fontsize=12)
+        ax.set_title(f"Correlation for {metric_col}")
         return
 
     # 3. Calculate Pearson correlation and p-value
     try:
-        # Drop any potential NaNs before calculating correlation
         clean_df = merged_avg_df.dropna(subset=[f"{df1_name}_{metric_col}", f"{df2_name}_{metric_col}"])
         if len(clean_df) < 2:
             raise ValueError("Not enough data points to compute correlation.")
@@ -555,13 +575,13 @@ def plot_component_correlation(df1, df2, metric_col, df1_name='N2ac', df2_name='
         print(f"Could not compute correlation for {metric_col}: {e}")
         stat_text = 'Cannot compute correlation'
 
-    # 4. Create the regression plot
-    plt.figure(figsize=(8, 8))
-    ax = sns.regplot(
+    # 4. Create the regression plot on the provided axes
+    sns.regplot(
         data=merged_avg_df,
         x=f"{df1_name}_{metric_col}",
         y=f"{df2_name}_{metric_col}",
-        scatter_kws={'alpha': 0.6}
+        scatter_kws={'alpha': 0.6},
+        ax=ax
     )
 
     # Add the correlation stats to the plot
@@ -569,34 +589,56 @@ def plot_component_correlation(df1, df2, metric_col, df1_name='N2ac', df2_name='
             verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', fc='wheat', alpha=0.5))
 
     # Add titles and labels
-    metric_name_clean = metric_col.replace('_', ' ').replace('jk', 'Jackknife').replace('50', '(50%)').title()
-    plt.title(f'Subject-Level Correlation: {df1_name} vs. {df2_name} {metric_name_clean}', fontsize=16)
-    plt.xlabel(f'Average {df1_name} {metric_name_clean}', fontsize=12)
-    plt.ylabel(f'Average {df2_name} {metric_name_clean}', fontsize=12)
-    plt.grid(True, linestyle=':', alpha=0.6)
-    plt.tight_layout()
-    plt.show()
+    # Clean up metric name for display
+    metric_name_clean = (metric_col
+                         .replace('_', ' ')
+                         .replace('st', 'Single-Trial')
+                         .replace('jk', 'Jackknife')
+                         .replace(str(METRIC_PERCENTAGE), f'({METRIC_PERCENTAGE}%)')
+                         .title())
+    ax.set_title(f'{metric_name_clean}', fontsize=16)
+    ax.set_xlabel(f'Average {df1_name} {metric_name_clean}', fontsize=12)
+    ax.set_ylabel(f'Average {df2_name} {metric_name_clean}', fontsize=12)
+    sns.despine()
 
 # --- Example Usage ---
 # Define which latency/amplitude percentage to use for the correlation
 METRIC_PERCENTAGE = 50
+latency_metric = f'st_latency_{METRIC_PERCENTAGE}'
+amplitude_metric = f'st_mean_amp_{METRIC_PERCENTAGE}'
 
-# Correlate the jackknife latencies between N2ac and Pd
-print(f"\nPlotting correlation for Jackknife Latency ({METRIC_PERCENTAGE}%)...")
+# Create a figure with two subplots side-by-side
+fig, axes = plt.subplots(2, 1, figsize=(10, 16))
+fig.suptitle(f'Subject-Level Correlation: N2ac vs. Pd Metrics ({METRIC_PERCENTAGE}% Threshold)', fontsize=18)
+
+# Plot 1: Latency Correlation
+print(f"\nPlotting correlation for Single-Trial Latency ({METRIC_PERCENTAGE}%)...")
 plot_component_correlation(
     df1=n2ac_final_df,
     df2=pd_final_df,
-    metric_col=f'st_latency_{METRIC_PERCENTAGE}',
+    metric_col=latency_metric,
+    ax=axes[0],  # Pass the first axes object
     df1_name='N2ac',
     df2_name='Pd'
 )
 
-# Correlate the jackknife amplitudes between N2ac and Pd
-print(f"\nPlotting correlation for Jackknife Amplitude ({METRIC_PERCENTAGE}%)...")
+# Plot 2: Amplitude Correlation
+print(f"\nPlotting correlation for Single-Trial Mean Amplitude ({METRIC_PERCENTAGE}%)...")
 plot_component_correlation(
     df1=n2ac_final_df,
     df2=pd_final_df,
-    metric_col=f'st_amplitude_{METRIC_PERCENTAGE}',
+    metric_col=amplitude_metric,
+    ax=axes[1],  # Pass the second axes object
     df1_name='N2ac',
     df2_name='Pd'
 )
+
+# Adjust layout to prevent titles/labels from overlapping
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust for suptitle
+
+# Save the figure as an SVG file
+correlation_plot_path = f'n2ac_pd_correlation.svg'
+plt.savefig(correlation_plot_path, format='svg', bbox_inches='tight')
+print(f"Correlation plot saved to:\n{correlation_plot_path}")
+
+plt.show()
