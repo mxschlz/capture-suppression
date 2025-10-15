@@ -7,7 +7,6 @@ import numpy as np
 from stats import remove_outliers  # Assuming this is your custom outlier removal function
 from utils import calculate_fractional_area_latency, get_all_waves
 from scipy.stats import sem
-from scipy.signal import savgol_filter  # Import for smoothing
 
 # --- Script Configuration ---
 
@@ -203,9 +202,9 @@ for i, comp_info in enumerate(poster_comparisons):
 
         # --- Smooth the grand average wave and SEM for cleaner plotting ---
         if SMOOTHING_WINDOW_LENGTH > 1 and len(ga_wave) > SMOOTHING_WINDOW_LENGTH:
-            ga_wave_smooth = savgol_filter(ga_wave, SMOOTHING_WINDOW_LENGTH, SMOOTHING_POLYORDER)
-            sem_upper_smooth = savgol_filter(ga_wave + sem_wave, SMOOTHING_WINDOW_LENGTH, SMOOTHING_POLYORDER)
-            sem_lower_smooth = savgol_filter(ga_wave - sem_wave, SMOOTHING_WINDOW_LENGTH, SMOOTHING_POLYORDER)
+            ga_wave_smooth = ga_wave
+            sem_upper_smooth = ga_wave + sem_wave
+            sem_lower_smooth = ga_wave - sem_wave
         else:
             ga_wave_smooth = ga_wave
             sem_upper_smooth = ga_wave + sem_wave
@@ -242,10 +241,6 @@ for i, comp_info in enumerate(poster_comparisons):
     if 'times_for_plot' in locals():
         ax.set_xlim(times_for_plot[0], times_for_plot[-1])
 
-    # --- MODIFIED: Remove ticks and labels, but keep the main axis lines ---
-    ax.tick_params(axis='both', which='both', bottom=False, top=False, left=False, right=False,
-                   labelbottom=False, labelleft=False)
-    sns.despine(ax=ax)  # Removes top and right spines, keeping the bottom and left ones.
 
 # --- 4. Save and Show Plot ---
 # Save the figure (updated filename for this specific version)
