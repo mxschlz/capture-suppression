@@ -828,18 +828,6 @@ sns.despine()
 
 plt.show()
 
-# ===================================================================
-#       SAVE RESULTS FOR EXTERNAL USE
-# ===================================================================
-print("\n--- Saving Initial Movement Classifications for external use ---")
-# Define a dedicated output directory for this script's results
-output_dir_capture = f"{get_data_path()}concatenated\\"
-
-# Define the output path and save the file
-output_filepath = f"{output_dir_capture}capture_scores.csv"
-analysis_df.to_csv(output_filepath, index=False)
-print(f"Saved capture scores for {len(analysis_df)} trials to: {output_filepath}")
-
 # The start point is always digit 5, which is at (0,0) in our map
 start_point_vec = np.array(numpad_locations_dva[5])
 
@@ -1454,33 +1442,57 @@ plt.savefig(output_path, bbox_inches='tight')
 
 from scipy.stats import page_trend_test
 
-print("\n--- Page's Trend Test for Monotonic Increase ---")
+print("\n--- Page's Trend Test for Monotonic Increase (per Priming Condition) ---")
 
-# The data needs to be in a "wide" format: (subjects x conditions)
-# You already created this for the Cronbach's Alpha calculation.
-# We'll reuse df_pivot.
-df_pivot = plot_data.pivot(index="subject_id", columns="block", values='Projection Score (dva)')
+# We'll use the subject-level means, keeping the Priming condition separate.
+# This DataFrame is already calculated before the plotting section.
+df_for_test = analysis_df.groupby(["subject_id", "block", "Priming"])["target_towardness_contrast"].mean().reset_index()
 
-# The test can't handle missing values, so we'll drop any subjects
-# who might be missing a block for any reason.
-df_pivot_clean = df_pivot.dropna()
+# Use the priming_map from earlier in the script for readable names
+priming_map = {1: 'Positive', 0: 'No', -1: 'Negative'}
 
-print(f"Running test on {len(df_pivot_clean)} complete subjects out of {len(df_pivot)} total.")
+# Loop through each priming condition and run the test separately
+for priming_value, priming_name in priming_map.items():
+    print(f"\n--- Testing trend for Priming Condition: {priming_name} ---")
 
-# Perform the test.
-# We use alternative='greater' because we hypothesize an INCREASING trend
-# in rt_diff (from negative capture to positive suppression).
-# The default predicted_ranks=(1, 2, 3...) is exactly what we want.
-L_statistic, p_value = page_trend_test(df_pivot_clean)
+    # Filter data for the current priming condition
+    subset_df = df_for_test[df_for_test['Priming'] == priming_value]
 
-print(f"\nPage's L statistic: {L_statistic:.2f}")
-print(f"P-value: {p_value:.5f}")
+    # The data needs to be in a "wide" format: (subjects x blocks)
+    # Now, the pivot will work because for each subject, each block appears only once.
+    df_pivot = subset_df.pivot(
+        index="subject_id",
+        columns="block",
+        values='target_towardness_contrast'
+    )
 
-# --- Interpretation ---
-if p_value < 0.05:
-    print("\n> Conclusion: The result is significant. We can reject the null hypothesis.")
-    print("> There is strong evidence for a monotonically increasing trend in the RT difference across blocks.")
-    print("> This supports the interpretation of a systematic shift from attentional capture to suppression.")
-else:
-    print("\n> Conclusion: The result is not significant.")
-    print("> We cannot conclude there is a monotonic trend in the RT difference across blocks.")
+    # The test can't handle missing values, so we'll drop any subjects
+    # who might be missing a block for any reason.
+    df_pivot_clean = df_pivot.dropna()
+
+    # Ensure there are enough subjects to run the test
+    if len(df_pivot_clean) < 3:
+        print(f"Skipping test for '{priming_name}': Not enough complete subjects ({len(df_pivot_clean)}).")
+        continue
+
+    print(f"Running test on {len(df_pivot_clean)} complete subjects out of {len(df_pivot)} total.")
+
+    # Perform the test.
+    # We use alternative='greater' because we hypothesize an INCREASING trend.
+    # The default predicted_ranks=(1, 2, 3...) is exactly what we want for blocks.
+    try:
+        res = page_trend_test(df_pivot_clean)
+        L_statistic, p_value = res.statistic, res.pvalue
+
+        print(f"\nPage's L statistic: {L_statistic:.2f}")
+        print(f"P-value: {p_value:.5f}")
+
+        # --- Interpretation ---
+        if p_value < 0.05:
+            print("\n> Conclusion: The result is significant. We can reject the null hypothesis.")
+            print("> There is strong evidence for a monotonically increasing trend across blocks for this condition.")
+        else:
+            print("\n> Conclusion: The result is not significant.")
+            print("> We cannot conclude there is a monotonic trend across blocks for this condition.")
+    except Exception as e:
+        print(f"Could not run Page's trend test for '{priming_name}'. Error: {e}")
