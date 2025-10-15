@@ -148,135 +148,131 @@ def get_passive_listening_ERPs_grand_average():
     return results
 
 
-def calculate_fractional_area_latency(erp_wave, times, percentage=0.5, plot=False, is_target=False, analysis_window_times=None):
+def calculate_erp_metrics(erp_wave, times, percentage=0.5, plot=False, is_negative_component=False, analysis_window_times=None):
     """
-    Calculates latency based on a specified percentage of the area under a scaled ERP wave.
+    Calculates key ERP metrics like latency and amplitude from a waveform.
 
-    This method first performs a min-max normalization on the ERP waveform to scale it
-    between 0 and 1. This emphasizes the shape of the wave relative to its peak. The latency is
-    then calculated as the time point where the cumulative area under this *scaled* wave
-    reaches the specified percentage of its total area. The calculation can be restricted
-    to a specific time window.
+    This function computes:
+    1.  **Fractional Area Latency**: The time point where the cumulative area under a
+        scaled version of the component's morphology reaches a given percentage. This is
+        robust to noise.
+    2.  **Amplitude at Latency**: The voltage of the original wave at the calculated
+        fractional area latency point.
+    3.  **Mean Amplitude**: The average voltage of the wave within the analysis window.
 
     Args:
-        erp_wave (np.ndarray): The ERP waveform (can be positive or negative-going).
-        times (np.ndarray): The time points corresponding to the erp_wave.
-        percentage (float, optional): The percentage of the total area to use as a threshold.
-                                      Defaults to 0.5 (for 50%).
-        plot (bool, optional): If True, displays a plot illustrating the calculation. Defaults to False.
-        is_target (bool): If True, the wave is assumed to be negative-going (e.g., N2ac) and is
-                          inverted for the calculation. Defaults to False.
-        analysis_window_times (tuple, optional): A (start, end) tuple in seconds to specify the
-                                                 time window for the latency calculation.
+        erp_wave (np.ndarray): The ERP waveform.
+        times (np.ndarray): The time points for the erp_wave.
+        percentage (float, optional): Percentage for fractional area latency. Defaults to 0.5.
+        plot (bool, optional): If True, displays a diagnostic plot. Defaults to False.
+        is_negative_component (bool): If True, the wave is assumed to be negative-going (e.g., N2ac)
+                                    and is inverted for latency calculation. Defaults to False.
+        analysis_window_times (tuple, optional): (start, end) in seconds for the analysis.
                                                  If None, the entire waveform is used. Defaults to None.
 
     Returns:
-        float: The calculated latency in seconds, or np.nan if the latency cannot be determined.
+        dict: A dictionary containing 'latency', 'amplitude_at_latency', and 'mean_amplitude',
+              or NaNs if calculation is not possible.
     """
-    # Keep the full, original wave for plotting context
+    # --- Initial Checks ---
+    default_return = {'latency': np.nan, 'amplitude_at_latency': np.nan, 'mean_amplitude': np.nan}
+    if erp_wave is None or times is None or len(erp_wave) == 0:
+        return default_return
+
     original_erp_wave_for_plot = erp_wave.copy()
     original_times_for_plot = times.copy()
 
-    # --- 1. Apply Analysis Time Window if provided ---
+    # --- 1. Apply Analysis Time Window ---
     if analysis_window_times is not None:
         start_time, end_time = analysis_window_times
         time_mask = (times >= start_time) & (times <= end_time)
-        erp_wave = erp_wave[time_mask]
-        times = times[time_mask]
+        erp_wave_windowed = erp_wave[time_mask]
+        times_windowed = times[time_mask]
 
-        # If the window is empty or outside the data range, we can't calculate latency.
-        if len(times) == 0:
-            if plot:
-                print("Plotting skipped: The specified analysis window is empty or out of bounds.")
-            return np.nan
-
-    # --- 2. Prepare the wave for analysis (handle component polarity) ---
-    # To analyze the component's morphology, we make its peak positive.
-    # N2ac is negative-going, so we invert it. Pd is positive-going, so we leave it.
-    if is_target:
-        analysis_wave = erp_wave * -1
+        if len(times_windowed) == 0:
+            if plot: print("Plotting skipped: Analysis window is empty.")
+            return default_return
     else:
-        analysis_wave = erp_wave
+        erp_wave_windowed = erp_wave
+        times_windowed = times
 
-    # --- 3. Min-Max Scale the wave within the window to a [0, 1] range ---
-    min_val = np.min(analysis_wave)
-    max_val = np.max(analysis_wave)
+    # --- 2. Calculate Mean Amplitude (on the windowed, original wave) ---
+    mean_amplitude = np.mean(erp_wave_windowed)
 
+    # --- 3. Prepare wave for Latency Calculation ---
+    analysis_wave = erp_wave_windowed * -1 if is_negative_component else erp_wave_windowed
+
+    # --- 4. Min-Max Scale for Latency Calculation ---
+    min_val, max_val = np.min(analysis_wave), np.max(analysis_wave)
     if max_val <= min_val:
-        if plot:
-            print("Plotting skipped: ERP wave is flat within the analysis window.")
-        return np.nan
+        if plot: print("Plotting skipped: ERP wave is flat.")
+        # We can still return mean amplitude even if latency fails
+        return {'latency': np.nan, 'amplitude_at_latency': np.nan, 'mean_amplitude': mean_amplitude}
 
     scaled_wave = (analysis_wave - min_val) / (max_val - min_val)
 
-    # --- 4. Calculate Cumulative Area and Latency on the scaled, windowed wave ---
+    # --- 5. Calculate Fractional Area Latency ---
     cum_sum = np.cumsum(scaled_wave)
     total_area = np.max(cum_sum)
-
-    if total_area <= 0:
-        if plot:
-            print("Plotting skipped: Total area under the scaled curve is zero.")
-        return np.nan
-
-    target_area = total_area * percentage
-    crossings = np.where(cum_sum >= target_area)[0]
-
     latency = np.nan
-    if len(crossings) > 0:
-        first_crossing_idx = crossings[0]
-        if first_crossing_idx == 0:
-            latency = times[first_crossing_idx]
-        else:
-            # Linear Interpolation for a more precise latency
-            idx_before = first_crossing_idx - 1
-            idx_after = first_crossing_idx
-            t_before, t_after = times[idx_before], times[idx_after]
-            val_before, val_after = cum_sum[idx_before], cum_sum[idx_after]
+    amplitude_at_latency = np.nan
 
-            if val_after == val_before:
-                latency = t_after
+    if total_area > 0:
+        target_area = total_area * percentage
+        crossings = np.where(cum_sum >= target_area)[0]
+
+        if len(crossings) > 0:
+            first_crossing_idx = crossings[0]
+            if first_crossing_idx == 0:
+                latency = times_windowed[first_crossing_idx]
             else:
+                idx_before, idx_after = first_crossing_idx - 1, first_crossing_idx
+                t_before, t_after = times_windowed[idx_before], times_windowed[idx_after]
+                val_before, val_after = cum_sum[idx_before], cum_sum[idx_after]
                 latency = np.interp(target_area, [val_before, val_after], [t_before, t_after])
 
-    # --- 5. Plotting Logic ---
+            # --- 6. Calculate Amplitude at Latency (on original windowed wave) ---
+            if not np.isnan(latency):
+                amplitude_at_latency = np.interp(latency, times_windowed, erp_wave_windowed)
+
+    # --- 7. Plotting Logic ---
     if plot:
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6)) # No sharex for different x-ranges
-        erp_type = 'N2ac' if is_target else 'Pd'
-        title = f"Fractional Area Latency ({percentage*100:.0f}%) on Scaled Waveform ({erp_type})"
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+        erp_type = 'Negative Component (e.g., N2ac)' if is_negative_component else 'Positive Component (e.g., Pd)'
+        title = f"ERP Metrics ({percentage*100:.0f}%) on {erp_type}"
         if analysis_window_times:
             title += f"\nAnalysis Window: {analysis_window_times[0]}-{analysis_window_times[1]}s"
         fig.suptitle(title, fontsize=16)
 
-        # Plot 1: Original and Scaled ERP Waveforms
+        # Plot 1: Original Waveform
         ax1.set_title("Original Waveform & Analysis Window")
-        ax1.plot(original_times_for_plot, original_erp_wave_for_plot, color='navy', label='Original Wave (µV)')
-        ax1.set_xlabel("Time (s)")
-        ax1.set_ylabel("Amplitude (µV)", color='navy')
-        ax1.tick_params(axis='y', labelcolor='navy')
-        ax1.grid(True, linestyle=':', alpha=0.6)
-        ax1.axhline(0, color='gray', linestyle='--', linewidth=1)
-        # Highlight the analysis window on the full waveform plot
+        ax1.plot(original_times_for_plot, original_erp_wave_for_plot, color='navy', label=f'Mean Amp: {mean_amplitude:.2f} µV')
+        ax1.set_xlabel("Time (s)"), ax1.set_ylabel("Amplitude (µV)")
+        ax1.grid(True, linestyle=':', alpha=0.6), ax1.axhline(0, color='gray', linestyle='--', linewidth=1)
         if analysis_window_times:
             ax1.axvspan(analysis_window_times[0], analysis_window_times[1], color='grey', alpha=0.25, label='Analysis Window')
         ax1.legend(loc='best')
 
-        # Plot 2: Cumulative Sum and Latency Calculation (on windowed data)
+        # Plot 2: Latency Calculation
         ax2.set_title("Cumulative Area & Latency (in Window)")
-        ax2.plot(times, cum_sum, color='teal', label='Cumulative Area of Scaled Wave')
+        ax2.plot(times_windowed, cum_sum, color='teal', label='Cumulative Area of Scaled Wave')
         ax2.axhline(target_area, color='red', linestyle='--', label=f'{percentage*100:.0f}% Area Threshold')
-        ax2.set_xlabel("Time (s)")
-        ax2.set_ylabel("Cumulative Area (arbitrary units)")
+        ax2.set_xlabel("Time (s)"), ax2.set_ylabel("Cumulative Area (a.u.)")
         ax2.grid(True, linestyle=':', alpha=0.6)
-
         if not np.isnan(latency):
             ax2.axvline(latency, color='purple', linestyle='-', lw=2, label=f'Latency: {latency:.3f}s')
             ax2.plot(latency, target_area, 'ro', markersize=8)
-
+            # Also show amplitude at latency on the first plot
+            ax1.plot(latency, amplitude_at_latency, 'p', color='purple', markersize=10, label=f'Amp at Latency: {amplitude_at_latency:.2f} µV')
+            ax1.legend()
         ax2.legend(loc='best')
-        plt.tight_layout(rect=[0, 0.03, 1, 0.93])
-        plt.show(block=True)
+        plt.tight_layout(rect=[0, 0.03, 1, 0.93]), plt.show(block=True)
 
-    return latency
+    return {
+        'latency': latency,
+        'amplitude_at_latency': amplitude_at_latency,
+        'mean_amplitude': mean_amplitude
+    }
 
 
 def get_contra_ipsi_diff_wave(trials_df, electrode_pairs, time_window, all_times, lateral_stim_col):
@@ -320,7 +316,8 @@ def get_contra_ipsi_diff_wave(trials_df, electrode_pairs, time_window, all_times
             contra_waves = left_stim_trials[right_el].loc[:, time_mask].values
             ipsi_waves = left_stim_trials[left_el].loc[:, time_mask].values
             # Calculate difference for each trial in this block
-            diffs = contra_waves - ipsi_waves  # Shape: (n_trials, n_times)
+            # --- FIX: Explicitly cast to float to avoid dtype issues ---
+            diffs = contra_waves.astype(np.float64) - ipsi_waves.astype(np.float64)
             all_trial_diff_waves.append(diffs)
 
         # --- Process Right Stimulus Trials ---
@@ -329,7 +326,8 @@ def get_contra_ipsi_diff_wave(trials_df, electrode_pairs, time_window, all_times
             contra_waves = right_stim_trials[left_el].loc[:, time_mask].values
             ipsi_waves = right_stim_trials[right_el].loc[:, time_mask].values
             # Calculate difference for each trial in this block
-            diffs = contra_waves - ipsi_waves # Shape: (n_trials, n_times)
+            # --- FIX: Explicitly cast to float to avoid dtype issues ---
+            diffs = contra_waves.astype(np.float64) - ipsi_waves.astype(np.float64)
             all_trial_diff_waves.append(diffs)
 
     if not all_trial_diff_waves:
@@ -380,12 +378,13 @@ def get_single_trial_contra_ipsi_wave(trial_row, electrode_pairs, time_window, a
             right_el_wave = trial_row[right_el][time_mask].values
 
             # Calculate contralateral - ipsilateral difference
+            # --- FIX: Explicitly cast to float to avoid dtype issues ---
             if lateral_stim_loc == 'left':
                 # Contralateral is Right Hemisphere, Ipsilateral is Left Hemisphere
-                diff_wave = right_el_wave - left_el_wave
+                diff_wave = right_el_wave.astype(np.float64) - left_el_wave.astype(np.float64)
             else:  # lateral_stim_loc == 'right'
                 # Contralateral is Left Hemisphere, Ipsilateral is Right Hemisphere
-                diff_wave = left_el_wave - right_el_wave
+                diff_wave = left_el_wave.astype(np.float64) - right_el_wave.astype(np.float64)
 
             diff_waves_for_pairs.append(diff_wave)
 
@@ -1203,3 +1202,134 @@ def plot_jackknife_sanity_check(
     plt.tight_layout(rect=[0, 0, 1, 0.93])
     # Use block=True to pause the script for inspection. Close the plot window to continue.
     plt.show(block=True)
+
+
+def calculate_fractional_area_latency(erp_wave, times, percentage=0.5, plot=False, is_target=False, analysis_window_times=None):
+    """
+    Calculates latency based on a specified percentage of the area under a scaled ERP wave.
+
+    This method first performs a min-max normalization on the ERP waveform to scale it
+    between 0 and 1. This emphasizes the shape of the wave relative to its peak. The latency is
+    then calculated as the time point where the cumulative area under this *scaled* wave
+    reaches the specified percentage of its total area. The calculation can be restricted
+    to a specific time window.
+
+    Args:
+        erp_wave (np.ndarray): The ERP waveform (can be positive or negative-going).
+        times (np.ndarray): The time points corresponding to the erp_wave.
+        percentage (float, optional): The percentage of the total area to use as a threshold.
+                                      Defaults to 0.5 (for 50%).
+        plot (bool, optional): If True, displays a plot illustrating the calculation. Defaults to False.
+        is_target (bool): If True, the wave is assumed to be negative-going (e.g., N2ac) and is
+                          inverted for the calculation. Defaults to False.
+        analysis_window_times (tuple, optional): A (start, end) tuple in seconds to specify the
+                                                 time window for the latency calculation.
+                                                 If None, the entire waveform is used. Defaults to None.
+
+    Returns:
+        float: The calculated latency in seconds, or np.nan if the latency cannot be determined.
+    """
+    # Keep the full, original wave for plotting context
+    original_erp_wave_for_plot = erp_wave.copy()
+    original_times_for_plot = times.copy()
+
+    # --- 1. Apply Analysis Time Window if provided ---
+    if analysis_window_times is not None:
+        start_time, end_time = analysis_window_times
+        time_mask = (times >= start_time) & (times <= end_time)
+        erp_wave = erp_wave[time_mask]
+        times = times[time_mask]
+
+        # If the window is empty or outside the data range, we can't calculate latency.
+        if len(times) == 0:
+            if plot:
+                print("Plotting skipped: The specified analysis window is empty or out of bounds.")
+            return np.nan
+
+    # --- 2. Prepare the wave for analysis (handle component polarity) ---
+    # To analyze the component's morphology, we make its peak positive.
+    # N2ac is negative-going, so we invert it. Pd is positive-going, so we leave it.
+    if is_target:
+        analysis_wave = erp_wave * -1
+    else:
+        analysis_wave = erp_wave
+
+    # --- 3. Min-Max Scale the wave within the window to a [0, 1] range ---
+    min_val = np.min(analysis_wave)
+    max_val = np.max(analysis_wave)
+
+    if max_val <= min_val:
+        if plot:
+            print("Plotting skipped: ERP wave is flat within the analysis window.")
+        return np.nan
+
+    scaled_wave = (analysis_wave - min_val) / (max_val - min_val)
+
+    # --- 4. Calculate Cumulative Area and Latency on the scaled, windowed wave ---
+    cum_sum = np.cumsum(scaled_wave)
+    total_area = np.max(cum_sum)
+
+    if total_area <= 0:
+        if plot:
+            print("Plotting skipped: Total area under the scaled curve is zero.")
+        return np.nan
+
+    target_area = total_area * percentage
+    crossings = np.where(cum_sum >= target_area)[0]
+
+    latency = np.nan
+    if len(crossings) > 0:
+        first_crossing_idx = crossings[0]
+        if first_crossing_idx == 0:
+            latency = times[first_crossing_idx]
+        else:
+            # Linear Interpolation for a more precise latency
+            idx_before = first_crossing_idx - 1
+            idx_after = first_crossing_idx
+            t_before, t_after = times[idx_before], times[idx_after]
+            val_before, val_after = cum_sum[idx_before], cum_sum[idx_after]
+
+            if val_after == val_before:
+                latency = t_after
+            else:
+                latency = np.interp(target_area, [val_before, val_after], [t_before, t_after])
+
+    # --- 5. Plotting Logic ---
+    if plot:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6)) # No sharex for different x-ranges
+        erp_type = 'N2ac' if is_target else 'Pd'
+        title = f"Fractional Area Latency ({percentage*100:.0f}%) on Scaled Waveform ({erp_type})"
+        if analysis_window_times:
+            title += f"\nAnalysis Window: {analysis_window_times[0]}-{analysis_window_times[1]}s"
+        fig.suptitle(title, fontsize=16)
+
+        # Plot 1: Original and Scaled ERP Waveforms
+        ax1.set_title("Original Waveform & Analysis Window")
+        ax1.plot(original_times_for_plot, original_erp_wave_for_plot, color='navy', label='Original Wave (µV)')
+        ax1.set_xlabel("Time (s)")
+        ax1.set_ylabel("Amplitude (µV)", color='navy')
+        ax1.tick_params(axis='y', labelcolor='navy')
+        ax1.grid(True, linestyle=':', alpha=0.6)
+        ax1.axhline(0, color='gray', linestyle='--', linewidth=1)
+        # Highlight the analysis window on the full waveform plot
+        if analysis_window_times:
+            ax1.axvspan(analysis_window_times[0], analysis_window_times[1], color='grey', alpha=0.25, label='Analysis Window')
+        ax1.legend(loc='best')
+
+        # Plot 2: Cumulative Sum and Latency Calculation (on windowed data)
+        ax2.set_title("Cumulative Area & Latency (in Window)")
+        ax2.plot(times, cum_sum, color='teal', label='Cumulative Area of Scaled Wave')
+        ax2.axhline(target_area, color='red', linestyle='--', label=f'{percentage*100:.0f}% Area Threshold')
+        ax2.set_xlabel("Time (s)")
+        ax2.set_ylabel("Cumulative Area (arbitrary units)")
+        ax2.grid(True, linestyle=':', alpha=0.6)
+
+        if not np.isnan(latency):
+            ax2.axvline(latency, color='purple', linestyle='-', lw=2, label=f'Latency: {latency:.3f}s')
+            ax2.plot(latency, target_area, 'ro', markersize=8)
+
+        ax2.legend(loc='best')
+        plt.tight_layout(rect=[0, 0.03, 1, 0.93])
+        plt.show(block=True)
+
+    return latency
