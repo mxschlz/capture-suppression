@@ -1496,3 +1496,68 @@ for priming_value, priming_name in priming_map.items():
             print("> We cannot conclude there is a monotonic trend across blocks for this condition.")
     except Exception as e:
         print(f"Could not run Page's trend test for '{priming_name}'. Error: {e}")
+
+# ===================================================================
+#       ANALYSIS: CORRELATION OF PRIMING EFFECT STRENGTHS
+# ===================================================================
+print("\n--- Correlating Positive vs. Negative Priming Effect Strengths ---")
+print("Objective: Test if subjects with a strong negative priming effect also show a strong positive priming effect.")
+
+# --- Step 1: Get subject-level mean towardness for each priming condition ---
+# We use 'target_towardness' as the metric for the priming effect.
+subject_means_df = analysis_df.groupby(["subject_id", "Priming"])["target_towardness"].mean().reset_index()
+
+# --- Step 2: Pivot the data to a wide format ---
+# This creates a DataFrame where each row is a subject and columns are the priming conditions.
+# This structure is essential for calculating the per-subject effect.
+priming_effects_df = subject_means_df.pivot(
+    index='subject_id',
+    columns='Priming',
+    values='target_towardness'
+).rename(columns={-1: 'negative', 0: 'no_priming', 1: 'positive'})
+
+# Drop any subjects who might be missing data for one of the conditions
+priming_effects_df.dropna(inplace=True)
+print(f"Analyzing priming effects for {len(priming_effects_df)} subjects with complete data.")
+
+# --- Step 3: Calculate the priming effect sizes for each subject ---
+# The "effect" is the change in performance relative to the 'no priming' baseline.
+# A positive value for both effects indicates the expected behavior.
+# Positive Effect: Performance gain from positive priming.
+# Negative Effect: Performance cost from negative priming (calculated as a positive value).
+priming_effects_df['positive_effect'] = priming_effects_df['positive'] - priming_effects_df['no_priming']
+priming_effects_df['negative_effect'] = priming_effects_df['negative'] - priming_effects_df['no_priming']
+
+# --- Step 4: Visualize the correlation and calculate statistics ---
+plt.figure(figsize=(10, 8))
+
+# Create the regression plot
+ax = sns.regplot(
+    data=priming_effects_df,
+    x='negative_effect',
+    y='positive_effect',
+    scatter_kws={'alpha': 0.6, 's': 50}, # Make points slightly transparent
+    line_kws={'color': 'red', 'linewidth': 2}
+)
+
+# Calculate Spearman's rank correlation, which is robust to outliers
+from scipy.stats import spearmanr
+rho, p_value = spearmanr(priming_effects_df['negative_effect'], priming_effects_df['positive_effect'])
+
+# Add annotations to the plot
+ax.set_title('Correlation Between Positive and Negative Priming Effects', fontsize=16, fontweight='bold')
+# Using newlines in the labels is still good practice
+ax.set_xlabel('Negative Priming Effect\n(Negative - No Priming)', fontsize=12)
+ax.set_ylabel('Positive Priming Effect\n(Positive - No Priming)', fontsize=12)
+sns.despine()
+
+# Add a text box with the correlation results
+stats_text = f"Spearman's ρ = {rho:.3f}\np-value = {p_value:.3f}"
+ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, fontsize=12,
+        verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+# FIX: Use the 'rect' parameter in tight_layout to manually reserve space for the
+# title and axis labels, preventing them from being "crushed" out of view.
+# The format is [left, bottom, right, top] in figure-normalized coordinates.
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+plt.show()
