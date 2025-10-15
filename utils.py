@@ -282,14 +282,16 @@ def calculate_fractional_area_latency(erp_wave, times, percentage=0.5, plot=Fals
 def get_contra_ipsi_diff_wave(trials_df, electrode_pairs, time_window, all_times, lateral_stim_col):
     """
     Calculates the grand-average contralateral-ipsilateral difference wave from a given set of trials.
-    This is NOT a jackknife procedure. It averages all trials provided for a condition.
+
+    This robust version calculates the difference wave for each trial first, then averages
+    all trial-level difference waves together. This is the "average of differences" method.
 
     Args:
         trials_df (pd.DataFrame): DataFrame containing ERP data for a specific condition.
         electrode_pairs (list): List of (left_hemi_el, right_hemi_el) tuples.
         time_window (tuple): The (start, end) time in seconds.
         all_times (np.ndarray): Array of all time points in the epoch.
-        lateral_stim_col (str): Column name ('TargetLoc' or 'SingletonLoc') indicating stimulus location.
+        lateral_stim_col (str): Column name indicating stimulus location ('TargetLoc' or 'SingletonLoc').
 
     Returns:
         tuple: (The difference wave, The corresponding time points) or (None, None) if no data.
@@ -300,34 +302,47 @@ def get_contra_ipsi_diff_wave(trials_df, electrode_pairs, time_window, all_times
     time_mask = (all_times >= time_window[0]) & (all_times <= time_window[1])
     window_times = all_times[time_mask]
 
-    all_contra_activity = []
-    all_ipsi_activity = []
+    # If the time window is empty, we can't proceed.
+    if not np.any(time_mask):
+        return None, None
+
+    all_trial_diff_waves = []
 
     # Separate trials by stimulus location
     left_stim_trials = trials_df[trials_df[lateral_stim_col] == 'left']
     right_stim_trials = trials_df[trials_df[lateral_stim_col] == 'right']
 
+    # This outer loop pools the results across multiple electrode pairs.
     for left_el, right_el in electrode_pairs:
-        # For left-stimulus trials, contralateral is RIGHT hemisphere
+        # --- Process Left Stimulus Trials ---
         if not left_stim_trials.empty:
-            all_contra_activity.append(left_stim_trials[right_el].loc[:, time_mask].values)
-            all_ipsi_activity.append(left_stim_trials[left_el].loc[:, time_mask].values)
+            # Contralateral is Right Hemisphere (right_el), Ipsilateral is Left Hemisphere (left_el)
+            contra_waves = left_stim_trials[right_el].loc[:, time_mask].values
+            ipsi_waves = left_stim_trials[left_el].loc[:, time_mask].values
+            # Calculate difference for each trial in this block
+            diffs = contra_waves - ipsi_waves  # Shape: (n_trials, n_times)
+            all_trial_diff_waves.append(diffs)
 
-        # For right-stimulus trials, contralateral is LEFT hemisphere
+        # --- Process Right Stimulus Trials ---
         if not right_stim_trials.empty:
-            all_contra_activity.append(right_stim_trials[left_el].loc[:, time_mask].values)
-            all_ipsi_activity.append(right_stim_trials[right_el].loc[:, time_mask].values)
+            # Contralateral is Left Hemisphere (left_el), Ipsilateral is Right Hemisphere (right_el)
+            contra_waves = right_stim_trials[left_el].loc[:, time_mask].values
+            ipsi_waves = right_stim_trials[right_el].loc[:, time_mask].values
+            # Calculate difference for each trial in this block
+            diffs = contra_waves - ipsi_waves # Shape: (n_trials, n_times)
+            all_trial_diff_waves.append(diffs)
 
-    if not all_contra_activity:  # If no trials were found for any condition
+    if not all_trial_diff_waves:
         return None, None
 
-    # Concatenate across electrode pairs and average across all trials
-    # This pools all contra trials and all ipsi trials together
-    mean_contra_wave = np.mean(np.concatenate(all_contra_activity, axis=0), axis=0)
-    mean_ipsi_wave = np.mean(np.concatenate(all_ipsi_activity, axis=0), axis=0)
+    # Concatenate all the difference waves from all conditions and pairs into one big array.
+    # The shape will be (total_trials * num_pairs, n_timepoints).
+    final_diffs_array = np.concatenate(all_trial_diff_waves, axis=0)
 
-    diff_wave = mean_contra_wave - mean_ipsi_wave
-    return diff_wave, window_times
+    # Average across all the collected trial-level difference waves.
+    mean_diff_wave = np.mean(final_diffs_array, axis=0)
+
+    return mean_diff_wave, window_times
 
 
 def get_single_trial_contra_ipsi_wave(trial_row, electrode_pairs, time_window, all_times, lateral_stim_loc):
@@ -1097,3 +1112,94 @@ def get_distance_between_digits(row, locations_map):
     # Calculate Euclidean distance
     distance = np.linalg.norm(target_vec - distractor_vec)
     return distance
+
+def plot_jackknife_sanity_check(
+    single_trial_wave, single_trial_times,
+    jackknife_wave, jackknife_times,
+    jackknife_df,
+    trial_info,
+    component_name,
+    electrode_pair,
+    time_window,
+    all_times,
+    lateral_stim_col
+):
+    """
+    Generates a detailed plot to visually inspect and validate the jackknife procedure.
+
+    This plot helps diagnose issues by showing:
+    1. All the individual trial waves that constitute the jackknife average.
+    2. A direct comparison between the noisy single-trial wave (left out) and the
+       (theoretically) smoother jackknife average wave.
+
+    Args:
+        single_trial_wave (np.ndarray): The difference wave for the single trial that was left out.
+        single_trial_times (np.ndarray): Time points for the single trial wave.
+        jackknife_wave (np.ndarray): The averaged difference wave from the jackknife sample.
+        jackknife_times (np.ndarray): Time points for the jackknife wave.
+        jackknife_df (pd.DataFrame): The DataFrame containing the N-1 trials of the jackknife sample.
+        trial_info (dict): Dictionary with info like subject_id, trial_nr for titles.
+        component_name (str): Name of the ERP component (e.g., 'N2ac').
+        electrode_pair (tuple): The (left, right) electrode pair being analyzed.
+        time_window (tuple): The (start, end) time for the analysis.
+        all_times (np.ndarray): The full time vector for the epoch.
+        lateral_stim_col (str): The column name for stimulus location.
+    """
+    if jackknife_wave is None or single_trial_wave is None:
+        print("Skipping sanity plot due to missing wave data.")
+        return
+
+    fig, axes = plt.subplots(1, 2, figsize=(18, 7), sharey=True)
+    fig.suptitle(
+        f"Jackknife Sanity Check: {component_name} on {electrode_pair[0]}-{electrode_pair[1]}\n"
+        f"Subject: {trial_info.get('subject_id', 'N/A')}, "
+        f"Left-Out Trial Index: {trial_info.get('trial_idx', 'N/A')}",
+        fontsize=16, fontweight='bold'
+    )
+
+    # --- Plot 1: All waves in the jackknife sample ---
+    ax1 = axes[0]
+    num_jk_trials = len(jackknife_df)
+    ax1.set_title(f"1. Waves in Jackknife Sample (N={num_jk_trials})", fontsize=12)
+
+    # Plot each individual trial wave within the jackknife sample
+    for _, jk_trial_row in jackknife_df.iterrows():
+        wave, times = get_single_trial_contra_ipsi_wave(
+            trial_row=jk_trial_row,
+            lateral_stim_loc=jk_trial_row[lateral_stim_col],
+            electrode_pairs=[electrode_pair],
+            time_window=time_window,
+            all_times=all_times
+        )
+        if wave is not None:
+            ax1.plot(times, wave, color='grey', alpha=0.4, lw=1.0)
+
+    # Overlay the jackknife average
+    ax1.plot(jackknife_times, jackknife_wave, color='black', lw=2.5, label=f'Jackknife Average (of N={num_jk_trials})')
+
+    ax1.axhline(0, color='black', linestyle='--', lw=0.8)
+    ax1.axvline(0, color='black', linestyle=':', lw=0.8)
+    ax1.set_xlabel("Time (s)")
+    ax1.set_ylabel("Amplitude (µV)")
+    ax1.grid(True, linestyle=':', alpha=0.6)
+    ax1.legend()
+
+    # --- Plot 2: Direct Comparison ---
+    ax2 = axes[1]
+    ax2.set_title("2. Comparison: Single Trial vs. Jackknife Average", fontsize=12)
+
+    # Plot the single trial that was left out
+    ax2.plot(single_trial_times, single_trial_wave, color='cornflowerblue', lw=1.5, label='Single Trial (Left Out)')
+
+    # Plot the jackknife average again for comparison
+    ax2.plot(jackknife_times, jackknife_wave, color='red', lw=2.5, label=f'Jackknife Average (of N={num_jk_trials})')
+
+    ax2.axhline(0, color='black', linestyle='--', lw=0.8)
+    ax2.axvline(0, color='black', linestyle=':', lw=0.8)
+    ax2.set_xlabel("Time (s)")
+    ax2.grid(True, linestyle=':', alpha=0.6)
+    ax2.legend()
+
+    plt.tight_layout(rect=[0, 0, 1, 0.93])
+    # Use block=True to pause the script for inspection. Close the plot window to continue.
+    plt.show(block=True)
