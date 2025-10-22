@@ -27,6 +27,8 @@ OUTLIER_THRESHOLD = 2
 WINDOW_SIZE = 31
 RESAMP_FREQ = 100
 SUB_BLOCKS_PER_BLOCK = 2
+TRAJECTORY_BOUNDARY_DVA = 2
+
 
 # define data root dir
 data_root = f"{get_data_path()}derivatives/preprocessing/"
@@ -367,7 +369,6 @@ print("\n--- Filtering out noisy trajectories that go beyond the response box --
 # --- Step 1: Define the boundary ---
 # The numpad corners are at (+/-1, +/-1), so the max distance from center is sqrt(2) ~= 1.41 dva.
 # We'll set a generous boundary to only catch truly erratic movements.
-TRAJECTORY_BOUNDARY_DVA = 2
 print(f"Defining boundary for valid trajectories at {TRAJECTORY_BOUNDARY_DVA} dva from the center.")
 
 # --- Step 2: Identify trials that exceed the boundary ---
