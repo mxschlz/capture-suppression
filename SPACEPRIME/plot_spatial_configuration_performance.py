@@ -2,7 +2,6 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import glob
-from matplotlib.patches import Rectangle
 import os
 import numpy as np
 from SPACEPRIME import get_data_path
@@ -70,6 +69,7 @@ merge_cols = [SUBJECT_ID_COL, BLOCK_COL, 'trial_nr']
 # It's good practice to ensure the key columns are the same data type before merging
 # to prevent silent failures.
 target_towardness[SUBJECT_ID_COL] = target_towardness[SUBJECT_ID_COL].astype(int).astype(str)
+target_towardness = target_towardness[["subject_id", "block", "trial_nr", "target_towardness"]]
 df[SUBJECT_ID_COL] = df[SUBJECT_ID_COL].astype(int).astype(str)
 
 df_final = pd.merge(
@@ -85,7 +85,79 @@ df_mean = df_final.groupby(["subject_id", "TargetLoc", "SingletonLoc"])[["target
 # Create a new column to distinguish between distractor present and absent trials
 df_mean['distractor_presence'] = np.where(df_mean[DISTRACTOR_COL] == 'absent', 'absent', 'present')
 
+# --- 3a. Overall ANOVA: Target Location x Distractor Presence ---
+print("\n--- 3x2 Repeated Measures ANOVA (Target Location x Distractor Presence) ---")
+# This ANOVA tests the main effects of target location and distractor presence,
+# and their interaction.
+aov_presence = pg.rm_anova(
+    data=df_mean,
+    dv='target_towardness',
+    within=['TargetLoc', 'distractor_presence'],
+    subject=SUBJECT_ID_COL,
+    detailed=True,
+    effsize="np2"  # Generalized eta-squared is a good effect size for RM designs
+)
+print("ANOVA Results (Target Location x Distractor Presence):")
+print(aov_presence)
 
+# --- 3a-ii. Post-hoc tests for the 3x2 ANOVA ---
+print("\n--- Post-hoc Tests for 3x2 ANOVA ---")
+
+# Check if the interaction is significant, as this guides interpretation
+interaction_p_val = aov_presence.loc[aov_presence['Source'] == 'TargetLoc * distractor_presence', 'p-unc'].iloc[0]
+
+if interaction_p_val < 0.05:
+    print("NOTE: The interaction is significant (p < .05). Main effects should be interpreted with caution.")
+    print("The most informative follow-up tests are for the *simple effects* (e.g., comparing target locations")
+    print("separately for distractor-present and distractor-absent conditions), which are already performed in section 3c.\n")
+
+# --- Post-hocs for Main Effects ---
+# These are run for completeness, but be mindful of any significant interaction.
+
+# Post-hoc for the main effect of TargetLoc
+print("Post-hoc for Main Effect of Target Location (Bonferroni-corrected):")
+posthoc_targetloc = pg.pairwise_tests(
+    data=df_mean,
+    dv='target_towardness',
+    within='TargetLoc',
+    subject=SUBJECT_ID_COL,
+    padjust='bonf',
+    effsize='cohen'
+)
+# Display a cleaner version of the results table
+print(posthoc_targetloc[['A', 'B', 'T', 'p-corr', 'cohen']])
+
+
+# Post-hoc for the main effect of distractor_presence
+# Note: Since this factor only has 2 levels, this t-test is equivalent to the
+# F-test in the ANOVA table and the t-test you run for Panel E.
+print("\nPost-hoc for Main Effect of Distractor Presence:")
+posthoc_presence = pg.pairwise_tests(
+    data=df_mean,
+    dv='target_towardness',
+    within='distractor_presence',
+    subject=SUBJECT_ID_COL,
+    effsize='cohen'
+)
+# Display a cleaner version of the results table
+print(posthoc_presence[['A', 'B', 'T', 'p-unc', 'cohen']])
+
+# --- 3b. Focused ANOVA: Target Location x Distractor Location (Present Trials Only) ---
+print("\n--- 3x3 Repeated Measures ANOVA (Target Location x Distractor Location - Present Trials Only) ---")
+# This ANOVA focuses only on trials where a distractor was present to see how
+# the specific locations of the target and distractor interact.
+df_present_only = df_mean[df_mean['distractor_presence'] == 'present'].copy()
+
+aov_locations = pg.rm_anova(
+    data=df_present_only,
+    dv='target_towardness',
+    within=['TargetLoc', 'SingletonLoc'],
+    subject=SUBJECT_ID_COL,
+    detailed=True,
+    effsize="np2"
+)
+print("ANOVA Results (Target Location x Distractor Location on Present Trials):")
+print(aov_locations)
 
 # --- 3. Statistical Analysis ---
 # Helper function to convert p-values to significance stars
@@ -129,6 +201,117 @@ stats_sloc_df = df_mean.groupby(TARGET_COL).apply(
 
 print("\n--- Pairwise T-test Results (Singleton Location) ---")
 print(stats_sloc_df)
+
+# --- 4. Reliability Analysis (Cronbach's Alpha over Blocks) ---
+print("\n--- 4. Reliability Analysis (Cronbach's Alpha over Blocks) ---")
+print("Assessing the internal consistency reliability of metrics across experimental blocks.")
+
+# Ensure the columns used for reliability analysis are numeric
+# This step is crucial to handle any non-numeric values that might have
+# crept into these columns during data loading or earlier processing.
+for col in ['target_towardness', 'rt', 'select_target']:
+    if col in df_final.columns:
+        df_final[col] = pd.to_numeric(df_final[col], errors='coerce')
+
+# 1. Aggregate data by subject and block for each metric
+# We need to go back to df_final as df_mean has already averaged over blocks and conditions.
+df_block_means = df_final.groupby([SUBJECT_ID_COL, BLOCK_COL])[
+    ['target_towardness', 'rt', 'select_target']
+].mean().reset_index()
+
+# 2. Pivot the aggregated data for each metric
+# This creates a wide format where rows are subjects and columns are blocks.
+
+# Target Towardness
+df_tt_wide = df_block_means.pivot_table(
+    index=SUBJECT_ID_COL,
+    columns=BLOCK_COL,
+    values='target_towardness'
+)
+
+# Reaction Time
+df_rt_wide = df_block_means.pivot_table(
+    index=SUBJECT_ID_COL,
+    columns=BLOCK_COL,
+    values='rt'
+)
+
+# Select Target (Accuracy)
+df_acc_wide = df_block_means.pivot_table(
+    index=SUBJECT_ID_COL,
+    columns=BLOCK_COL,
+    values='select_target'
+)
+
+
+# 3. Calculate Cronbach's Alpha for each metric
+# pingouin.cronbach_alpha handles NaN values by default (drops subjects with missing block data).
+
+# Cronbach's Alpha for Target Towardness
+alpha_tt = pg.cronbach_alpha(data=df_tt_wide)
+print(f"\nCronbach's Alpha for 'target_towardness':")
+print(f"  Alpha: {alpha_tt[0]:.3f} (95% CI: {alpha_tt[1][0]:.3f}, {alpha_tt[1][1]:.3f})")
+
+# Cronbach's Alpha for Reaction Time
+alpha_rt = pg.cronbach_alpha(data=df_rt_wide)
+print(f"\nCronbach's Alpha for 'rt' (Reaction Time):")
+print(f"  Alpha: {alpha_rt[0]:.3f} (95% CI: {alpha_rt[1][0]:.3f}, {alpha_rt[1][1]:.3f})")
+
+# Cronbach's Alpha for Select Target (Accuracy)
+alpha_acc = pg.cronbach_alpha(data=df_acc_wide)
+print(f"\nCronbach's Alpha for 'select_target' (Accuracy):")
+print(f"  Alpha: {alpha_acc[0]:.3f} (95% CI: {alpha_acc[1][0]:.3f}, {alpha_acc[1][1]:.3f})")
+
+# --- 4b. Reliability of Priming Effects (Cronbach's Alpha) ---
+print("\n--- 4b. Reliability of Priming Effects (Difference Scores) ---")
+print("Assessing the internal consistency of negative and positive priming effects across blocks.")
+
+# 1. Aggregate data by subject, block, and priming condition
+df_priming_block_means = df_final.groupby([SUBJECT_ID_COL, BLOCK_COL, PRIMING_COL])[
+    ['target_towardness', 'rt', 'select_target']
+].mean()  # No reset_index() needed, pivot_table works well with multi-index
+
+# 2. Pivot to get priming conditions as columns
+df_priming_pivot = df_priming_block_means.unstack(level=PRIMING_COL)
+
+# 3. Calculate difference scores (priming effects) for each metric
+metrics_to_test = ['target_towardness', 'rt', 'select_target']
+
+for metric in metrics_to_test:
+    # Extract columns for the current metric, handling potential missing data
+    no_p_col = (metric, 'no-p')
+    np_col = (metric, 'np')
+    pp_col = (metric, 'pp')
+
+    # Calculate difference scores. If a priming condition is missing for a subject/block, the result will be NaN.
+    df_priming_pivot[(f'{metric}_np_effect', '')] = df_priming_pivot.get(np_col, np.nan) - df_priming_pivot.get(
+        no_p_col, np.nan)
+    df_priming_pivot[(f'{metric}_pp_effect', '')] = df_priming_pivot.get(pp_col, np.nan) - df_priming_pivot.get(
+        no_p_col, np.nan)
+
+    # --- Negative Priming Effect Reliability ---
+    # Create a wide-format DataFrame for the NP effect
+    df_np_effect_wide = df_priming_pivot[(f'{metric}_np_effect', '')].unstack(level=BLOCK_COL)
+
+    # Calculate and print Cronbach's Alpha
+    alpha_np = pg.cronbach_alpha(data=df_np_effect_wide)
+    print(f"\nCronbach's Alpha for '{metric}' NP effect (np - no-p):")
+    if alpha_np[0] is not None:
+        print(f"  Alpha: {alpha_np[0]:.3f} (95% CI: {alpha_np[1][0]:.3f}, {alpha_np[1][1]:.3f})")
+    else:
+        print("  Could not be computed (likely insufficient data).")
+
+    # --- Positive Priming Effect Reliability ---
+    # Create a wide-format DataFrame for the PP effect
+    df_pp_effect_wide = df_priming_pivot[(f'{metric}_pp_effect', '')].unstack(level=BLOCK_COL)
+
+    # Calculate and print Cronbach's Alpha
+    alpha_pp = pg.cronbach_alpha(data=df_pp_effect_wide)
+    print(f"Cronbach's Alpha for '{metric}' PP effect (pp - no-p):")
+    if alpha_pp[0] is not None:
+        print(f"  Alpha: {alpha_pp[0]:.3f} (95% CI: {alpha_pp[1][0]:.3f}, {alpha_pp[1][1]:.3f})")
+    else:
+        print("  Could not be computed (likely insufficient data).")
 
 # --- 4. Combined Plotting: Mosaic Layout ---
 # Create a figure using subplot_mosaic for a more intuitive layout.

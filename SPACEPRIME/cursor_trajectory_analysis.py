@@ -486,8 +486,7 @@ metrics_to_compare = {
     'Response Time (s)': 'rt',
     'Accuracy (%)': 'select_target',
     'Towardness (Target) (dva)': 'target_towardness',
-    'Towardness (Distractor) (dva)': 'distractor_towardness',
-    'Towardness (Target-Distractor) (dva)': 'target_distractor_towardness_diff'
+    'Towardness (Distractor) (dva)': 'distractor_towardness'
 }
 
 # Prepare a list to store the results
@@ -752,7 +751,9 @@ plt.tight_layout()
 plt.show()
 
 # save target towardness
-towardness_df = analysis_df[['subject_id', 'block', 'trial_nr', 'target_towardness']]
+analysis_df["SingletonPresent"] = analysis_df["SingletonPresent"].astype(bool)
+towardness_df = analysis_df[['subject_id', 'block', 'trial_nr', 'target_towardness', "rt", "select_target",
+                             "PrimingCondition", "SingletonPresent"]]
 output_path = f'{SPACEPRIME.get_data_path()}concatenated\\target_towardness.csv'
 towardness_df.to_csv(output_path, index=True)
 

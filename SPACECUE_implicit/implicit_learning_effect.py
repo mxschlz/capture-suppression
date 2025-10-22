@@ -11,8 +11,9 @@ import numpy as np
 FILTER_PHASE = 2
 OUTLIER_THRESH = 2
 
-subjects = sorted("/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACECUE_implicit/derivatives/preprocessing/sci-99/beh/")
-df = pd.concat([pd.read_csv(f"/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACECUE_implicit/derivatives/preprocessing/sci-99/beh/{file}") for file in os.listdir("/home/max/Insync/schulz.max5@gmail.com/GoogleDrive/PhD/data/SPACECUE_implicit/derivatives/preprocessing/sci-99/beh/")])
+data_path = SPACECUE_implicit.get_data_path()
+subjects = sorted(f"{data_path}/derivatives/preprocessing/sci-99/beh/")
+df = pd.concat([pd.read_csv(f"{data_path}/derivatives/preprocessing/sci-99/beh/{file}") for file in os.listdir(f"{data_path}/derivatives/preprocessing/sci-99/beh/")])
 
 #df = df.query(f"phase!={FILTER_PHASE}")
 df["select_target"] = df["select_target"].astype(float)
