@@ -13,7 +13,7 @@ plt.ion()
 
 # --- 1. Data Loading & Preprocessing ---
 OUTLIER_RT_THRESHOLD = 2.0
-FILTER_PHASE = None
+FILTER_PHASE = 2
 
 # --- 2. Column Names ---
 SUBJECT_ID_COL = 'subject_id'
