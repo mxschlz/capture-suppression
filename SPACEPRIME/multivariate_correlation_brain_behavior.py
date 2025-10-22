@@ -3,17 +3,11 @@ import numpy as np
 import SPACEPRIME
 import pandas as pd
 import seaborn as sns
-from stats import remove_outliers  # Assuming this is your custom outlier removal function
 from scipy import stats
-from utils import plot_erp_sanity_check
 
 plt.ion()
 
 # --- Script Configuration Parameters ---
-
-# --- 1. Data Loading & Preprocessing ---
-OUTLIER_RT_THRESHOLD = 2.0
-FILTER_PHASE = 2
 
 # --- 2. Column Names ---
 SUBJECT_ID_COL = 'subject_id'
@@ -25,181 +19,28 @@ PHASE_COL = 'phase'
 ACCURACY_COL = 'select_target'
 ACCURACY_INT_COL = 'select_target_int'
 
-# --- Mappings and Reference Levels ---
-TARGET_LOC_MAP = {1: "left", 2: "mid", 3: "right"}
-DISTRACTOR_LOC_MAP = {0: "absent", 1: "left", 2: "mid", 3: "right"}
-PRIMING_MAP = {-1: "np", 0: "no-p", 1: "pp"}
-TARGET_REF_STR = TARGET_LOC_MAP.get(2)
-DISTRACTOR_REF_STR = DISTRACTOR_LOC_MAP.get(2)
+df = SPACEPRIME.load_concatenated_csv("target_towardness.csv", index_col=0)
+n2ac_df = SPACEPRIME.load_concatenated_csv("spaceprime_n2ac_subject_averages.csv")[["subject_id", "st_latency_50", "st_mean_amp_50", "Priming"]]
+pd_df = SPACEPRIME.load_concatenated_csv("spaceprime_pd_subject_averages.csv")[["subject_id", "st_latency_50", "st_mean_amp_50", "Priming"]]
 
-# --- 3. ERP Component Definitions ---
-BASELINE_WINDOW = (-0.2, 0.0)
+# Map priming values
+PRIMING_MAP = {"np": "negative", "no-p": "no", "pp": "positive"}
+n2ac_df["Priming"] = n2ac_df["Priming"].map(PRIMING_MAP)
+pd_df["Priming"] = pd_df["Priming"].map(PRIMING_MAP)
+
+# Average over priming conditions
+n2ac_df = n2ac_df.groupby(SUBJECT_ID_COL)[["st_latency_50", "st_mean_amp_50"]].mean().reset_index()
+pd_df = pd_df.groupby(SUBJECT_ID_COL)[["st_latency_50", "st_mean_amp_50"]].mean().reset_index()
 
 # Flanker task configuration
 FLANKER_EXPERIMENT_NAME = 'flanker_data.csv'
 FLANKER_CONGRUENCY_COL = 'congruency'
 FLANKER_ACC_COL = 'correct'
 
-# Pd component definition (Distractor-locked)
-PD_TIME_WINDOW = (0.2, 0.4)
-
-### MERGED ### - N2ac component definition (Target-locked)
-N2AC_TIME_WINDOW = (0.2, 0.4)
-PD_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4")]
-N2AC_ELECTRODES = [("FC3", "FC4"), ("FC5", "FC6"), ("C3", "C4")]
-
-# --- Main Script ---
-print("Loading and concatenating epochs...")
-epochs = SPACEPRIME.load_concatenated_epochs("spaceprime_desc-csd")
-df = epochs.metadata.copy().reset_index(drop=True)
-print(f"Original number of trials: {len(df)}")
-
-# --- Preprocessing Steps ---
-if PHASE_COL in df.columns and FILTER_PHASE is not None:
-    df = df[df[PHASE_COL] != FILTER_PHASE]
-if REACTION_TIME_COL in df.columns:
-    df = remove_outliers(df, column_name=REACTION_TIME_COL, threshold=OUTLIER_RT_THRESHOLD)
-# Map categorical variables to strings
-df[TARGET_COL] = pd.to_numeric(df[TARGET_COL], errors='coerce').map(TARGET_LOC_MAP)
-df[DISTRACTOR_COL] = pd.to_numeric(df[DISTRACTOR_COL], errors='coerce').map(DISTRACTOR_LOC_MAP)
-df[SUBJECT_ID_COL] = df[SUBJECT_ID_COL].astype(str)
-
-print("Preprocessing and column mapping complete.")
-
-# --- Filter for Pd-eliciting trials (lateral distractor, central target) ---
-print("\nFiltering for Pd trials...")
-is_distractor_lateral = df[DISTRACTOR_COL].isin(['left', 'right'])
-is_target_central = df[TARGET_COL] == TARGET_REF_STR
-pd_trials_meta = df[is_distractor_lateral & is_target_central].copy()
-print(f"Found {len(pd_trials_meta)} trials for Pd analysis.")
-
-# --- Calculate Pd "Pure Area" ---
-print("Calculating Pd component (Contra-minus-Ipsi)...")
-pd_epochs = epochs[pd_trials_meta.index]
-contra_chans_left_dist = [p[1] for p in PD_ELECTRODES]
-ipsi_chans_left_dist = [p[0] for p in PD_ELECTRODES]
-contra_chans_right_dist = [p[0] for p in PD_ELECTRODES]
-ipsi_chans_right_dist = [p[1] for p in PD_ELECTRODES]
-all_pd_chans = sorted(list(set(sum(PD_ELECTRODES, ()))))
-pd_data = pd_epochs.get_data(picks=all_pd_chans)  # in µV
-ch_map_pd = {ch_name: i for i, ch_name in enumerate(pd_epochs.copy().pick(all_pd_chans).ch_names)}
-contra_idx_left_pd = [ch_map_pd[ch] for ch in contra_chans_left_dist]
-ipsi_idx_left_pd = [ch_map_pd[ch] for ch in ipsi_chans_left_dist]
-contra_idx_right_pd = [ch_map_pd[ch] for ch in contra_chans_right_dist]
-ipsi_idx_right_pd = [ch_map_pd[ch] for ch in ipsi_chans_right_dist]
-is_left_dist = (pd_trials_meta[DISTRACTOR_COL] == 'left').values
-is_right_dist = (pd_trials_meta[DISTRACTOR_COL] == 'right').values
-pd_diff_wave = np.zeros_like(pd_data[:, 0, :])
-pd_contra_wave = np.zeros_like(pd_data[:, 0, :])
-pd_ipsi_wave = np.zeros_like(pd_data[:, 0, :])
-pd_contra_wave[is_left_dist] = pd_data[is_left_dist][:, contra_idx_left_pd, :].mean(axis=1)
-pd_ipsi_wave[is_left_dist] = pd_data[is_left_dist][:, ipsi_idx_left_pd, :].mean(axis=1)
-pd_contra_wave[is_right_dist] = pd_data[is_right_dist][:, contra_idx_right_pd, :].mean(axis=1)
-pd_ipsi_wave[is_right_dist] = pd_data[is_right_dist][:, ipsi_idx_right_pd, :].mean(axis=1)
-pd_diff_wave[is_left_dist] = pd_contra_wave[is_left_dist] - pd_ipsi_wave[is_left_dist]
-pd_diff_wave[is_right_dist] = pd_contra_wave[is_right_dist] - pd_ipsi_wave[is_right_dist]
-
-
-# --- Area Calculation Function ---
-def _calculate_signed_area(data_window, polarity='positive'):
-    area_data = data_window.copy()
-    if polarity == 'positive':
-        area_data[area_data < 0] = 0
-    elif polarity == 'negative':
-        area_data[area_data > 0] = 0
-    return area_data.sum(axis=-1)
-
-
-# --- Calculate Pd Area per Subject ---
-pd_times_idx = pd_epochs.time_as_index(PD_TIME_WINDOW)
-baseline_times_idx_pd = pd_epochs.time_as_index(BASELINE_WINDOW)
-sampling_interval_ms = (1 / epochs.info['sfreq']) * 1000
-unique_subjects_pd = pd_trials_meta[SUBJECT_ID_COL].unique()
-subject_results_pd = []
-print("Averaging ERPs and calculating Pd area for each subject...")
-for subject in unique_subjects_pd:
-    subject_trial_mask = (pd_trials_meta[SUBJECT_ID_COL] == subject).values
-    subject_diff_waves_for_avg = pd_diff_wave[subject_trial_mask]
-    if subject_diff_waves_for_avg.shape[0] == 0: continue
-    subject_avg_diff_wave = subject_diff_waves_for_avg.mean(axis=0)
-    avg_wave_pd_window = subject_avg_diff_wave[pd_times_idx[0]:pd_times_idx[1]]
-    avg_wave_baseline_window = subject_avg_diff_wave[baseline_times_idx_pd[0]:baseline_times_idx_pd[1]]
-    raw_pd_area = _calculate_signed_area(avg_wave_pd_window, polarity='positive')
-    baseline_noise_area = _calculate_signed_area(avg_wave_baseline_window, polarity='positive')
-    pd_pure_area_samples = raw_pd_area - baseline_noise_area
-    subject_results_pd.append({
-        SUBJECT_ID_COL: subject,
-        'pd_pure_area': pd_pure_area_samples * sampling_interval_ms
-    })
-pd_subject_df = pd.DataFrame(subject_results_pd)
-print("Pd pure area calculated for each subject.")
-
-### MERGED ### --- Start of N2ac Calculation Section ---
-
-# --- Filter for N2ac-eliciting trials (lateral target, central distractor) ---
-print("\nFiltering for N2ac trials...")
-is_target_lateral = df[TARGET_COL].isin(['left', 'right'])
-is_distractor_central = df[DISTRACTOR_COL] == 'mid'
-n2ac_trials_meta = df[is_target_lateral & is_distractor_central].copy()
-print(f"Found {len(n2ac_trials_meta)} trials for N2ac analysis.")
-
-# --- Calculate N2ac "Pure Area" ---
-print("Calculating N2ac component (Contra-minus-Ipsi)...")
-n2ac_epochs = epochs[n2ac_trials_meta.index]
-# Define contra/ipsi channels based on TARGET side
-contra_chans_left_target = [p[1] for p in N2AC_ELECTRODES]
-ipsi_chans_left_target = [p[0] for p in N2AC_ELECTRODES]
-contra_chans_right_target = [p[0] for p in N2AC_ELECTRODES]
-ipsi_chans_right_target = [p[1] for p in N2AC_ELECTRODES]
-all_n2ac_chans = sorted(list(set(sum(N2AC_ELECTRODES, ()))))
-n2ac_data = n2ac_epochs.get_data(picks=all_n2ac_chans)
-ch_map_n2ac = {ch_name: i for i, ch_name in enumerate(n2ac_epochs.copy().pick(all_n2ac_chans).ch_names)}
-contra_idx_left_n2ac = [ch_map_n2ac[ch] for ch in contra_chans_left_target]
-ipsi_idx_left_n2ac = [ch_map_n2ac[ch] for ch in ipsi_chans_left_target]
-contra_idx_right_n2ac = [ch_map_n2ac[ch] for ch in contra_chans_right_target]
-ipsi_idx_right_n2ac = [ch_map_n2ac[ch] for ch in ipsi_chans_right_target]
-is_left_target = (n2ac_trials_meta[TARGET_COL] == 'left').values
-is_right_target = (n2ac_trials_meta[TARGET_COL] == 'right').values
-n2ac_diff_wave = np.zeros_like(n2ac_data[:, 0, :])
-n2ac_contra_wave = np.zeros_like(n2ac_data[:, 0, :])
-n2ac_ipsi_wave = np.zeros_like(n2ac_data[:, 0, :])
-n2ac_contra_wave[is_left_target] = n2ac_data[is_left_target][:, contra_idx_left_n2ac, :].mean(axis=1)
-n2ac_ipsi_wave[is_left_target] = n2ac_data[is_left_target][:, ipsi_idx_left_n2ac, :].mean(axis=1)
-n2ac_contra_wave[is_right_target] = n2ac_data[is_right_target][:, contra_idx_right_n2ac, :].mean(axis=1)
-n2ac_ipsi_wave[is_right_target] = n2ac_data[is_right_target][:, ipsi_idx_right_n2ac, :].mean(axis=1)
-n2ac_diff_wave[is_left_target] = n2ac_contra_wave[is_left_target] - n2ac_ipsi_wave[is_left_target]
-n2ac_diff_wave[is_right_target] = n2ac_contra_wave[is_right_target] - n2ac_ipsi_wave[is_right_target]
-
-# --- Calculate N2ac Area per Subject ---
-n2ac_times_idx = n2ac_epochs.time_as_index(N2AC_TIME_WINDOW)
-baseline_times_idx_n2ac = n2ac_epochs.time_as_index(BASELINE_WINDOW)
-unique_subjects_n2ac = n2ac_trials_meta[SUBJECT_ID_COL].unique()
-subject_results_n2ac = []
-print("Averaging ERPs and calculating N2ac area for each subject...")
-for subject in unique_subjects_n2ac:
-    subject_trial_mask = (n2ac_trials_meta[SUBJECT_ID_COL] == subject).values
-    subject_diff_waves_for_avg = n2ac_diff_wave[subject_trial_mask]
-    if subject_diff_waves_for_avg.shape[0] == 0: continue
-    subject_avg_diff_wave = subject_diff_waves_for_avg.mean(axis=0)
-    avg_wave_n2ac_window = subject_avg_diff_wave[n2ac_times_idx[0]:n2ac_times_idx[1]]
-    avg_wave_baseline_window = subject_avg_diff_wave[baseline_times_idx_n2ac[0]:baseline_times_idx_n2ac[1]]
-    # N2ac is a NEGATIVE component
-    raw_n2ac_area = _calculate_signed_area(avg_wave_n2ac_window, polarity='negative')
-    baseline_noise_area = _calculate_signed_area(avg_wave_baseline_window, polarity='negative')
-    n2ac_pure_area_samples = raw_n2ac_area - baseline_noise_area
-    subject_results_n2ac.append({
-        SUBJECT_ID_COL: subject,
-        'n2ac_pure_area': n2ac_pure_area_samples * sampling_interval_ms
-    })
-n2ac_subject_df = pd.DataFrame(subject_results_n2ac)
-print("N2ac pure area calculated for each subject.")
-
-### MERGED ### --- Behavioral Data Processing ---
-
 # --- 1. Calculate Flanker Effect ---
 print("\nLoading and processing flanker task data...")
 flanker_df = SPACEPRIME.load_concatenated_csv(FLANKER_EXPERIMENT_NAME)
-flanker_df[SUBJECT_ID_COL] = flanker_df[SUBJECT_ID_COL].astype(str)
+flanker_df[SUBJECT_ID_COL] = flanker_df[SUBJECT_ID_COL].astype(int)
 flanker_rt_by_subject = flanker_df.groupby(
     [SUBJECT_ID_COL, FLANKER_CONGRUENCY_COL]
 )[REACTION_TIME_COL].mean().unstack()
@@ -236,55 +77,31 @@ print("Singleton presence effect calculated.")
 # --- 3. Load Questionnaire Data ---
 print("Loading questionnaire data...")
 questionnaire_data = SPACEPRIME.load_concatenated_csv("combined_questionnaire_results.csv")
-questionnaire_data[SUBJECT_ID_COL] = questionnaire_data[SUBJECT_ID_COL].astype(str)
+questionnaire_data[SUBJECT_ID_COL] = questionnaire_data[SUBJECT_ID_COL].astype(int)
 
 # 4. Load fooof data
 print("Loading FOOOF data ...")
 fooof_data = SPACEPRIME.load_concatenated_csv("fooof_exponents.csv")
-fooof_data[SUBJECT_ID_COL] = fooof_data[SUBJECT_ID_COL].astype(float).astype(int).astype(str)
+fooof_data[SUBJECT_ID_COL] = fooof_data[SUBJECT_ID_COL].astype(int)
 
 ### MERGED ### --- Merge All Data for Correlation ---
 print("\nMerging all EEG and behavioral data sources...")
 # Start with a list of all dataframes to merge
-data_frames = [pd_subject_df, n2ac_subject_df, flanker_subject_df, singleton_effect_df, questionnaire_data, fooof_data]
+data_frames = [flanker_subject_df, singleton_effect_df, questionnaire_data, fooof_data, n2ac_df, pd_df]
 
-correlation_df = pd.concat(data_frames, axis=1).drop(columns=[SUBJECT_ID_COL])
+# Merge all dataframes on 'subject_id'
+# Start with the first dataframe and iteratively merge the rest
+merged_df = data_frames[0]
+for i in range(1, len(data_frames)):
+    merged_df = pd.merge(merged_df, data_frames[i], on=SUBJECT_ID_COL, how='inner')
+
+correlation_df = merged_df.copy()
 correlation_df.dropna(inplace=True)
 print(f"Found {len(correlation_df)} subjects with complete data across all measures.")
 
-# --- Load, Reshape, and Merge ERP Latency/Amplitude Data ---
-print("\nLoading and reshaping ERP latency/amplitude data...")
-erp_long_df = SPACEPRIME.load_concatenated_csv("erp_latency_amplitude_subject_mean.csv")
-
-# The goal is to transform the data from a "long" format (2 rows per subject)
-# to a "wide" format (1 row per subject with dedicated columns for each metric).
-
-# Based on the old code, the subject identifier might be 'subject'. Let's standardize it.
-if 'subject' in erp_long_df.columns and SUBJECT_ID_COL not in erp_long_df.columns:
-    erp_long_df.rename(columns={'subject': SUBJECT_ID_COL}, inplace=True)
-
-# Ensure the subject ID is a string for consistent merging
-erp_long_df[SUBJECT_ID_COL] = erp_long_df[SUBJECT_ID_COL].astype(str)
-
-# Use pivot_table to reshape the data.
-# This will make 'component' values into new columns.
-# I'm assuming your columns are 'subject_id', 'component', 'latency', and 'amplitude'.
-erp_wide_df = erp_long_df.pivot_table(
-    index=SUBJECT_ID_COL,
-    columns='component',
-    values=['latency', 'amplitude']
-)
-
-# The pivot creates a multi-level column index, e.g., ('latency', 'N2pc').
-# We'll flatten this into a single-level index, e.g., 'latency_N2pc' for clarity.
-erp_wide_df.columns = [f'{value}_{component}' for value, component in erp_wide_df.columns]
-
-# Reset the index to make 'subject_id' a column again, ready for merging.
-erp_wide_df.reset_index(inplace=True)
-
 # Merge the new wide-format ERP data with the main subject dataframe.
 # An 'inner' merge ensures we only analyze subjects present in both datasets.
-final_df = pd.concat([correlation_df,erp_wide_df], axis=1)
+final_df = correlation_df.copy() # Now correlation_df already contains n2ac_df and pd_df
 
 # This hardcoded outlier removal was in the original script.
 # A more robust approach would be to identify outliers and remove by subject_id.
@@ -293,111 +110,11 @@ if 10 in final_df.index:
     print("Warning: Removing subject at hardcoded index 10 from correlation analysis.")
     #final_df = final_df.drop(index=10).reset_index(drop=True)
 
-
-print("\nGenerating sanity-check plots for ERP components...")
-plot_erp_sanity_check(pd_epochs.times, pd_contra_wave, pd_ipsi_wave, pd_diff_wave, pd_trials_meta, 'Pd', PD_TIME_WINDOW, subject_id_col=SUBJECT_ID_COL, baseline_window=BASELINE_WINDOW)
-plot_erp_sanity_check(n2ac_epochs.times, n2ac_contra_wave, n2ac_ipsi_wave, n2ac_diff_wave, n2ac_trials_meta, 'N2ac',
-                      N2AC_TIME_WINDOW, subject_id_col=SUBJECT_ID_COL, baseline_window=BASELINE_WINDOW)
-
-### MERGED ### --- Visualize ERPs by Behavioral Split ---
-print("\nVisualizing N2ac ERPs split by singleton accuracy effect...")
-
-# --- 1. Define the behavioral variable and create groups ---
-behavioral_metric = 'singleton_rt_effect'
-
-# Use a quartile split to create four groups for the behavioral metric
-# Ensure the metric exists and has enough unique values for a quartile split
-if behavioral_metric in final_df.columns and final_df[behavioral_metric].nunique() > 3:
-    metric_title = behavioral_metric.replace("_", " ").title()
-    # Corrected to a true quartile (4 groups) split for better analysis
-    group_labels = [f'Q1', f'Q2']
-    final_df['behavioral_group'] = pd.qcut(final_df[behavioral_metric],
-                                           q=2,
-                                           labels=group_labels,
-                                           duplicates='drop')
-    print(f"Successfully created {final_df['behavioral_group'].nunique()} groups based on quartiles of '{behavioral_metric}'.")
-    print("Group sizes:\n", final_df['behavioral_group'].value_counts().sort_index())
-
-    # --- 2. Aggregate trial-level ERPs to subject-level averages ---
-    subject_avg_contra = {}
-    subject_avg_ipsi = {}
-    subject_avg_diff = {}
-
-    # Use the original pd_trials_meta which is aligned with the wave arrays
-    for subject in n2ac_trials_meta[SUBJECT_ID_COL].unique():
-        mask = (n2ac_trials_meta[SUBJECT_ID_COL] == subject).values
-        if np.any(mask):
-            subject_avg_contra[subject] = n2ac_contra_wave[mask].mean(axis=0)
-            subject_avg_ipsi[subject] = n2ac_ipsi_wave[mask].mean(axis=0)
-            subject_avg_diff[subject] = n2ac_diff_wave[mask].mean(axis=0)
-
-    # --- 3. Plot Grand Averages for each behavioral group ---
-    fig, axes = plt.subplots(1, 2, figsize=(18, 7), sharey=True)
-    fig.suptitle(f'N2ac Component by Quartiles of {metric_title}', fontsize=16, fontweight='bold')
-    times_ms = n2ac_epochs.times * 1000
-
-    # Create a color palette for the quartile groups
-    n_groups = final_df['behavioral_group'].nunique()
-    colors = plt.cm.Accent(np.linspace(0.1, 0.9, n_groups))
-
-    # Sort group labels to ensure Q1 is plotted first with the first color, etc.
-    sorted_groups = sorted(final_df['behavioral_group'].dropna().unique())
-
-    for i, group_label in enumerate(sorted_groups):
-        # Get subjects belonging to the current group
-        # We need to look up subject IDs from final_df, which is at the subject level
-        subjects_in_group = final_df[final_df['behavioral_group'] == group_label][SUBJECT_ID_COL].tolist()
-
-        # Collect the average waves for these subjects
-        group_contra_waves = [subject_avg_contra[s] for s in subjects_in_group if s in subject_avg_contra]
-        group_ipsi_waves = [subject_avg_ipsi[s] for s in subjects_in_group if s in subject_avg_ipsi]
-        group_diff_waves = [subject_avg_diff[s] for s in subjects_in_group if s in subject_avg_diff]
-
-        if not group_diff_waves:
-            print(f"Warning: No ERP data found for group '{group_label}'. Skipping.")
-            continue
-
-        # Calculate grand average for the group
-        ga_contra = np.mean(group_contra_waves, axis=0)
-        ga_ipsi = np.mean(group_ipsi_waves, axis=0)
-        ga_diff = np.mean(group_diff_waves, axis=0)
-
-        color = colors[i]
-
-        # Plot on the 'Contra vs Ipsi' subplot
-        axes[0].plot(times_ms, ga_contra, color=color, linestyle='--', label=f'Contra ({group_label})', lw=2)
-        axes[0].plot(times_ms, ga_ipsi, color=color, linestyle=':', label=f'Ipsi ({group_label})', lw=2)
-
-        # Plot on the 'Difference Wave' subplot
-        axes[1].plot(times_ms, ga_diff, color=color, linestyle='-', lw=2.5, label=f'Difference ({group_label})')
-
-    # --- 4. Formatting and Final Touches ---
-    for ax in axes:
-        ax.axvspan(PD_TIME_WINDOW[0] * 1000, PD_TIME_WINDOW[1] * 1000, color='lightcoral', alpha=0.3, label='Pd Window')
-        ax.axhline(0, color='black', linestyle='--', lw=0.8)
-        ax.axvline(0, color='black', linestyle=':', lw=0.8)
-        ax.set_xlabel('Time (ms)')
-        ax.grid(True, linestyle=':', alpha=0.6)
-        ax.legend(title="Groups")
-        # Set the x-axis to the requested time interval (0 to 0.7 seconds)
-        ax.set_xlim(0, 700)
-
-    axes[0].set_title('Contralateral vs. Ipsilateral Waveforms')
-    axes[0].set_ylabel('Amplitude (mV/m²)')
-    axes[1].set_title('Difference Wave (Contra - Ipsi)')
-
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.show()
-
 ### MERGED ### --- Multivariate Correlation Analysis ---
 print("\n--- Multivariate Correlation Analysis ---")
 # --- 2. Perform Correlation Analysis ---
-cols_to_correlate = ["post-stimulus_all_trials_exponent", "pre-stimulus_all_trials_exponent",
-    'latency_N2ac', 'latency_Pd', 'amplitude_N2ac', 'amplitude_Pd', 'flanker_effect',
-    'singleton_rt_effect', 'singleton_acc_effect',
-    'wnss_noise_resistance', 'ssq_speech_mean', "ssq_spatial_mean",
-    "ssq_quality_mean"
-]
+cols_to_correlate = final_df.columns
+
 existing_cols = [col for col in cols_to_correlate if col in final_df.columns]
 print(f"Analyzing correlations between: {existing_cols}")
 
