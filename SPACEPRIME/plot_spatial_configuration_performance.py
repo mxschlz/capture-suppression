@@ -346,6 +346,15 @@ sns.barplot(
     errorbar=('se', 1),
     ax=ax_a
 )
+sns.stripplot(
+    data=df_absent,
+    x=TARGET_COL,
+    y='target_towardness',
+    order=target_order,
+    color=".3",
+    alpha=0.4,
+    ax=ax_a
+)
 ax_a.set_title("A: Distractor Absent", fontsize=14, weight='bold')
 ax_a.axhline(0, color='grey', linestyle='--', lw=1)
 
@@ -369,6 +378,15 @@ sns.barplot(
     palette={"absent": "darkgreen", "present": "darkred"},
     errorbar=('se', 1),
     ax=ax_e
+)
+sns.stripplot(
+    data=df_presence_summary,
+    x='distractor_presence',
+    y='target_towardness',
+    order=['absent', 'present'],
+    color=".3",
+    alpha=0.4,
+    ax=ax_e,
 )
 ax_e.set_title("E: Distractor Presence", fontsize=14, weight='bold')
 ax_e.set_xlabel("Distractor Presence", fontsize=12)
@@ -420,6 +438,16 @@ for ax, dist_loc, panel_label in zip(axes_b, distractor_locations_present, panel
         errorbar=('se', 1),
         ax=ax
     )
+
+    sns.stripplot(
+        data=df_subplot,
+        x=TARGET_COL,
+        y='target_towardness',
+        order=target_order,
+        color=".3",
+        alpha=0.4,
+        ax=ax
+    )
     ax.set_title(panel_label, fontsize=14, weight='bold')
     ax.axhline(0, color='grey', linestyle='--', lw=1)
 
@@ -440,3 +468,12 @@ fig.tight_layout(rect=[0.02, 0.02, 1, 0.98]) # Adjust layout for super-labels
 fig.savefig(os.path.join(output_dir, "combined_spatial_performance_mosaic.svg"))
 
 plt.show() # Display the final combined plot
+
+# --- 6. Distribution of Target Towardness by Accuracy ---
+plt.figure(figsize=(8, 6))
+sns.kdeplot(data=df_final, x='target_towardness', hue=ACCURACY_COL, fill=True, common_norm=False)
+plt.title('Distribution of Target Towardness by Response Accuracy')
+plt.xlabel('Target Towardness')
+plt.ylabel('Density')
+sns.despine()
+plt.tight_layout()
