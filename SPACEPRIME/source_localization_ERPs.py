@@ -1,10 +1,21 @@
-import mne
 import SPACEPRIME
+import mne
+import numpy as np
+# Try forcing MNE to use the pyvista backend explicitly
+mne.viz.set_3d_backend('pyvista')
+from SPACEPRIME.encoding import *
 
 
+# define subject
+subject_id = 174
 # load up raw data
-raw = mne.io.read_raw_fif("/home/maxschulz/IPSY1-Storage/Projects/ac/Experiments/running_studies/SPACEPRIME/derivatives/preprocessing/sub-174/eeg/sub-174_task-spaceprime_raw.fif")
+raw = mne.io.read_raw_fif(f"{SPACEPRIME.get_data_path()}derivatives/preprocessing/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime_raw.fif")
 montage = raw.get_montage()
+
+# The inverse modeling pipeline requires an average reference. We add it as a
+# projector, which is the standard and recommended MNE workflow.
+print("Applying average EEG reference as a projector...")
+raw.set_eeg_reference('average', projection=True)
 
 # get standard fMRI head model
 fsaverage_dir = mne.datasets.fetch_fsaverage(verbose = True)
@@ -66,7 +77,7 @@ coreg.fit_icp(n_iterations=20, nasion_weight=10.0, verbose=True)
 # get the final transform
 trans = coreg.trans
 
-# plot the alignment between MRI and our
+"""# plot the alignment between MRI and our
 # head shape points / fiducials / electrode positions
 mne.viz.plot_alignment(
     raw.info,  # EEG sensor information from raw data
@@ -77,7 +88,7 @@ mne.viz.plot_alignment(
     bem=bem,  # BEM model for the brain
     show_axes=False,  # Show the axes in the plot
     dig=True,  # Show digitization points
-    eeg=True)  # show EEG sensors
+    eeg=True)  # show EEG sensors"""
 
 # Compute the forward solution (leadfield)
 fwd = mne.make_forward_solution(raw.info,
@@ -90,49 +101,167 @@ fwd = mne.make_forward_solution(raw.info,
                                 n_jobs = 10)
 
 # Compute noise and data covariances
-
 # Important: You need the number of excluded ICA components (& maybe bad EEG channels) for this.
 # The excluded components should be stored in a list called excl_components.
-
 # get all annotations:
 annotations_list = [{'onset': annot['onset'], 'description': annot['description']} for annot in raw.annotations]
 
-# I only want to analyse the data around dual-task block onsets: -10s–0 before and 0-10s after. If you have more data, that’s even better.
-block_annotations = ['BL_m_on', '1back_d_m_on', '2back_d_m_on', 'vtask_main_on']
+# 1. Define the annotations of interest
+# These are the markers that will be used to find our time window.
+calib_annotations = ['Stimulus/S  2', 'Stimulus/S  3']
 
-# get all annotations that are in block_annotations:
-filtered_annotations = [annot for annot in annotations_list if annot['description'] in block_annotations]
+# 2. Find all occurrences of these annotations in the raw data
+all_annotations = raw.annotations
+filtered_annotations = [
+    annot for annot in all_annotations
+    if annot['description'] in calib_annotations
+]
 
-# now cut data into blocks by using -10s to block onset (for estimating noise cov)
-# and block onset to +10s (for estimating data cov)
+# 3. IMPORTANT: Sort the found annotations by time to ensure chronological order
+filtered_annotations.sort(key=lambda x: x['onset'])
 
-for annot_idx, annot in enumerate(filtered_annotations):
-    print(annot_idx)
-    curr_onset_ts = annot["onset"]
+print(f"Found {len(filtered_annotations)} annotations matching {calib_annotations}.")
 
-    # cut block:
-    curr_block_data = raw.copy().crop(tmin=curr_onset_ts,
-                                      tmax=curr_onset_ts + 10)
+# 4. Ensure we found at least two markers to define an interval
+if len(filtered_annotations) < 2:
+    raise ValueError(
+        f"Could not find at least two markers from '{calib_annotations}' "
+        "to define a time interval. Only found "
+        f"{len(filtered_annotations)}."
+    )
 
-    curr_block_noise = raw.copy().crop(tmin=curr_onset_ts - 10,
-                                       tmax=curr_onset_ts)
+# 5. Get the onset times for the first and second marker from the sorted list.
+# Even with 20 markers, this correctly selects the first two in time.
+t_start_noise = filtered_annotations[0]['onset']
+t_end_noise = filtered_annotations[1]['onset']
 
-    # append data to lists:
-    if annot_idx == 0:
-        data_covnoise = curr_block_noise.copy()
-        data_covdata = curr_block_data.copy()
-    else:
-        data_covnoise = mne.concatenate_raws([data_covnoise, curr_block_noise])
-        data_covdata = mne.concatenate_raws([data_covdata, curr_block_data])
+print(f"Defining noise period between the first two markers: "
+      f"from {t_start_noise:.2f}s to {t_end_noise:.2f}s.")
 
-# Now compute data chunk and noise chunk covariances:
-noise_cov = mne.compute_raw_covariance(data_covnoise,
-                                       method='auto',
-                                       rank={'eeg': raw_source_space.info["nchan"] - 1 - len(excl_components)},
-                                       tmin=0,
-                                       tmax=None)
-data_cov = mne.compute_raw_covariance(data_covdata,
-                                      method='auto',
-                                      rank={'eeg': raw_source_space.info["nchan"] - 1 - len(excl_components)},
-                                      tmin=0,
-                                      tmax=None)
+# 6. Create a new raw object containing only the data between these two markers
+noise_segment = raw.copy().crop(tmin=t_start_noise, tmax=t_end_noise)
+
+# 7. Compute the noise covariance from this specific segment
+# --- Load excluded ICA components from file for accurate rank calculation ---
+# Define the path to the file containing the indices of ICA components marked for exclusion.
+ica_labels_path = (
+    f"{SPACEPRIME.get_data_path()}derivatives/preprocessing/sub-{subject_id}/eeg/"
+    f"sub-{subject_id}_task-spaceprime_ica_labels.txt"
+)
+
+excl_components = []
+try:
+    with open(ica_labels_path, 'r') as f:
+        # Read each line, strip whitespace, and convert to an integer.
+        # This assumes the file contains one component index per line.
+        excl_components = [int(line.strip()) for line in f if line.strip()]
+    print(f"Successfully loaded {len(excl_components)} excluded ICA components from file: {excl_components}")
+except FileNotFoundError:
+    print(f"Warning: ICA labels file not found at '{ica_labels_path}'.\n"
+          f"Assuming no ICA components were excluded.")
+except Exception as e:
+    print(f"An error occurred while reading the ICA labels file: {e}")
+
+# Calculate the rank for the EEG data. Rank is the number of independent signals.
+# It's typically: (num EEG channels) - 1 (for the reference) - (num removed ICs)
+# Note: I've corrected the error from your original script which used a
+# non-existent 'raw_source_space' variable.
+n_eeg_channels = len(mne.pick_types(raw.info, eeg=True, meg=False))
+rank_eeg = n_eeg_channels - 1 - len(excl_components)
+
+# Now compute the noise covariance from the selected data segment
+noise_cov = mne.compute_raw_covariance(
+    noise_segment,
+    method='shrunk',  # 'shrunk' is a robust and recommended method
+    rank={'eeg': rank_eeg},
+    tmin=None,        # Use the entire cropped segment
+    tmax=None,
+    verbose=True
+)
+
+print("\nSuccessfully computed noise covariance matrix:")
+print(noise_cov)
+
+# crop data to a short segment
+crop_min = 15
+crop_max = 30
+raw_source_space_cropped = raw.copy().crop(tmin = crop_min * 60,
+                                           tmax = crop_max * 60)
+
+
+# 1. Create the inverse operator with the correct rank
+#    We use the 'rank_eeg' variable calculated earlier for consistency and accuracy.
+print("Creating inverse operator...")
+inverse_operator = mne.minimum_norm.make_inverse_operator(
+    raw.info,                # Use the info from the full raw data
+    fwd,
+    noise_cov,
+    rank={'eeg': rank_eeg},  # Use the correctly calculated rank
+    loose=0.2,
+    depth=0.8,
+    verbose=True
+)
+
+# 2. Define events and epoching parameters
+#    This is the standard MNE approach for ERP analysis.
+tmin, tmax = -0.2, 0.7  # Pre- and post-stimulus time in seconds
+
+# 3. Get events from annotations in the raw data
+events, _ = mne.events_from_annotations(raw)
+print(f"Found {len(events)} events of interest.")
+
+# 4. Create sensor-space epochs
+#    We use baseline correction on the sensor data before source localization.
+baseline = None
+epochs = mne.Epochs(
+    raw,
+    events,
+    event_id=encoding_sub_106,
+    tmin=tmin,
+    tmax=tmax,
+    proj=True,          # Apply the average reference projector
+    baseline=baseline,
+    preload=True,       # Preload data for processing
+    verbose=True
+)
+
+# 5. Compute the inverse solution on the epochs
+#    This is more memory-efficient than applying to raw data.
+lambda2 = 1.0 / 3.0 ** 2
+method = "dSPM"
+
+stcs = mne.minimum_norm.apply_inverse_epochs(
+    epochs,
+    inverse_operator,
+    lambda2=lambda2,
+    method=method,
+    pick_ori="normal",
+    verbose=True
+)
+
+# 'stcs' is a list of SourceEstimate objects, one for each epoch.
+print(f"Created {len(stcs)} source-space epochs (trials).")
+
+# 6. Average the source-space epochs to get the ERP
+#    This averages the list of STCs into a single STC object.
+#
+#    The function `mne.grand_average` is for averaging sensor-space Evoked objects
+#    across subjects. To average a list of SourceEstimate objects (trials),
+#    we can simply use standard arithmetic.
+if not stcs:
+    raise RuntimeError("No source-space epochs were created. Cannot compute ERP.")
+
+print(f"Averaging {len(stcs)} source-space trials to create ERP...")
+erp_stc = sum(stcs) / len(stcs)
+
+# 7. Plot the final source-space ERP
+print("Plotting the source-space ERP...")
+erp_stc.plot(
+    hemi='both',
+    subjects_dir=fsaverage_dir,
+    initial_time=0.1,  # Example: view activity at 100ms
+    clim=dict(kind="value", lims=[-3, 0, 3]),
+    colormap='seismic',
+    transparent=False,
+    time_viewer=True   # You can still use the time viewer on the final ERP
+)
