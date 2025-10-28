@@ -8,7 +8,7 @@ import pingouin as pg
 import numpy as np
 
 
-FILTER_PHASE = 2
+FILTER_PHASE = None
 OUTLIER_THRESH = 2
 
 data_path = SPACECUE_implicit.get_data_path()
@@ -22,10 +22,13 @@ df["select_target"] = df["select_target"].astype(float)
 
 df_mean = df.groupby(["subject_id", "DistractorProb"])[["rt", "select_target"]].mean().reset_index()
 
+df_mean['DistractorProb'] = pd.Categorical(df_mean['DistractorProb'], categories=["distractor-absent", "low-probability", "high-probability"], ordered=True)
+df_mean = df_mean.sort_values('DistractorProb')
+
 fig, ax = plt.subplots()
 
 sns.barplot(data=df_mean, x="DistractorProb", y="select_target", ax=ax,
-            errorbar=None, facecolor=(0, 0, 0, 0), edgecolor=".2")
+            errorbar=("se", 1), facecolor=(0, 0, 0, 0), edgecolor=".2", order=["distractor-absent", "low-probability", "high-probability"])
 
 sns.lineplot(data=df_mean, x="DistractorProb", y="select_target",
              hue="subject_id", estimator=None,

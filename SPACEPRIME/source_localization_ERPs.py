@@ -18,13 +18,15 @@ save = False
 noise_tmax = 0.0
 noise_tmin = -0.5
 signal_tmin = 0.0
-signal_tmax = 0.5
+signal_tmax = 0.25
 
 # define subject
 subject_id = 174
 # load up epoched data
 epochs = mne.read_epochs(f"{SPACEPRIME.get_data_path()}derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif", preload=True)
 epochs.set_eeg_reference('average', projection=True)  # We kind of need this as a projection I guess
+
+epochs = epochs[:500]
 
 # get standard fMRI head model
 fsaverage_dir = mne.datasets.fetch_fsaverage(verbose = True)
@@ -124,14 +126,6 @@ fwd = mne.make_forward_solution(epochs.info,
                                 eeg = True,
                                 mindist = 0.0,
                                 n_jobs = -1)
-
-# --- Compute noise covariance from the baseline of the epochs ---
-
-# --- Load excluded ICA components from file for accurate rank calculation ---
-ica_labels_path = (
-    f"{SPACEPRIME.get_data_path()}derivatives/preprocessing/sub-{subject_id}/eeg/"
-    f"sub-{subject_id}_task-spaceprime_ica_labels.txt"
-)
 
 # Compute the noise covariance from the baseline of the epochs
 noise_cov = mne.compute_covariance(
