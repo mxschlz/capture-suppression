@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import mne
 from mne.beamformer import apply_lcmv_epochs, make_lcmv
 from mne.datasets import fetch_fsaverage, sample
+import os
 
 
 # plotting switch
@@ -24,33 +25,43 @@ signal_tmax = 0.25
 subject_id = 174
 # load up epoched data
 epochs = mne.read_epochs(f"{SPACEPRIME.get_data_path()}derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif", preload=True)
-epochs.set_eeg_reference('average', projection=True)  # We kind of need this as a projection I guess
 
-epochs = epochs[:500]
+# The average reference has already been applied during preprocessing.
+# However, due to an internal flag issue from preprocessing, we need to
+# explicitly tell MNE to use the average reference as a projection.
+# MNE is smart enough not to re-reference the data if it's already done.
+epochs.set_eeg_reference('average', projection=True)
+
+#epochs = epochs[:500]
 
 # get standard fMRI head model
-fsaverage_dir = mne.datasets.fetch_fsaverage(verbose = True)
+subjects_dir = mne.datasets.fetch_fsaverage(verbose=True)
+# The fetcher might return a path ending in 'fsaverage', which can cause
+# a double-folder issue (e.g., '.../fsaverage/fsaverage').
+# We ensure we have the correct parent subjects directory.
+if subjects_dir.name == "fsaverage":
+    subjects_dir = subjects_dir.parent
 
 # Set up the source space
 # This defines the cortical grid.
-src = mne.setup_source_space(subject = "",
+src = mne.setup_source_space(subject = "fsaverage",
                              spacing = "ico3", # → 1,284 total sources
-                             subjects_dir = fsaverage_dir,
+                             subjects_dir = subjects_dir,
                              add_dist = False)
 
 # Create boundary element model (BEM) with 3 layers: scalp, skull and brain tissue
-model = mne.make_bem_model(subject="",
+model = mne.make_bem_model(subject="fsaverage",
                            ico=4,  # icosahedral tessellation level (4 is medium)
                            conductivity=(0.3, 0.006, 0.3),  # scalp, skull, brain
-                           subjects_dir=fsaverage_dir)
+                           subjects_dir=subjects_dir)
 
 # Make the BEM solution based on the model
 # This creates a solution to be used in forward calculations.
 bem = mne.make_bem_solution(model)
 
 if plot:
-	mne.viz.plot_bem(subject = "",
-	                 subjects_dir = fsaverage_dir,
+	mne.viz.plot_bem(subject = "fsaverage",
+	                 subjects_dir = subjects_dir,
 	                 brain_surfaces = "white",
 	                 orientation = "sagittal", # other options: coronal, axial
 	                 slices = [50, 100, 150, 200])
@@ -91,8 +102,8 @@ for d in dig:
 
 # coregister standard MRI and our fiducials
 coreg = mne.coreg.Coregistration(epochs.info,
-                                 subject="",
-                                 subjects_dir=fsaverage_dir,
+                                 subject="fsaverage",
+                                 subjects_dir=subjects_dir,
                                  fiducials=fiducials_dict)
 
 # fit using fiducials first
@@ -107,8 +118,8 @@ trans = coreg.trans
 if plot:
 	mne.viz.plot_alignment(
 	        epochs.info,  # EEG sensor information from raw data
-	        subject = "",  # Subject for the fsaverage brain
-	        subjects_dir = fsaverage_dir,  # Path to the fsaverage directory
+	        subject = "fsaverage",  # Subject for the fsaverage brain
+	        subjects_dir = subjects_dir,  # Path to the fsaverage directory
 	        trans = trans,  # Apply the transformation to align sensors with MRI
 	        src = src,  # Source space for the brain
 	        bem = bem,  # BEM model for the brain
@@ -132,8 +143,8 @@ noise_cov = mne.compute_covariance(
     epochs,
     tmax=noise_tmax,  # Use the pre-stimulus baseline
     tmin=noise_tmin,  # Use the pre-stimulus baseline
-    method='shrunk',
-    rank='auto',  # Let MNE automatically determine the rank
+    method='empirical',
+    rank=None,  # Let MNE automatically determine the rank
     verbose=True
 )
 
@@ -173,6 +184,11 @@ print(f"Created {len(stcs)} source-space epochs (trials).")
 print(f"Averaging {len(stcs)} source-space trials to create ERP...")
 erp_stc = sum(stcs) / len(stcs)
 
+# Apply baseline correction to the source-space ERP
+print(f"Applying baseline correction from {noise_tmin}s to {noise_tmax}s...")
+baseline_period = (noise_tmin, noise_tmax)
+erp_stc.apply_baseline(baseline=baseline_period)
+
 # Plot the final source-space ERP
 print("Plotting the source-space ERP...")
 brain = erp_stc.plot(
@@ -181,12 +197,13 @@ brain = erp_stc.plot(
     clim=dict(kind="value", lims=[-1.5, 0, 1.5]),
     colormap='seismic',
     transparent=False,
-    subjects_dir=fsaverage_dir,
+    subjects_dir=subjects_dir,
     time_viewer=True,  # This opens the dedicated time course viewer
     backend="pyvistaqt",
     show_traces=True,
     cortex="classic",
-    surface="white"
+    surface="inflated",
+    smoothing_steps=10
 )
 
 if save:
@@ -194,9 +211,10 @@ if save:
     brain.save_movie(tmin=-0.1, tmax=0.4, interpolation='linear',
                       time_dilation=20, framerate=5, time_viewer=True)
 
-# ALTERNATIVE. LCMV beamformer
+
+### ALTERNATIVE: LCMV beamformer ###
 # make data cov
-data_cov = mne.compute_covariance(epochs, tmin=0.01, tmax=0.25, method="empirical")
+data_cov = mne.compute_covariance(epochs, tmin=signal_tmin, tmax=signal_tmax, method="empirical")
 # make noise cov
 noise_cov = mne.compute_covariance(epochs, tmin=noise_tmin, tmax=noise_tmax, method="empirical")
 
@@ -216,20 +234,26 @@ stc = apply_lcmv_epochs(epochs, filters)
 
 erp_stcs = sum(stc) / len(stc)
 
-# plot
+# Apply baseline correction to the beamformer source-space ERP
+print(f"Applying baseline correction from {noise_tmin}s to {noise_tmax}s for LCMV...")
+baseline_period = (noise_tmin, noise_tmax)
+erp_stcs.apply_baseline(baseline=baseline_period)
+
+# plot LCMV results
 brain = erp_stcs.plot(
     hemi='both',
     initial_time=None,
     clim=dict(kind="value", lims=[-0.5, 0, 0.5]),
     colormap='seismic',
     transparent=False,
-    subjects_dir=fsaverage_dir,
+    subjects_dir=subjects_dir,
     time_viewer=True,  # This opens the dedicated time course viewer
     backend="pyvistaqt",
     show_traces=True,
-    cortex="classic",
-    surface="white"
+    surface="inflated",
+    smoothing_steps=10
 )
+
 if save:
     # The documentation website's movie is generated with:
     brain.save_movie(tmin=-0.1, tmax=0.4, interpolation='linear',
