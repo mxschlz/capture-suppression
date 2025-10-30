@@ -1,7 +1,6 @@
 import SPACEPRIME
 import mne
 mne.viz.set_3d_backend('pyvista')
-import numpy as np
 from SPACEPRIME.subjects import subject_ids
 import matplotlib.pyplot as plt
 import mne
@@ -11,7 +10,7 @@ import os
 
 
 # plotting switch
-plot = False
+plot = True
 save = False
 
 # Define the baseline period for noise calculation (e.g., -200ms to 0ms)
@@ -20,19 +19,6 @@ noise_tmax = 0.0
 noise_tmin = -0.5
 signal_tmin = 0.0
 signal_tmax = 0.25
-
-# define subject
-subject_id = 174
-# load up epoched data
-epochs = mne.read_epochs(f"{SPACEPRIME.get_data_path()}derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif", preload=True)
-
-# The average reference has already been applied during preprocessing.
-# However, due to an internal flag issue from preprocessing, we need to
-# explicitly tell MNE to use the average reference as a projection.
-# MNE is smart enough not to re-reference the data if it's already done.
-epochs.set_eeg_reference('average', projection=True)
-
-#epochs = epochs[:500]
 
 # get standard fMRI head model
 subjects_dir = mne.datasets.fetch_fsaverage(verbose=True)
@@ -48,6 +34,9 @@ src = mne.setup_source_space(subject = "fsaverage",
                              spacing = "ico3", # → 1,284 total sources
                              subjects_dir = subjects_dir,
                              add_dist = False)
+if plot:
+    print("Plotting source space...")
+    src.plot(subjects_dir=subjects_dir)
 
 # Create boundary element model (BEM) with 3 layers: scalp, skull and brain tissue
 model = mne.make_bem_model(subject="fsaverage",
@@ -60,159 +49,170 @@ model = mne.make_bem_model(subject="fsaverage",
 bem = mne.make_bem_solution(model)
 
 if plot:
-	mne.viz.plot_bem(subject = "fsaverage",
-	                 subjects_dir = subjects_dir,
-	                 brain_surfaces = "white",
-	                 orientation = "sagittal", # other options: coronal, axial
-	                 slices = [50, 100, 150, 200])
+    mne.viz.plot_bem(subject="fsaverage",
+                     subjects_dir=subjects_dir,
+                     brain_surfaces="white",
+                     orientation="sagittal",
+                     slices=[50, 100, 150, 200])
 
-# Coregistration of EEG channels with the MRI (head transformation)
-# This computes the transformation matrix from the EEG sensor
-# space to the head space (for proper alignment of the EEG data
-# with the anatomical model).
+# --- Create a directory for saving source estimates ---
+stc_dir = os.path.join(SPACEPRIME.get_data_path(), "derivatives", "source_localization_dSPM")
+os.makedirs(stc_dir, exist_ok=True)
 
-# get head --> MRI transform:
-# get fiducials again as a dict
-dig = epochs.info['dig']
+# --- Loop through subjects for multi-subject analysis ---
+processed_subjects = []
 
-# --- Verification Step: Check the scale of digitization points ---
-# MNE expects meters. Let's confirm the units are not in millimeters.
-# We find a fiducial point (e.g., nasion) and check its coordinates.
-# A value like ~80.0 would indicate mm, while ~0.08 would indicate meters.
-try:
-    nasion_point = next(d for d in dig if d['ident'] == mne.io.constants.FIFF.FIFFV_POINT_NASION)
-    nasion_coord = nasion_point['r']
-    # Calculate distance from origin (0,0,0)
-    dist = np.linalg.norm(nasion_coord)
-    print(f"Nasion coordinates: {nasion_coord}, Distance from origin: {dist:.4f}")
-    assert dist < 1.0, "Digitization points appear to be in mm, not meters! Please scale them."
-    print("Digitization points seem to be correctly scaled to meters.")
-except (StopIteration, AssertionError) as e:
-    print(f"Could not verify digitization point scale or assertion failed: {e}")
+for subject_id in subject_ids:
+    print(f"\n--- Processing Subject: {subject_id} ---")
 
-fiducials_dict = {}
+    try:
+        # Load epoched data
+        epochs_path = f"{SPACEPRIME.get_data_path()}derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif"
+        if not os.path.exists(epochs_path):
+            print(f"Epochs file not found for subject {subject_id}. Skipping.")
+            continue
 
-for d in dig:
-	if str(d['ident']) == '2 (FIFFV_POINT_NASION)':
-		fiducials_dict['nasion'] = d['r']
-	elif str(d['ident']) == '1 (FIFFV_POINT_LPA)':
-		fiducials_dict['lpa'] = d['r']
-	elif str(d['ident']) == '3 (FIFFV_POINT_RPA)':
-		fiducials_dict['rpa'] = d['r']
+        epochs = mne.read_epochs(epochs_path, preload=True)
+        epochs.set_eeg_reference('average', projection=True)
 
-# coregister standard MRI and our fiducials
-coreg = mne.coreg.Coregistration(epochs.info,
-                                 subject="fsaverage",
-                                 subjects_dir=subjects_dir,
-                                 fiducials=fiducials_dict)
+        if plot:
+            print("\n--- Plotting Sensor-Level Evoked Potentials (ERPs) ---")
+            evoked = epochs.average()
+            evoked.plot_joint()
 
-# fit using fiducials first
-coreg.fit_fiducials(verbose=True)
+        # Coregistration
+        dig = epochs.info['dig']
+        try:
+            fiducials_dict = {
+                'nasion': next(d['r'] for d in dig if str(d['ident']) == '2 (FIFFV_POINT_NASION)'),
+                'lpa': next(d['r'] for d in dig if str(d['ident']) == '1 (FIFFV_POINT_LPA)'),
+                'rpa': next(d['r'] for d in dig if str(d['ident']) == '3 (FIFFV_POINT_RPA)'),
+            }
+        except StopIteration:
+            print(f"Fiducials not found for subject {subject_id}. Skipping.")
+            continue
+            
+        coreg = mne.coreg.Coregistration(epochs.info, "fsaverage", subjects_dir, fiducials=fiducials_dict)
+        coreg.fit_fiducials(verbose=False)
+        coreg.fit_icp(n_iterations=20, nasion_weight=10.0, verbose=False)
+        trans = coreg.trans
 
-# refine with ICP (Iterative Closest Point)
-coreg.fit_icp(n_iterations=20, nasion_weight=10.0, verbose=True)
+        if plot:
+            mne.viz.plot_alignment(
+                epochs.info,
+                subject="fsaverage",
+                subjects_dir=subjects_dir,
+                trans=trans,
+                src=src,
+                bem=bem,
+                show_axes=False,
+                dig=True,
+                eeg=True
+            )
 
-# get the final transform
-trans = coreg.trans
+        # Forward solution
+        fwd = mne.make_forward_solution(epochs.info, trans=trans, src=src, bem=bem, meg=False, eeg=True, mindist=0.0, n_jobs=-1)
 
-if plot:
-	mne.viz.plot_alignment(
-	        epochs.info,  # EEG sensor information from raw data
-	        subject = "fsaverage",  # Subject for the fsaverage brain
-	        subjects_dir = subjects_dir,  # Path to the fsaverage directory
-	        trans = trans,  # Apply the transformation to align sensors with MRI
-	        src = src,  # Source space for the brain
-	        bem = bem,  # BEM model for the brain
-	        show_axes = False,  # Show the axes in the plot
-	        dig = True,  # Show digitization points
-	        eeg = True) # show EEG sensors
+        # Noise covariance
+        noise_cov = mne.compute_covariance(epochs, tmax=noise_tmax, tmin=noise_tmin, method='empirical', rank=None, verbose=False)
 
+        if plot:
+            print("Plotting noise covariance matrix...")
+            mne.viz.plot_cov(noise_cov, epochs.info, show_svd=False)
 
-# Compute the forward solution (leadfield)
-fwd = mne.make_forward_solution(epochs.info,
-                                trans = coreg.trans,
-                                src = src,
-                                bem = bem,
-                                meg = False,
-                                eeg = True,
-                                mindist = 0.0,
-                                n_jobs = -1)
+        # Inverse operator
+        inverse_operator = mne.minimum_norm.make_inverse_operator(epochs.info, fwd, noise_cov, rank=None, loose="auto", depth=0.8, verbose=False)
 
-# Compute the noise covariance from the baseline of the epochs
-noise_cov = mne.compute_covariance(
-    epochs,
-    tmax=noise_tmax,  # Use the pre-stimulus baseline
-    tmin=noise_tmin,  # Use the pre-stimulus baseline
-    method='empirical',
-    rank=None,  # Let MNE automatically determine the rank
-    verbose=True
-)
+        # Apply inverse solution
+        lambda2 = 1.0 / 3.0 ** 2
+        method = "dSPM"
+        stcs = mne.minimum_norm.apply_inverse_epochs(epochs, inverse_operator, lambda2=lambda2, method=method, pick_ori="normal", verbose=False)
 
-# Plot noise covariance
-print("Plotting noise covariance matrix...")
-if plot:
-    mne.viz.plot_cov(noise_cov, epochs.info, show_svd=False)
+        # Average source-space trials
+        erp_stc = sum(stcs) / len(stcs)
+        erp_stc.apply_baseline(baseline=(noise_tmin, noise_tmax))
 
+        if plot:
+            print(f"Plotting source ERP for subject {subject_id}...")
+            brain = erp_stc.plot(
+                hemi='both',
+                initial_time=0.1,
+                clim=dict(kind="value", lims=[-1.0, 0, 1.0]),
+                colormap='seismic',
+                transparent=False,
+                time_unit='s',
+                subjects_dir=subjects_dir,
+                time_viewer=True,
+                backend="pyvistaqt",
+                show_traces=True,
+                cortex="classic",
+                surface="inflated",
+                smoothing_steps=10
+            )
 
-# Create the inverse operator with the correct rank
-print("Creating inverse operator...")
-inverse_operator = mne.minimum_norm.make_inverse_operator(
-    epochs.info,
-    fwd,
-    noise_cov,
-    rank=None,  # Use the rank from the noise covariance
-    loose=0.2,
-    depth=0.8,
-    verbose=True
-)
+        # Save the individual subject's source ERP
+        stc_filename = os.path.join(stc_dir, f"sub-{subject_id}_task-spaceprime_desc-dSPM-erp")
+        erp_stc.save(stc_filename, overwrite=True)
+        print(f"Saved source ERP for subject {subject_id} to {stc_filename}-stc.h5")
 
-# Apply the inverse solution to the epochs
-lambda2 = 1.0 / 3.0 ** 2
-method = "dSPM"
+        processed_subjects.append(subject_id)
 
-stcs = mne.minimum_norm.apply_inverse_epochs(
-    epochs,
-    inverse_operator,
-    lambda2=lambda2,
-    method=method,
-    pick_ori="normal",
-    verbose=True
-)
+    except Exception as e:
+        print(f"An error occurred while processing subject {subject_id}: {e}")
 
-print(f"Created {len(stcs)} source-space epochs (trials).")
+    finally:
+        # RAM-friendly: delete large objects
+        if 'epochs' in locals(): del epochs
+        if 'coreg' in locals(): del coreg
+        if 'trans' in locals(): del trans
+        if 'fwd' in locals(): del fwd
+        if 'noise_cov' in locals(): del noise_cov
+        if 'inverse_operator' in locals(): del inverse_operator
+        if 'stcs' in locals(): del stcs
+        if 'erp_stc' in locals(): del erp_stc
 
-print(f"Averaging {len(stcs)} source-space trials to create ERP...")
-erp_stc = sum(stcs) / len(stcs)
+# --- Grand-average source ERP ---
+if processed_subjects:
+    print("\n--- Computing Grand-Average Source ERP ---")
+    stcs_to_average = []
+    for subject_id in processed_subjects:
+        stc_filename = os.path.join(stc_dir, f"sub-{subject_id}_task-spaceprime_desc-dSPM-erp")
+        stcs_to_average.append(mne.read_source_estimate(stc_filename))
 
-# Apply baseline correction to the source-space ERP
-print(f"Applying baseline correction from {noise_tmin}s to {noise_tmax}s...")
-baseline_period = (noise_tmin, noise_tmax)
-erp_stc.apply_baseline(baseline=baseline_period)
+    grand_average_stc = sum(stcs_to_average) / len(stcs_to_average)
 
-# Plot the final source-space ERP
-print("Plotting the source-space ERP...")
-brain = erp_stc.plot(
-    hemi='both',
-    initial_time=None,
-    clim=dict(kind="value", lims=[-1.5, 0, 1.5]),
-    colormap='seismic',
-    transparent=False,
-    subjects_dir=subjects_dir,
-    time_viewer=True,  # This opens the dedicated time course viewer
-    backend="pyvistaqt",
-    show_traces=True,
-    cortex="classic",
-    surface="inflated",
-    smoothing_steps=10
-)
+    # Plot the grand-average source-space ERP
+    if plot:
+        print("Plotting the grand-average source-space ERP...")
+        brain = grand_average_stc.plot(
+            hemi='both',
+            initial_time=0.1,
+            clim=dict(kind="value", lims=[-1.0, 0, 1.0]),
+            colormap='seismic',
+            transparent=False,
+            time_unit='s',
+            subjects_dir=subjects_dir,
+            time_viewer=True,
+            backend="pyvistaqt",
+            show_traces=True,
+            cortex="classic",
+            surface="inflated",
+            smoothing_steps=10
+        )
+        if save:
+            brain.save_movie(tmin=-0.1, tmax=0.4, interpolation='linear', time_dilation=20, framerate=5, time_viewer=True)
 
-if save:
-    # The documentation website's movie is generated with:
-    brain.save_movie(tmin=-0.1, tmax=0.4, interpolation='linear',
-                      time_dilation=20, framerate=5, time_viewer=True)
+    del stcs_to_average, grand_average_stc
+
+else:
+    print("No subjects were processed successfully. Cannot compute grand-average.")
 
 
-### ALTERNATIVE: LCMV beamformer ###
+
+
+
+
+"""### ALTERNATIVE: LCMV beamformer ###
 # make data cov
 data_cov = mne.compute_covariance(epochs, tmin=signal_tmin, tmax=signal_tmax, method="empirical")
 # make noise cov
@@ -242,10 +242,11 @@ erp_stcs.apply_baseline(baseline=baseline_period)
 # plot LCMV results
 brain = erp_stcs.plot(
     hemi='both',
-    initial_time=None,
+    initial_time=0.1, # Example: Start viewing around N1 peak
     clim=dict(kind="value", lims=[-0.5, 0, 0.5]),
     colormap='seismic',
     transparent=False,
+    time_unit='s',
     subjects_dir=subjects_dir,
     time_viewer=True,  # This opens the dedicated time course viewer
     backend="pyvistaqt",
@@ -258,3 +259,4 @@ if save:
     # The documentation website's movie is generated with:
     brain.save_movie(tmin=-0.1, tmax=0.4, interpolation='linear',
                       time_dilation=20, framerate=5, time_viewer=True)
+"""
