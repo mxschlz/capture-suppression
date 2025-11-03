@@ -176,45 +176,37 @@ for subject_id in subject_ids:
         if 'erp_stc' in locals(): del erp_stc
 
 # --- Grand-average source ERP ---
-if processed_subjects:
-    print("\n--- Computing Grand-Average Source ERP ---")
-    stcs_to_average = []
-    for subject_id in processed_subjects:
-        stc_filename = os.path.join(stc_dir, f"sub-{subject_id}_task-spaceprime_desc-dSPM-erp")
-        stcs_to_average.append(mne.read_source_estimate(stc_filename))
+print("\n--- Computing Grand-Average Source ERP ---")
+stcs_to_average = []
+for subject_id in subject_ids:
+    stc_filename = os.path.join(stc_dir, f"sub-{subject_id}_task-spaceprime_desc-dSPM-erp")
+    stcs_to_average.append(mne.read_source_estimate(stc_filename))
 
-    grand_average_stc = sum(stcs_to_average) / len(stcs_to_average)
+grand_average_stc = sum(stcs_to_average) / len(stcs_to_average)
 
-    # Plot the grand-average source-space ERP
-    if plot:
-        print("Plotting the grand-average source-space ERP...")
-        brain = grand_average_stc.plot(
-            subject='fsaverage',  # Explicitly tell MNE to use the fsaverage brain
-            hemi='both',
-            initial_time=0.1,
-            clim=dict(kind="value", lims=[-0.5, 0, 0.5]),
-            colormap='seismic',
-            transparent=False,
-            time_unit='s',
-            subjects_dir=subjects_dir,
-            time_viewer=True,
-            backend="pyvistaqt",
-            show_traces=False,
-            cortex="classic",
-            surface="white",
-            smoothing_steps=20
-        )
-        if save:
-            brain.save_movie(tmin=-0.1, tmax=0.4, interpolation='linear', time_dilation=20, framerate=5, time_viewer=True)
+# Plot the grand-average source-space ERP
+if plot:
+    print("Plotting the grand-average source-space ERP...")
+    brain = grand_average_stc.plot(
+        subject='fsaverage',  # Explicitly tell MNE to use the fsaverage brain
+        hemi='both',
+        initial_time=0.1,
+        clim=dict(kind="value", lims=[-0.5, 0, 0.5]),
+        colormap='seismic',
+        transparent=False,
+        time_unit='s',
+        subjects_dir=subjects_dir,
+        time_viewer=True,
+        backend="pyvistaqt",
+        show_traces=False,
+        cortex="classic",
+        surface="white",
+        smoothing_steps=20
+    )
+    if save:
+        brain.save_movie(tmin=-0.1, tmax=0.4, interpolation='linear', time_dilation=20, framerate=5, time_viewer=True)
 
-    del stcs_to_average, grand_average_stc
-
-else:
-    print("No subjects were processed successfully. Cannot compute grand-average.")
-
-
-
-
+del stcs_to_average, grand_average_stc
 
 
 """### ALTERNATIVE: LCMV beamformer ###
