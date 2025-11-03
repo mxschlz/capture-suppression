@@ -10,13 +10,13 @@ import os
 
 
 # plotting switch
-plot = True
+plot = False
 save = False
 
 # Define the baseline period for noise calculation (e.g., -200ms to 0ms)
 # This should match the baseline used during epoching.
 noise_tmax = 0.0
-noise_tmin = -0.5
+noise_tmin = -0.2
 signal_tmin = 0.0
 signal_tmax = 0.25
 
