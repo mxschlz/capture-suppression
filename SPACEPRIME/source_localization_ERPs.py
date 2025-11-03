@@ -80,6 +80,10 @@ for subject_id in subject_ids:
             evoked = epochs.average()
             evoked.plot_joint()
 
+        # use standard montage (the existing montage of the epochs is wrong)
+        montage = mne.channels.make_standard_montage("standard_1005")
+        epochs.set_montage(montage)
+
         # Coregistration
         dig = epochs.info['dig']
         try:
@@ -107,7 +111,7 @@ for subject_id in subject_ids:
                 bem=bem,
                 show_axes=False,
                 dig=True,
-                eeg=True
+                eeg=["original", "projected"],
             )
 
         # Forward solution
