@@ -16,7 +16,7 @@ save = False
 # Define the baseline period for noise calculation (e.g., -200ms to 0ms)
 # This should match the baseline used during epoching.
 noise_tmax = 0.0
-noise_tmin = -0.2
+noise_tmin = -0.5
 signal_tmin = 0.0
 signal_tmax = 0.25
 
@@ -189,9 +189,10 @@ if processed_subjects:
     if plot:
         print("Plotting the grand-average source-space ERP...")
         brain = grand_average_stc.plot(
+            subject='fsaverage',  # Explicitly tell MNE to use the fsaverage brain
             hemi='both',
             initial_time=0.1,
-            clim=dict(kind="value", lims=[-1.0, 0, 1.0]),
+            clim=dict(kind="value", lims=[-0.5, 0, 0.5]),
             colormap='seismic',
             transparent=False,
             time_unit='s',
@@ -200,8 +201,8 @@ if processed_subjects:
             backend="pyvistaqt",
             show_traces=True,
             cortex="classic",
-            surface="inflated",
-            smoothing_steps=10
+            surface="white",
+            smoothing_steps=20
         )
         if save:
             brain.save_movie(tmin=-0.1, tmax=0.4, interpolation='linear', time_dilation=20, framerate=5, time_viewer=True)
