@@ -81,7 +81,7 @@ for subject_id in subject_ids:
             evoked.plot_joint()
 
         # use standard montage (the existing montage of the epochs is wrong)
-        montage = mne.channels.make_standard_montage("standard_1005")
+        montage = mne.channels.make_standard_montage("easycap-M1")
         epochs.set_montage(montage)
 
         # Coregistration
@@ -109,8 +109,8 @@ for subject_id in subject_ids:
                 trans=trans,
                 src=src,
                 bem=bem,
-                show_axes=False,
-                dig=True,
+                show_axes=True,
+                dig=True,  # Only plot EEG channels from dig, not fiducials
                 eeg=["original", "projected"],
             )
 
@@ -199,7 +199,7 @@ if processed_subjects:
             subjects_dir=subjects_dir,
             time_viewer=True,
             backend="pyvistaqt",
-            show_traces=True,
+            show_traces=False,
             cortex="classic",
             surface="white",
             smoothing_steps=20
