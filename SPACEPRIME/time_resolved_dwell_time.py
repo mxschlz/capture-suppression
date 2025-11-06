@@ -153,8 +153,8 @@ merged_df['PrimingCondition'] = merged_df['Priming'].map(priming_map)
 merged_df['Condition'] = np.where(merged_df['SingletonPresent'] == 1, 'Distractor Present', 'Distractor Absent')
 
 # Filter out central starting point data
-outside_center_mask = (merged_df['x']**2 + merged_df['y']**2) > (DWELL_TIME_FILTER_RADIUS**2)
-merged_df = merged_df[outside_center_mask]
+# outside_center_mask = (merged_df['x']**2 + merged_df['y']**2) > (DWELL_TIME_FILTER_RADIUS**2)
+# merged_df = merged_df[outside_center_mask]
 
 print("Data preparation complete.")
 
@@ -201,13 +201,13 @@ def get_total_trials(df_behav, condition_col=None, condition_val=None, s_start=N
 
     return df_subset[['subject_id', 'block', 'trial_nr']].drop_duplicates().shape[0]
 
-# --- Plot 1: Sample-Resolved Dwell Time ---
-print("--- Generating Plot 1: Sample-Resolved Dwell Time ---")
+# --- Plot 1: Phase-Resolved Dwell Time ---
+print("--- Generating Plot 1: Phase-Resolved Dwell Time ---")
 n_bins = len(SAMPLE_BINS)
 fig1, axes1 = plt.subplots(1, n_bins, figsize=(5 * n_bins, 7), sharey=True)
 if n_bins == 1:
     axes1 = [axes1]
-fig1.suptitle('Total Dwell Time, Sample-Resolved', fontsize=20)
+fig1.suptitle('Total Dwell Time, Phase-Resolved', fontsize=20)
 sample_hists = []
 
 for i, (s_start, s_end) in enumerate(SAMPLE_BINS):
@@ -222,7 +222,7 @@ if sample_hists:
     for i, (s_start, s_end) in enumerate(SAMPLE_BINS):
         ax = axes1[i]
         im = ax.imshow(sample_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='inferno', vmax=vmax1, vmin=0)
-        ax.set_title(f'Samples: {s_start} to {s_end}')
+        ax.set_title(f'Phase {i}')
         ax.set_xlabel("X Position (pixels)")
         if i == 0:
             ax.set_ylabel("Y Position (pixels)")
@@ -231,6 +231,33 @@ if sample_hists:
     fig1.subplots_adjust(right=0.9, top=0.85)
     cbar_ax = fig1.add_axes([0.92, 0.15, 0.02, 0.7]) # [left, bottom, width, height]
     fig1.colorbar(im, cax=cbar_ax, label='Average Dwell Time per Trial (s)')
+    plt.show()
+
+# --- Plot 1a: Difference Heatmaps for Phase-Resolved Dwell Time ---
+if len(sample_hists) > 1:
+    print("--- Generating Plot 1a: Difference Heatmaps for Phase-Resolved Dwell Time ---")
+    fig1a, axes1a = plt.subplots(1, len(sample_hists) - 1, figsize=(5 * (len(sample_hists) - 1), 7), sharey=True)
+    if len(sample_hists) - 1 == 1:
+        axes1a = [axes1a]
+    fig1a.suptitle('Difference in Dwell Time Between Consecutive Phases', fontsize=20)
+    
+    diff_hists = []
+    for i in range(len(sample_hists) - 1):
+        diff_hists.append(sample_hists[i+1] - sample_hists[i])
+
+    vmax_diff1 = np.percentile(np.abs(np.concatenate([h.ravel() for h in diff_hists])), 99.9)
+    im_diff = None
+    for i, diff_hist in enumerate(diff_hists):
+        ax = axes1a[i]
+        im_diff = ax.imshow(diff_hist, extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='coolwarm', vmax=vmax_diff1, vmin=-vmax_diff1)
+        ax.set_title(f'Phase {i+1} - Phase {i}')
+        ax.set_xlabel("X Position (pixels)")
+        if i == 0:
+            ax.set_ylabel("Y Position (pixels)")
+
+    fig1a.subplots_adjust(right=0.9, top=0.85)
+    cbar_ax = fig1a.add_axes([0.92, 0.15, 0.02, 0.7])
+    fig1a.colorbar(im_diff, cax=cbar_ax, label='Difference in Average Dwell Time (s)')
     plt.show()
 
 
@@ -264,6 +291,25 @@ if distractor_hists:
     fig2.colorbar(im, cax=cbar_ax, label='Average Dwell Time per Trial (s)')
     plt.show()
 
+# --- Plot 2a: Difference Heatmap for Distractor Presence ---
+if len(distractor_hists) == 2:
+    print("--- Generating Plot 2a: Difference Heatmap for Distractor Presence ---")
+    fig2a, ax2a = plt.subplots(1, 1, figsize=(8, 7))
+    fig2a.suptitle('Dwell Time Difference: Distractor Present vs. Absent', fontsize=20)
+    
+    diff_hist = distractor_hists[0] - distractor_hists[1] # Present - Absent
+    
+    vmax_diff2 = np.percentile(np.abs(diff_hist), 99.9)
+    im_diff = ax2a.imshow(diff_hist, extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='coolwarm', vmax=vmax_diff2, vmin=-vmax_diff2)
+    ax2a.set_title('Present - Absent')
+    ax2a.set_xlabel("X Position (pixels)")
+    ax2a.set_ylabel("Y Position (pixels)")
+
+    fig2a.subplots_adjust(right=0.85)
+    cbar_ax = fig2a.add_axes([0.87, 0.15, 0.03, 0.7])
+    fig2a.colorbar(im_diff, cax=cbar_ax, label='Difference in Average Dwell Time (s)')
+    plt.show()
+
 
 # --- Plot 3: Dwell Time by Priming Condition ---
 print("--- Generating Plot 3: Dwell Time by Priming Condition ---")
@@ -293,4 +339,32 @@ if priming_hists:
     fig3.subplots_adjust(right=0.9, top=0.85)
     cbar_ax = fig3.add_axes([0.92, 0.15, 0.02, 0.7])
     fig3.colorbar(im, cax=cbar_ax, label='Average Dwell Time per Trial (s)')
+    plt.show()
+
+# --- Plot 3a: Difference Heatmaps for Priming Condition ---
+if len(priming_hists) == 3:
+    print("--- Generating Plot 3a: Difference Heatmaps for Priming Condition ---")
+    fig3a, axes3a = plt.subplots(1, 2, figsize=(15, 7), sharey=True)
+    fig3a.suptitle('Dwell Time Difference Relative to No Priming', fontsize=20)
+    
+    # hists are [Positive, No, Negative]
+    diff_pos_vs_no = priming_hists[0] - priming_hists[1]
+    diff_neg_vs_no = priming_hists[2] - priming_hists[1]
+    
+    diff_hists = [diff_pos_vs_no, diff_neg_vs_no]
+    titles = ['Positive - No Priming', 'Negative - No Priming']
+
+    vmax_diff3 = np.percentile(np.abs(np.concatenate([h.ravel() for h in diff_hists])), 99.9)
+    im_diff = None
+    for i, diff_hist in enumerate(diff_hists):
+        ax = axes3a[i]
+        im_diff = ax.imshow(diff_hist, extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='coolwarm', vmax=vmax_diff3, vmin=-vmax_diff3)
+        ax.set_title(titles[i])
+        ax.set_xlabel("X Position (pixels)")
+        if i == 0:
+            ax.set_ylabel("Y Position (pixels)")
+
+    fig3a.subplots_adjust(right=0.9, top=0.85)
+    cbar_ax = fig3a.add_axes([0.92, 0.15, 0.02, 0.7])
+    fig3a.colorbar(im_diff, cax=cbar_ax, label='Difference in Average Dwell Time (s)')
     plt.show()
