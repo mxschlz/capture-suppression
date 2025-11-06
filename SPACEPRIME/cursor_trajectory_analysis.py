@@ -25,7 +25,7 @@ SIGMA = 25
 FILTER_PHASE = 2
 OUTLIER_THRESHOLD = 2
 WINDOW_SIZE = 31
-RESAMP_FREQ = 100
+RESAMP_FREQ = 50
 SUB_BLOCKS_PER_BLOCK = 2
 TRAJECTORY_BOUNDARY_DVA = 2
 
@@ -415,7 +415,7 @@ print(f"Remaining trials for analysis: {len(analysis_df)}")
 # ===================================================================
 #       VISUALIZE DERIVED CAPTURE SCORES BY PRIMING & BLOCK
 # ===================================================================
-print("\n--- Visualizing Derived Capture Scores by Priming Condition and Block ---")
+print("\\n--- Visualizing Derived Capture Scores by Priming Condition and Block ---")
 
 # Define the scores to plot and their user-friendly titles
 scores_to_plot = {
@@ -755,7 +755,7 @@ plt.show()
 analysis_df["SingletonPresent"] = analysis_df["SingletonPresent"].astype(bool)
 towardness_df = analysis_df[['subject_id', 'block', 'trial_nr', 'target_towardness', "rt", "select_target",
                              "PrimingCondition", "SingletonPresent"]]
-output_path = f'{SPACEPRIME.get_data_path()}concatenated\\target_towardness.csv'
+output_path = f'{SPACEPRIME.get_data_path()}concatenated/target_towardness.csv'
 towardness_df.to_csv(output_path, index=True)
 
 # ===================================================================
@@ -895,7 +895,7 @@ analysis_df_classification['initial_movement_direction'] = analysis_df_classific
 # ===================================================================
 print("\n--- Saving Initial Movement Classifications for external use ---")
 # Define a dedicated output directory for this script's results
-output_dir_cursor = f"{get_data_path()}concatenated\\"
+output_dir_cursor = f"{get_data_path()}concatenated/"
 
 # Select only the essential columns for saving
 output_df = analysis_df_classification[['subject_id', 'block', 'trial_nr', 'initial_movement_direction']].copy()
