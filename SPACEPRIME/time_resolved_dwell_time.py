@@ -44,8 +44,6 @@ SCREEN_SIZE_CM_X = 40
 VIEWING_DISTANCE_CM = 70
 DWELL_TIME_FILTER_RADIUS = 0.4
 SIGMA = 25
-FILTER_PHASE = 2
-OUTLIER_THRESHOLD = 2
 
 # ===================================================================
 # Data Loading and Preparation
