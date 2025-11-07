@@ -109,3 +109,51 @@ ax2.set_xlabel("Target at High-Probability Distractor Location")
 ax2.set_ylabel("Accuracy (%)")
 plt.tight_layout()
 plt.show()
+
+# --- Performance when target is at the high-probability distractor location ---
+
+# NOTE: This assumes a column 'high_prob_loc' exists in your dataframe,
+# which we will create now.
+
+# 1. Find the single high-probability location for each subject.
+# We can get this by looking at the 'SingletonLoc' on any 'high-probability' trial for that subject.
+high_prob_loc_map = df[df['DistractorProb'] == 'high-probability'].drop_duplicates('subject_id').set_index('subject_id')['SingletonLoc']
+
+# 2. Map this location back to all trials for each subject.
+df['high_prob_loc'] = df['subject_id'].map(high_prob_loc_map)
+
+# 3. Now, correctly identify trials where the target appeared at that high-probability location.
+df["distractor_at_high_prob_loc"] = df["SingletonLoc"] == df["high_prob_loc"]
+# Calculate the mean performance for each subject under each condition
+df_distractorloc_mean = df.groupby(["subject_id", "distractor_at_high_prob_loc"])["select_target"].mean().reset_index()
+
+# Print the overall mean accuracy for each condition
+print("Mean accuracy based on distractor location relative to high-probability distractor location:")
+print(df_distractorloc_mean.groupby("distractor_at_high_prob_loc")["select_target"].mean())
+
+# Create a new figure to visualize the results
+fig2, ax2 = plt.subplots(figsize=(6, 5))
+
+order2 = [False, True]
+sns.barplot(data=df_distractorloc_mean, x="distractor_at_high_prob_loc", y="select_target",
+            ax=ax2, errorbar=("ci", 95), capsize=.1, palette="viridis", order=order2)
+
+sns.lineplot(data=df_distractorloc_mean, x="distractor_at_high_prob_loc", y="select_target",
+             hue="subject_id", estimator=None,
+             linewidth=1, ax=ax2, palette="tab10")
+
+# --- Pairwise comparisons ---
+pairwise_tests2 = pg.pairwise_tests(data=df_distractorloc_mean, dv='select_target', within='distractor_at_high_prob_loc', subject='subject_id', effsize='cohen')
+stat_2 = pairwise_tests2.iloc[0]
+x1, x2 = 0, 1
+y_max2 = df_distractorloc_mean['select_target'].max()
+y, h, col = y_max2 + 0.01, 0.01, 'k'
+ax2.plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
+ax2.text((x1+x2)*.5, y+h, f"d={stat_2['cohen']:.2f}", ha='center', va='bottom', color=col)
+
+ax2.set_ylim(top=y_max2 + 0.05)
+
+ax2.set_xlabel("distractor at High-Probability Distractor Location")
+ax2.set_ylabel("Accuracy (%)")
+plt.tight_layout()
+plt.show()
