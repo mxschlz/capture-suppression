@@ -151,8 +151,8 @@ merged_df['PrimingCondition'] = merged_df['Priming'].map(priming_map)
 merged_df['Condition'] = np.where(merged_df['SingletonPresent'] == 1, 'Distractor Present', 'Distractor Absent')
 
 # Filter out central starting point data
-# outside_center_mask = (merged_df['x']**2 + merged_df['y']**2) > (DWELL_TIME_FILTER_RADIUS**2)
-# merged_df = merged_df[outside_center_mask]
+outside_center_mask = (merged_df['x']**2 + merged_df['y']**2) > (DWELL_TIME_FILTER_RADIUS**2)
+merged_df = merged_df[outside_center_mask]
 
 print("Data preparation complete.")
 
