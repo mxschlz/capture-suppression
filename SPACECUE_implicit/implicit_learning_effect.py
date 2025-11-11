@@ -8,7 +8,7 @@ import pingouin as pg
 import numpy as np
 
 
-FILTER_PHASE = 2
+FILTER_PHASE = 99
 OUTLIER_THRESH = 2
 
 data_path = SPACECUE_implicit.get_data_path()
@@ -16,7 +16,7 @@ subjects = sorted(f"{data_path}/derivatives/preprocessing/sci-99/beh/")
 df = pd.concat([pd.read_csv(f"{data_path}/derivatives/preprocessing/sci-99/beh/control/{file}") for file in os.listdir(f"{data_path}/derivatives/preprocessing/sci-99/beh/control")])
 
 df = df.query(f"phase!={FILTER_PHASE}")
-df = df.query('DistractorProb != "distractor-absent"')
+df = df.query('SingletonLoc != 2')
 
 df["select_target"] = df["select_target"].astype(float)
 df = remove_outliers(df, threshold=OUTLIER_THRESH, column_name="rt")
@@ -24,20 +24,19 @@ df = remove_outliers(df, threshold=OUTLIER_THRESH, column_name="rt")
 df_mean = df.groupby(["subject_id", "DistractorProb"])[["rt", "select_target"]].mean().reset_index()
 
 df_mean['DistractorProb'] = pd.Categorical(df_mean['DistractorProb'], categories=["low-probability", "high-probability"], ordered=True)
-df_mean = df_mean.sort_values('DistractorProb')
 
 fig, ax = plt.subplots()
 
 order = ["low-probability", "high-probability"]
-sns.barplot(data=df_mean, x="DistractorProb", y="select_target", ax=ax,
+sns.barplot(data=df_mean, x="DistractorProb", y="rt", ax=ax,
             errorbar=("se", 1), facecolor=(0, 0, 0, 0), edgecolor=".2", order=order)
 
-sns.lineplot(data=df_mean, x="DistractorProb", y="select_target",
+sns.lineplot(data=df_mean, x="DistractorProb", y="rt",
              hue="subject_id", estimator=None,
              linewidth=1, ax=ax, palette="tab10")
 
 # --- Pairwise comparisons ---
-pairwise_tests = pg.pairwise_tests(data=df_mean, dv='select_target', within='DistractorProb', subject='subject_id', effsize='cohen')
+pairwise_tests = pg.pairwise_tests(data=df_mean, dv='rt', within='DistractorProb', subject='subject_id', effsize='cohen')
 
 def p_to_asterisks(p):
     if p < 0.001: return '***'
@@ -45,7 +44,7 @@ def p_to_asterisks(p):
     if p < 0.05: return '*'
     return 'ns'
 
-y_max = df_mean['select_target'].max()
+y_max = df_mean['rt'].max()
 y_pos = y_max + 0.05
 h = 0.02
 
