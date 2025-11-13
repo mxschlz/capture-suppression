@@ -753,7 +753,7 @@ plt.show()
 
 # save target towardness
 analysis_df["SingletonPresent"] = analysis_df["SingletonPresent"].astype(bool)
-towardness_df = analysis_df[['subject_id', 'block', 'trial_nr', 'target_towardness', "rt", "select_target",
+towardness_df = analysis_df[['subject_id', 'block', 'trial_nr', 'target_towardness', 'distractor_towardness', "rt", "select_target",
                              "PrimingCondition", "SingletonPresent"]]
 output_path = f'{SPACEPRIME.get_data_path()}concatenated/target_towardness.csv'
 towardness_df.to_csv(output_path, index=True)
