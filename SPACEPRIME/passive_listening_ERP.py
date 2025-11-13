@@ -44,7 +44,7 @@ for key in conditions.keys():
     # We test the difference wave against 0.
     t_obs, clusters, cluster_p_values, _ = permutation_cluster_1samp_test(
         subject_diff,
-        n_permutations=1024,  # For a real analysis, 5000+ is recommended
+        n_permutations=10000,  # For a real analysis, 5000+ is recommended
         threshold=None,  # Use default t-threshold
         tail=0,  # Two-tailed test
         n_jobs=-1,  # Use all available CPU cores
@@ -102,3 +102,119 @@ fig.legend(unique_labels.values(), unique_labels.keys(), loc='upper right')
 
 sns.despine(fig=fig)
 fig.tight_layout(rect=[0, 0, 1, 0.96])  # Adjust layout to make space for legend
+
+# --- 4. Compare Difference Waves Across Conditions ---
+
+print("\n--- Comparing Difference Waves Across Conditions ---")
+
+# We need the subject-level difference waves (Contra - Ipsi) calculated earlier.
+# Let's store them in a dictionary for the new comparison.
+subject_diffs = {}
+for key in conditions.keys():
+    contra = np.array(subject_data[f'contra_{key}'])
+    ipsi = np.array(subject_data[f'ipsi_{key}'])
+    if contra.size > 0 and ipsi.size > 0:
+        subject_diffs[key] = contra - ipsi
+
+# --- 4a. Statistical Comparison between Difference Waves ---
+# We'll run a paired cluster-based permutation test for each pair of conditions.
+# This is done by taking the difference of the difference waves for each subject
+# and testing if that new value is significantly different from zero.
+
+# Define the pairs of conditions to compare
+comparisons = [
+    ("target", "singleton"),
+    ("target", "control"),
+    ("singleton", "control")
+]
+
+pairwise_stats_results = {}
+for cond1, cond2 in comparisons:
+    print(f"Running stats for {cond1} vs. {cond2}...")
+    # Ensure we have data for both conditions to compare
+    if cond1 not in subject_diffs or cond2 not in subject_diffs:
+        print(f"Skipping {cond1} vs. {cond2} due to missing data.")
+        continue
+
+    # Create the paired difference for each subject: (cond1_diff - cond2_diff)
+    X = subject_diffs[cond1] - subject_diffs[cond2]
+
+    # Test this new difference wave against 0.
+    t_obs, clusters, cluster_p_values, _ = permutation_cluster_1samp_test(
+        X,
+        n_permutations=10000,
+        threshold=None,  # Use MNE's default
+        tail=0,          # Two-tailed test
+        n_jobs=-1,
+        verbose=False
+    )
+
+    # Store significant clusters
+    significant_clusters = [clusters[i] for i, p_val in enumerate(cluster_p_values) if p_val < 0.05]
+    pairwise_stats_results[f"{cond1}_vs_{cond2}"] = significant_clusters
+    print(f"Found {len(significant_clusters)} significant cluster(s) for {cond1} vs. {cond2}.")
+
+
+# --- 4b. Plot the Comparison of Difference Waves ---
+fig_comp, ax_comp = plt.subplots(1, 1, figsize=(12, 7))
+
+# Define colors for clarity
+comp_colors = {
+    "target": "darkorange",
+    "singleton": "dodgerblue",
+    "control": "darkgrey"
+}
+
+# Plot each grand-average difference wave
+for key, title in conditions.items():
+    if key not in subject_diffs:  # Check if data exists
+        continue
+    diff_wave = grand_average[f'contra_{key}'][0] - grand_average[f'ipsi_{key}'][0]
+    ax_comp.plot(times, diff_wave * to_microvolts, color=comp_colors[key], label=f"{title} Difference")
+
+# Add reference lines
+ax_comp.axhline(0, color='black', linestyle='-', linewidth=0.7)
+ax_comp.axvline(0, color='black', linestyle=':', linewidth=0.7)
+
+# --- Visualize the statistical results ---
+# We'll add horizontal bars at the bottom of the plot to show significant differences.
+
+# Add some space at the bottom for the significance bars
+ax_comp.set_ylim(bottom=ax_comp.get_ylim()[0] * 1.25)
+ylim = ax_comp.get_ylim()
+y_range = ylim[1] - ylim[0]
+
+# Define vertical positions and colors for the bars
+sig_bar_config = {
+    "target_vs_singleton": (ylim[0] + 0.18 * y_range, "purple"),
+    "target_vs_control": (ylim[0] + 0.10 * y_range, "green"),
+    "singleton_vs_control": (ylim[0] + 0.02 * y_range, "saddlebrown")
+}
+
+legend_handles = []
+
+for comp_key, (y_val, color) in sig_bar_config.items():
+    if comp_key in pairwise_stats_results and pairwise_stats_results[comp_key]:
+        # Create a handle for the legend
+        label = f"{comp_key.replace('_', ' ').replace('vs', 'vs.')} p < 0.05"
+        legend_handles.append(plt.Line2D([], [], color=color, linewidth=5, label=label))
+
+        # Plot all significant clusters for this comparison
+        for cluster in pairwise_stats_results[comp_key]:
+            time_slice = cluster[1]
+            start_time = times[time_slice.start]
+            end_time = times[time_slice.stop - 1]
+            ax_comp.plot([start_time, end_time], [y_val, y_val], color=color, linewidth=5, solid_capstyle='butt')
+
+# --- Configure plot aesthetics ---
+ax_comp.set_title("Comparison of Difference Waves (Contralateral - Ipsilateral)")
+ax_comp.set_xlabel("Time [s]")
+ax_comp.set_ylabel("Amplitude [µV]")
+
+# Create a combined legend
+line_handles, line_labels = ax_comp.get_legend_handles_labels()
+ax_comp.legend(handles=line_handles + legend_handles, loc='upper left', fontsize='small')
+
+sns.despine(fig=fig_comp)
+fig_comp.tight_layout()
+plt.show()
