@@ -35,7 +35,7 @@ LEFT_ROI_TARGET = ["C3"]
 RIGHT_ROI_TARGET = ["C4"]
 
 # Epoching and Plotting
-EPOCH_TMIN, EPOCH_TMAX = 0.0, 0.7  # Seconds
+EPOCH_TMIN, EPOCH_TMAX = -0.1, 0.7  # Seconds
 AMPLITUDE_SCALE_FACTOR = 1e6
 
 # Cluster Permutation Test Parameters
