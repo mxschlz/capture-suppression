@@ -13,6 +13,9 @@ import os
 plot = False
 save = False
 
+# define paradigm
+paradigm = "spaceprime"
+
 # Define the baseline period for noise calculation (e.g., -200ms to 0ms)
 # This should match the baseline used during epoching.
 noise_tmax = 0.0
@@ -28,6 +31,11 @@ subjects_dir = mne.datasets.fetch_fsaverage(verbose=True)
 if subjects_dir.name == "fsaverage":
     subjects_dir = subjects_dir.parent
 
+
+# --- Create a directory for saving source estimates ---
+stc_dir = os.path.join(SPACEPRIME.get_data_path(), "derivatives", "source_localization_dSPM")
+os.makedirs(stc_dir, exist_ok=True)
+
 # Set up the source space
 # This defines the cortical grid.
 src = mne.setup_source_space(subject = "fsaverage",
@@ -37,6 +45,13 @@ src = mne.setup_source_space(subject = "fsaverage",
 if plot:
     print("Plotting source space...")
     src.plot(subjects_dir=subjects_dir)
+
+# --- Save the source space ---
+src_dir = os.path.join(SPACEPRIME.get_data_path(), "derivatives")
+os.makedirs(src_dir, exist_ok=True)
+src_fname = os.path.join(src_dir, "fsaverage-ico3-src.fif")
+mne.write_source_spaces(src_fname, src, overwrite=True)
+
 
 # Create boundary element model (BEM) with 3 layers: scalp, skull and brain tissue
 model = mne.make_bem_model(subject="fsaverage",
@@ -55,10 +70,6 @@ if plot:
                      orientation="sagittal",
                      slices=[50, 100, 150, 200])
 
-# --- Create a directory for saving source estimates ---
-stc_dir = os.path.join(SPACEPRIME.get_data_path(), "derivatives", "source_localization_dSPM")
-os.makedirs(stc_dir, exist_ok=True)
-
 # --- Loop through subjects for multi-subject analysis ---
 processed_subjects = []
 
@@ -67,7 +78,7 @@ for subject_id in subject_ids:
 
     try:
         # Load epoched data
-        epochs_path = f"{SPACEPRIME.get_data_path()}derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-spaceprime-epo.fif"
+        epochs_path = f"{SPACEPRIME.get_data_path()}derivatives/epoching/sub-{subject_id}/eeg/sub-{subject_id}_task-{paradigm}-epo.fif"
         if not os.path.exists(epochs_path):
             print(f"Epochs file not found for subject {subject_id}. Skipping.")
             continue
@@ -116,6 +127,15 @@ for subject_id in subject_ids:
 
         # Forward solution
         fwd = mne.make_forward_solution(epochs.info, trans=trans, src=src, bem=bem, meg=False, eeg=True, mindist=0.0, n_jobs=-1)
+        
+        # --- Create a directory for saving forward and inverse solutions ---
+        solutions_dir = os.path.join(stc_dir, f"sub-{subject_id}")
+        os.makedirs(solutions_dir, exist_ok=True)
+
+        # Save forward solution
+        fwd_fname = os.path.join(solutions_dir, f"sub-{subject_id}_task-{paradigm}-fwd.fif")
+        mne.write_forward_solution(fwd_fname, fwd, overwrite=True)
+        print(f"Saved forward solution for subject {subject_id} to {fwd_fname}")
 
         # Noise covariance
         noise_cov = mne.compute_covariance(epochs, tmax=noise_tmax, tmin=noise_tmin, method='empirical', rank=None, verbose=False)
@@ -126,6 +146,11 @@ for subject_id in subject_ids:
 
         # Inverse operator
         inverse_operator = mne.minimum_norm.make_inverse_operator(epochs.info, fwd, noise_cov, rank=None, loose="auto", depth=0.8, verbose=False)
+        
+        # Save inverse operator
+        inv_fname = os.path.join(solutions_dir, f"sub-{subject_id}_task-{paradigm}-inv.fif")
+        mne.minimum_norm.write_inverse_operator(inv_fname, inverse_operator, overwrite=True)
+        print(f"Saved inverse operator for subject {subject_id} to {inv_fname}")
 
         # Apply inverse solution
         lambda2 = 1.0 / 3.0 ** 2
@@ -155,7 +180,7 @@ for subject_id in subject_ids:
             )
 
         # Save the individual subject's source ERP
-        stc_filename = os.path.join(stc_dir, f"sub-{subject_id}_task-spaceprime_desc-dSPM-erp")
+        stc_filename = os.path.join(solutions_dir, f"sub-{subject_id}_task-{paradigm}_desc-dSPM-erp")
         erp_stc.save(stc_filename, overwrite=True)
         print(f"Saved source ERP for subject {subject_id} to {stc_filename}-stc.h5")
 
@@ -179,10 +204,50 @@ for subject_id in subject_ids:
 print("\n--- Computing Grand-Average Source ERP ---")
 stcs_to_average = []
 for subject_id in subject_ids:
-    stc_filename = os.path.join(stc_dir, f"sub-{subject_id}_task-spaceprime_desc-dSPM-erp")
+    stc_filename = os.path.join(os.path.join(stc_dir, f"sub-{subject_id}"), f"sub-{subject_id}_task-{paradigm}_desc-dSPM-erp")
     stcs_to_average.append(mne.read_source_estimate(stc_filename))
 
 grand_average_stc = sum(stcs_to_average) / len(stcs_to_average)
+
+# --- Extract and Plot Activity from a Region of Interest (ROI) ---
+# The "scattered" plot shows all ~2500 source time courses at once.
+# To get a clean ERP-like waveform, we can average the activity
+# within an anatomically defined Region of Interest (ROI).
+# Here, we'll use the auditory cortex (transverse temporal gyrus).
+
+print("\n--- Extracting and plotting ROI: Auditory Cortex ---")
+
+# A robust way to get anatomical labels is to read them from an atlas annotation.
+# We'll use the 'aparc' (Desikan-Killiany) atlas which is standard with fsaverage.
+labels = mne.read_labels_from_annot(
+    subject='fsaverage',
+    parc='aparc',
+    subjects_dir=subjects_dir
+)
+# The label for the auditory cortex is 'transversetemporal'.
+aud_label_lh = [label for label in labels if label.name == 'transversetemporal-lh'][0]
+aud_label_rh = [label for label in labels if label.name == 'transversetemporal-rh'][0]
+
+# Extract the source time courses within the label
+stc_aud_lh = grand_average_stc.in_label(aud_label_lh)
+stc_aud_rh = grand_average_stc.in_label(aud_label_rh)
+
+# Average the activity across all sources within the ROI for each hemisphere
+# The .mean(axis=0) averages across the vertices in the label.
+roi_erp_lh = stc_aud_lh.data.mean(axis=0)
+roi_erp_rh = stc_aud_rh.data.mean(axis=0)
+
+# Plot the results using Matplotlib for a clear view
+fig, ax = plt.subplots()
+ax.plot(grand_average_stc.times, roi_erp_lh, 'r', label='Auditory Cortex (Left)')
+ax.plot(grand_average_stc.times, roi_erp_rh, 'b', label='Auditory Cortex (Right)')
+ax.set_title("Grand-Average ERP in Auditory Cortex (dSPM)")
+ax.set_xlabel("Time (s)")
+ax.set_ylabel("dSPM activation (AU)")
+ax.legend()
+ax.axvline(0, linestyle='--', color='k', linewidth=1)
+ax.axhline(0, linestyle='-', color='k', linewidth=1)
+plt.show()
 
 # Plot the grand-average source-space ERP
 if plot:
@@ -196,20 +261,23 @@ if plot:
         transparent=False,
         time_unit='s',
         subjects_dir=subjects_dir,
-        time_viewer=True,
+        time_viewer=True,  # Deactivate the default time course viewer
         backend="pyvistaqt",
-        show_traces=False,
+        show_traces=True,  # Ensure traces are shown
         cortex="classic",
-        surface="white",
+        surface="inflated",
         smoothing_steps=20
     )
+    brain.add_label(aud_label_lh, borders=True, color="limegreen", alpha=0.9)
+    brain.add_label(aud_label_rh, borders=True, color="limegreen", alpha=0.9)
+
     if save:
         brain.save_movie(tmin=-0.1, tmax=0.4, interpolation='linear', time_dilation=20, framerate=5, time_viewer=True)
 
 del stcs_to_average, grand_average_stc
 
 
-"""### ALTERNATIVE: LCMV beamformer ###
+'''### ALTERNATIVE: LCMV beamformer ###
 # make data cov
 data_cov = mne.compute_covariance(epochs, tmin=signal_tmin, tmax=signal_tmax, method="empirical")
 # make noise cov
@@ -256,4 +324,4 @@ if save:
     # The documentation website's movie is generated with:
     brain.save_movie(tmin=-0.1, tmax=0.4, interpolation='linear',
                       time_dilation=20, framerate=5, time_viewer=True)
-"""
+'''
