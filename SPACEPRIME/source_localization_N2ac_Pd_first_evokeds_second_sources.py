@@ -1,5 +1,4 @@
 import mne
-import numpy as np
 import matplotlib.pyplot as plt
 import os
 from SPACEPRIME import get_data_path, load_concatenated_epochs
@@ -17,6 +16,7 @@ REACTION_TIME_COL = 'rt'
 PHASE_COL = 'phase'
 
 # --- 2. General Script Parameters --_
+SAVE_PLOTS = True # Set to True to save brain plots as images
 
 # Source Localization Specific Parameters
 # get standard fMRI head model
@@ -56,7 +56,7 @@ print(f"Original number of trials: {len(epochs)}")
 # Get metadata for preprocessing
 df = epochs.metadata.copy().reset_index(drop=True)
 
-"""# 1. Filter by phase
+# 1. Filter by phase
 if PHASE_COL in df.columns and FILTER_PHASE is not None:
     print(f"Filtering out trials from phase {FILTER_PHASE}...")
     df = df[df[PHASE_COL] != FILTER_PHASE]
@@ -67,7 +67,7 @@ if REACTION_TIME_COL in df.columns:
     print(f"Removing RT outliers (threshold: {OUTLIER_RT_THRESHOLD} SD)...")
     df = remove_outliers(df, column_name=REACTION_TIME_COL, threshold=OUTLIER_RT_THRESHOLD)
     print(f"  Trials remaining after RT outlier removal: {len(df)}")
-"""
+
 # 3. Apply the filter back to the epochs object
 epochs = epochs[df.index]
 epochs.set_eeg_reference('average', projection=True)
@@ -194,66 +194,85 @@ ga_right_distractor = compute_ga(subject_source_estimates['right_distractor'])
 
 print("\n--- 1. Plotting Grand Average of Individual Conditions (Sanity Check) ---")
 
-def plot_ga_condition(stc, condition_name):
+def plot_ga_condition(stc, condition_name, save_flag, out_dir):
     if stc is None:
         print(f"  Skipping plot for {condition_name}: No data.")
         return
     # Find the time of peak activity within the ERP window to set the plot time
-    peak_val, peak_time = stc.copy().crop(ERP_TMIN, ERP_TMAX).get_peak(mode='abs', time_as_index=False)
-    print(f"  Plotting {condition_name} at peak time: {peak_time * 1000:.1f} ms")
-    stc.plot(
+    print(f"  Plotting {condition_name} at peak time: {0.1 * 1000:.1f} ms")
+    brain = stc.plot(
         subject=FSMRI_SUBJ,
         clim="auto",
         hemi='split',
-        size=(800, 400),
-        smoothing_steps=10,
-        initial_time=peak_time,
-        time_label=f'GA {condition_name}\nPeak at {peak_time * 1000:.0f} ms'
+        smoothing_steps=20,
+        initial_time=0.1,
+        time_label=f'GA {condition_name}\nPeak at {0.1 * 1000:.0f} ms'
     )
+    if save_flag:
+        fname = os.path.join(out_dir, f"ga_condition_{condition_name.replace(' ', '_')}.png")
+        brain.save_image(fname)
+        print(f"    ... saved to {fname}")
 
-plot_ga_condition(ga_left_target, "Left Target")
-plot_ga_condition(ga_right_target, "Right Target")
-plot_ga_condition(ga_left_distractor, "Left Distractor")
-plot_ga_condition(ga_right_distractor, "Right Distractor")
+plot_ga_condition(ga_left_target, "Left Target", SAVE_PLOTS)
+plot_ga_condition(ga_right_target, "Right Target", SAVE_PLOTS)
+plot_ga_condition(ga_left_distractor, "Left Distractor", SAVE_PLOTS)
+plot_ga_condition(ga_right_distractor, "Right Distractor", SAVE_PLOTS)
 
 print("\n--- 2. Computing and Plotting Contra-Minus-Ipsi Difference Waves ---")
 
 # --- N2ac (Target) ---
 if ga_left_target and ga_right_target:
-    ga_target_diff_stc = ga_left_target.copy()  # Use as a template
-    # LH: contra (right stim) - ipsi (left stim)
-    ga_target_diff_stc.lh_data = ga_right_target.lh_data - ga_left_target.lh_data
-    # RH: contra (left stim) - ipsi (right stim)
-    ga_target_diff_stc.rh_data = ga_left_target.rh_data - ga_right_target.rh_data
+    # Create the difference wave. We can't assign to .lh_data or .rh_data directly.
+    # Instead, we create a copy and modify its underlying .data array.
+    ga_target_diff_stc = ga_left_target.copy()
+
+    # Get the number of vertices in the left hemisphere to create slices
+    n_verts_lh = len(ga_target_diff_stc.vertices[0])
+
+    # LH difference: contra (right stim) - ipsi (left stim)
+    ga_target_diff_stc.data[:n_verts_lh, :] = ga_right_target.lh_data - ga_left_target.lh_data
+    # RH difference: contra (left stim) - ipsi (right stim)
+    ga_target_diff_stc.data[n_verts_lh:, :] = ga_left_target.rh_data - ga_right_target.rh_data
 
     # Find peak negativity (N2ac) in the difference wave
     _, peak_time_n2ac = ga_target_diff_stc.copy().crop(ERP_TMIN, ERP_TMAX).get_peak(mode='neg', time_as_index=False)
     print(f"  Peak N2ac (contra-ipsi) time found at: {peak_time_n2ac * 1000:.1f} ms")
-    ga_target_diff_stc.plot(
+    brain_n2ac = ga_target_diff_stc.copy().crop(0, 0.5).plot(
         subject=FSMRI_SUBJ, clim="auto", hemi='split', size=(800, 400),
-        smoothing_steps=10, initial_time=peak_time_n2ac,
-        time_label=f'N2ac (Contra-Ipsi)\nPeak at {peak_time_n2ac * 1000:.0f} ms'
+        smoothing_steps=20, initial_time=peak_time_n2ac,
+        time_label=f'Pd (Contra-Ipsi)\nPeak at {peak_time_n2ac * 1000:.0f} ms'
     )
+    if SAVE_PLOTS:
+        fname="diff_wave_N2ac_movie.mp4"
+        brain_n2ac.save_movie(filename=fname, tmin=0, tmax=0.5, interpolation='linear', time_dilation=20, framerate=5, time_viewer=True)
+        print(f"    ... saved to {fname}")
 else:
     print("  Skipping N2ac plot: Missing one or both grand average target STCs.")
 
 # --- Pd (Distractor) ---
 if ga_left_distractor and ga_right_distractor:
-    ga_distractor_diff_stc = ga_left_distractor.copy()  # Use as a template
-    # LH: contra (right stim) - ipsi (left stim)
-    ga_distractor_diff_stc.lh_data = ga_right_distractor.lh_data - ga_left_distractor.lh_data
-    # RH: contra (left stim) - ipsi (right stim)
-    ga_distractor_diff_stc.rh_data = ga_left_distractor.rh_data - ga_right_distractor.rh_data
+    # Create the difference wave for distractors using the same method
+    ga_distractor_diff_stc = ga_left_distractor.copy()
+
+    # The number of vertices will be the same
+    n_verts_lh = len(ga_distractor_diff_stc.vertices[0])
+
+    # LH difference: contra (right stim) - ipsi (left stim)
+    ga_distractor_diff_stc.data[:n_verts_lh, :] = ga_right_distractor.lh_data - ga_left_distractor.lh_data
+    # RH difference: contra (left stim) - ipsi (right stim)
+    ga_distractor_diff_stc.data[n_verts_lh:, :] = ga_left_distractor.rh_data - ga_right_distractor.rh_data
 
     # Find peak positivity (Pd) in the difference wave
     _, peak_time_pd = ga_distractor_diff_stc.copy().crop(ERP_TMIN, ERP_TMAX).get_peak(mode='pos', time_as_index=False)
     print(f"  Peak Pd (contra-ipsi) time found at: {peak_time_pd * 1000:.1f} ms")
-    ga_distractor_diff_stc.plot(
+    brain_pd = ga_distractor_diff_stc.copy().crop(0, 0.5).plot(
         subject=FSMRI_SUBJ, clim="auto", hemi='split', size=(800, 400),
-        smoothing_steps=10, initial_time=peak_time_pd,
+        smoothing_steps=20, initial_time=peak_time_pd,
         time_label=f'Pd (Contra-Ipsi)\nPeak at {peak_time_pd * 1000:.0f} ms'
     )
+    if SAVE_PLOTS:
+        fname="diff_wave_Pd_movie.mp4"
+        brain_pd.save_movie(filename=fname, tmin=0, tmax=0.5, interpolation='linear', time_dilation=20, framerate=5, time_viewer=True)
+        print(f"    ... saved to {fname}")
 else:
     print("  Skipping Pd plot: Missing one or both grand average distractor STCs.")
-
-print("\\nSource localization script finished. Review the generated plots.")
