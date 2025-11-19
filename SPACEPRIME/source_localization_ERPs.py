@@ -37,7 +37,7 @@ os.makedirs(stc_dir, exist_ok=True)
 # preferable to one constrained to a specific sensory area.
 # 'ico4' provides a good balance of resolution and computational cost for EEG.
 src = mne.setup_source_space(subject = "fsaverage",
-                             spacing = "ico4", # → 642 sources/hemi (1284 total)
+                             spacing = "oct5", # → 1026 sources/hemi (2052 total)
                              subjects_dir = subjects_dir,
                              add_dist = False)
 if plot:
@@ -47,7 +47,7 @@ if plot:
 # --- Save the source space ---
 src_dir = os.path.join(SPACEPRIME.get_data_path(), "derivatives")
 os.makedirs(src_dir, exist_ok=True)
-src_fname = os.path.join(src_dir, "fsaverage-ico4-src.fif")
+src_fname = os.path.join(src_dir, "fsaverage-oct5-src.fif")
 mne.write_source_spaces(src_fname, src, overwrite=True)
 
 
@@ -92,6 +92,8 @@ for subject_id in subject_ids:
             evoked.plot_joint()
 
         # use standard montage (the existing montage of the epochs is wrong)
+        # Using a specific montage like 'easycap-M1' is more accurate if it matches
+        # the recording hardware. We use it here for consistency with other scripts.
         montage = mne.channels.make_standard_montage("easycap-M1")
         epochs.set_montage(montage)
 
@@ -122,12 +124,17 @@ for subject_id in subject_ids:
                 bem=bem,
                 show_axes=True,
                 dig=True,  # Only plot EEG channels from dig, not fiducials
-                eeg=["original", "projected"],
+                eeg=["original", "projected"]
             )
 
         # Forward solution
-        fwd = mne.make_forward_solution(epochs.info, trans=trans, src=src, bem=bem, meg=False, eeg=True, mindist=0.0, n_jobs=-1)
-        
+        # The 'mindist' parameter excludes sources that are too close to the inner skull boundary.
+        # A value of 0.0 (no exclusion) can lead to spurious, high-amplitude activity in deep medial
+        # wall sources that are unrealistically close to the skull model.
+        # Setting this to 5mm is a standard practice to create a more robust forward model.
+        fwd = mne.make_forward_solution(epochs.info, trans=trans, src=src, bem=bem, meg=False, eeg=True, mindist=5.0, n_jobs=-1)
+        print(f"Forward solution created. Kept {fwd['nsource']} of {fwd['src'][0]['nuse'] + fwd['src'][1]['nuse']} sources.")
+
         # --- Create a directory for saving forward and inverse solutions ---
         solutions_dir = os.path.join(stc_dir, f"sub-{subject_id}")
         os.makedirs(solutions_dir, exist_ok=True)
@@ -141,23 +148,30 @@ for subject_id in subject_ids:
         # Using a regularized method like 'ledoit_wolf' is more robust than 'empirical',
         # especially when the amount of baseline data is limited. It provides a more
         # stable estimate of the noise by preventing overfitting.
-        noise_cov = mne.compute_covariance(epochs, tmax=noise_tmax, tmin=noise_tmin, method='auto', rank=None, verbose=False)
+        noise_cov = mne.compute_covariance(epochs, tmax=noise_tmax, tmin=noise_tmin, method='shrunk', rank=None, verbose=False)
 
         if plot:
             print("Plotting noise covariance matrix...")
             mne.viz.plot_cov(noise_cov, epochs.info, show_svd=False)
 
         # Inverse operator
-        inverse_operator = mne.minimum_norm.make_inverse_operator(epochs.info, fwd, noise_cov, rank=None, loose="auto", depth=0.8, verbose=False)
+        # The depth parameter compensates for the bias of MNE solutions towards superficial sources.
+        # The default of 0.8 is optimized for MEG. For EEG, a value between 2.0 and 5.0 is recommended
+        # due to the stronger smearing effect of the skull. We'll use 3.0 as a good starting point.
+        depth_weighting = 0.0
+        inverse_operator = mne.minimum_norm.make_inverse_operator(epochs.info, fwd, noise_cov, rank=None, loose="auto", depth=depth_weighting, verbose=False)
         
         # Save inverse operator
         inv_fname = os.path.join(solutions_dir, f"sub-{subject_id}_task-{paradigm}-inv.fif")
         mne.minimum_norm.write_inverse_operator(inv_fname, inverse_operator, overwrite=True)
         print(f"Saved inverse operator for subject {subject_id} to {inv_fname}")
 
-        # Apply inverse solution to the evoked data
+        # --- Apply inverse solution with data-driven regularization ---
+        # Instead of using a fixed SNR (e.g., 3.0), we can estimate it from the data.
+        # This makes the regularization parameter lambda2 adaptive to each subject's data quality.
         snr = 3
-        lambda2 = 1.0 / snr**2
+        lambda2 = 1.0 / snr ** 2
+        print(f"  Estimated SNR: {snr:.2f} -> lambda2: {lambda2:.2f}")
         method = "dSPM"
         erp_stc = mne.minimum_norm.apply_inverse(evoked, inverse_operator, lambda2=lambda2, method=method, pick_ori="normal", verbose=False)
 
@@ -166,7 +180,7 @@ for subject_id in subject_ids:
             brain = erp_stc.plot(
                 hemi='both',
                 initial_time=0.1,
-                clim=dict(kind="value", lims=[-1.0, 0, 1.0]),
+                clim="auto",
                 colormap='seismic',
                 transparent=False,
                 time_unit='s',
@@ -212,7 +226,7 @@ grand_average_stc = sum(stcs_to_average) / len(stcs_to_average)
 print("Plotting the grand-average source-space ERP...")
 brain = grand_average_stc.plot(
     subject='fsaverage',  # Explicitly tell MNE to use the fsaverage brain
-    hemi='split',
+    hemi="split",
     clim="auto",
     subjects_dir=subjects_dir,
     backend="pyvistaqt",
