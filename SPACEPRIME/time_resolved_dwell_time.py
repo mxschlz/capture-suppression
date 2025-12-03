@@ -2,10 +2,13 @@ import os
 from scipy.ndimage import gaussian_filter
 from utils import *
 from SPACEPRIME.subjects import subject_ids
+from SPACEPRIME import get_data_path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import glob
+import seaborn as sns
+sns.set_theme(context="talk", style="ticks")
 
 # Set plot to be interactive
 plt.ion()
@@ -42,8 +45,8 @@ DG_VA = 2
 SCREEN_SIZE_CM_Y = 30
 SCREEN_SIZE_CM_X = 40
 VIEWING_DISTANCE_CM = 70
-DWELL_TIME_FILTER_RADIUS = 0.4
-SIGMA = 25
+DWELL_TIME_FILTER_RADIUS = 0
+SIGMA = 5
 
 # ===================================================================
 # Data Loading and Preparation
@@ -144,7 +147,6 @@ s_end_1 = int(0.25 * sampling_frequency)
 s_end_2 = s_end_1 + int(1.75 * sampling_frequency)
 SAMPLE_BINS = [(0, s_end_1), (s_end_1, s_end_2), (s_end_2, int(max_samples) + 1)]
 
-
 # Create readable condition labels
 priming_map = {1: 'Positive', 0: 'No', -1: 'Negative'}
 merged_df['PrimingCondition'] = merged_df['Priming'].map(priming_map)
@@ -160,7 +162,13 @@ print("Data preparation complete.")
 # Heatmap Generation
 # ===================================================================
 
-def calculate_smoothed_histogram(data, n_trials, sampling_frequency):
+# Define a region of interest to zoom in on the plots
+ROI_WIDTH = 800  # pixels
+ROI_HEIGHT = 400  # pixels
+X_LIMITS = [(WIDTH - ROI_WIDTH) / 2, (WIDTH + ROI_WIDTH) / 2]
+Y_LIMITS = [(HEIGHT - ROI_HEIGHT) / 2, (HEIGHT + ROI_HEIGHT) / 2]
+
+def calculate_smoothed_histogram(data, n_trials, sampling_frequency, phase_duration_s=None):
     """Calculates a smoothed, normalized histogram for the given data."""
     if data.empty or n_trials == 0:
         return np.zeros((HEIGHT, WIDTH))
@@ -172,12 +180,15 @@ def calculate_smoothed_histogram(data, n_trials, sampling_frequency):
 
     hist, _, _ = np.histogram2d(y_shifted, x_shifted, bins=(HEIGHT, WIDTH), range=[[0, HEIGHT], [0, WIDTH]])
 
-    # Normalize by number of trials and sampling frequency
-    if sampling_frequency > 0:
+    # Normalize to get average dwell time in seconds per trial
+    if sampling_frequency > 0 and n_trials > 0:
         hist = hist / (n_trials * sampling_frequency)
-    else:
-        hist = hist / n_trials # Fallback if frequency is 0
+    elif n_trials > 0:
+        hist = hist / n_trials  # Fallback if frequency is 0
 
+    # If phase duration is provided, normalize by it to get proportion of time
+    if phase_duration_s and phase_duration_s > 0:
+        hist = (hist / phase_duration_s) * 100
     return gaussian_filter(hist, sigma=SIGMA)
 
 def get_total_trials(df_behav, condition_col=None, condition_val=None, s_start=None, s_end=None):
@@ -205,31 +216,46 @@ n_bins = len(SAMPLE_BINS)
 fig1, axes1 = plt.subplots(1, n_bins, figsize=(5 * n_bins, 7), sharey=True)
 if n_bins == 1:
     axes1 = [axes1]
-fig1.suptitle('Total Dwell Time, Phase-Resolved', fontsize=20)
 sample_hists = []
 
 for i, (s_start, s_end) in enumerate(SAMPLE_BINS):
     subset_df = merged_df[(merged_df['sample_in_trial'] >= s_start) & (merged_df['sample_in_trial'] < s_end)]
     n_trials_in_bin = get_total_trials(merged_df, s_start=s_start, s_end=s_end)
-    hist = calculate_smoothed_histogram(subset_df, n_trials_in_bin, sampling_frequency)
+    phase_duration_s = (s_end - s_start) / sampling_frequency
+    hist = calculate_smoothed_histogram(subset_df, n_trials_in_bin, sampling_frequency, phase_duration_s=phase_duration_s)
     sample_hists.append(hist)
 
 if sample_hists:
+    # Use a single vmax for all panels, as they are now comparable proportions
     vmax1 = np.percentile(np.concatenate([h.ravel() for h in sample_hists]), 99.9)
+
     im = None # Initialize im to be accessible for colorbar
     for i, (s_start, s_end) in enumerate(SAMPLE_BINS):
         ax = axes1[i]
         im = ax.imshow(sample_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='inferno', vmax=vmax1, vmin=0)
-        ax.set_title(f'Phase {i}')
+        
+        # Set aspect ratio and zoom
+        ax.set_aspect(ROI_WIDTH / ROI_HEIGHT)
+        ax.set_xlim(X_LIMITS)
+        ax.set_ylim(Y_LIMITS)
+
+        if i == 0:
+            ax.set_title(f'Stimulus presentation')
+        elif i == 1:
+            ax.set_title(f'Response interval')
+        elif i == 2:
+            ax.set_title(f"ITI")
+
         ax.set_xlabel("X Position (pixels)")
         if i == 0:
             ax.set_ylabel("Y Position (pixels)")
-
-    # Adjust subplot layout to make room for the colorbar
+    
+    # Add a shared colorbar for all plots
     fig1.subplots_adjust(right=0.9, top=0.85)
-    cbar_ax = fig1.add_axes([0.92, 0.15, 0.02, 0.7]) # [left, bottom, width, height]
-    fig1.colorbar(im, cax=cbar_ax, label='Average Dwell Time per Trial (s)')
+    cbar_ax = fig1.add_axes([0.92, 0.15, 0.02, 0.7])
+    fig1.colorbar(im, cax=cbar_ax, label='Dwell time (% of Phase)')
     plt.show()
+plt.savefig(f"{get_data_path()}plots/cursor_dwell_time_phases.svg")
 
 # --- Plot 1a: Difference Heatmaps for Phase-Resolved Dwell Time ---
 if len(sample_hists) > 1:
@@ -248,6 +274,11 @@ if len(sample_hists) > 1:
     for i, diff_hist in enumerate(diff_hists):
         ax = axes1a[i]
         im_diff = ax.imshow(diff_hist, extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='coolwarm', vmax=vmax_diff1, vmin=-vmax_diff1)
+        
+        # Set aspect ratio and zoom
+        ax.set_aspect(ROI_WIDTH / ROI_HEIGHT)
+        ax.set_xlim(X_LIMITS)
+        ax.set_ylim(Y_LIMITS)
         ax.set_title(f'Phase {i+1} - Phase {i}')
         ax.set_xlabel("X Position (pixels)")
         if i == 0:
@@ -278,6 +309,11 @@ if distractor_hists:
     for i, cond in enumerate(distractor_conditions):
         ax = axes2[i]
         im = ax.imshow(distractor_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='inferno', vmax=vmax2, vmin=0)
+        
+        # Set aspect ratio and zoom
+        ax.set_aspect(ROI_WIDTH / ROI_HEIGHT)
+        ax.set_xlim(X_LIMITS)
+        ax.set_ylim(Y_LIMITS)
         ax.set_title(cond)
         ax.set_xlabel("X Position (pixels)")
         if i == 0:
@@ -299,6 +335,11 @@ if len(distractor_hists) == 2:
     
     vmax_diff2 = np.percentile(np.abs(diff_hist), 99.9)
     im_diff = ax2a.imshow(diff_hist, extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='coolwarm', vmax=vmax_diff2, vmin=-vmax_diff2)
+    
+    # Set aspect ratio and zoom
+    ax2a.set_aspect(ROI_WIDTH / ROI_HEIGHT)
+    ax2a.set_xlim(X_LIMITS)
+    ax2a.set_ylim(Y_LIMITS)
     ax2a.set_title('Present - Absent')
     ax2a.set_xlabel("X Position (pixels)")
     ax2a.set_ylabel("Y Position (pixels)")
@@ -328,6 +369,11 @@ if priming_hists:
     for i, cond in enumerate(priming_conditions):
         ax = axes3[i]
         im = ax.imshow(priming_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='inferno', vmax=vmax3, vmin=0)
+        
+        # Set aspect ratio and zoom
+        ax.set_aspect(ROI_WIDTH / ROI_HEIGHT)
+        ax.set_xlim(X_LIMITS)
+        ax.set_ylim(Y_LIMITS)
         ax.set_title(f'{cond} Priming')
         ax.set_xlabel("X Position (pixels)")
         if i == 0:
@@ -357,6 +403,11 @@ if len(priming_hists) == 3:
     for i, diff_hist in enumerate(diff_hists):
         ax = axes3a[i]
         im_diff = ax.imshow(diff_hist, extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='coolwarm', vmax=vmax_diff3, vmin=-vmax_diff3)
+        
+        # Set aspect ratio and zoom
+        ax.set_aspect(ROI_WIDTH / ROI_HEIGHT)
+        ax.set_xlim(X_LIMITS)
+        ax.set_ylim(Y_LIMITS)
         ax.set_title(titles[i])
         ax.set_xlabel("X Position (pixels)")
         if i == 0:
