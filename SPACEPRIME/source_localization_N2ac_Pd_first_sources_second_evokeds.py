@@ -39,6 +39,18 @@ PICK_ORI = "normal"
 # Epoching and Plotting
 EPOCH_TMIN, EPOCH_TMAX = -0.3, 0.7  # Seconds (should match sensor-level)
 
+# Statistical Test Type Switch
+# Set to 'one-sided' for directional hypotheses (e.g., N2ac < 0, Pd > 0)
+# Set to 'two-sided' for non-directional hypotheses (e.g., N2ac != 0)
+TEST_TYPE = 'two-sided' # <--- NEW PARAMETER
+
+# Statistical Threshold for Plotting
+if TEST_TYPE == 'one-sided':
+    SIGNIFICANCE_Z_THRESHOLD = 1.645
+elif TEST_TYPE == 'two-sided':
+    SIGNIFICANCE_Z_THRESHOLD = 1.96
+else:
+    raise ValueError("TEST_TYPE must be 'one-sided' or 'two-sided'")
 # --- End of Parameters ---
 
 # --- Data Storage ---
@@ -224,13 +236,13 @@ plot_ga_condition(ga_right_distractor, "Right Distractor")
 
 print("\n--- 2. Computing and Plotting Paired T-tests (Contra vs. Ipsi) ---")
 
-def compute_t_test_stc(contra_stcs, ipsi_stcs, component_name):
+def compute_t_test_stc(contra_stcs, ipsi_stcs, component_name, test_type): # Added test_type
     """
     Averages STCs in the ERP window (200-400ms) and then performs a paired t-test
     between contralateral and ipsilateral conditions. The resulting t-values are
     then z-transformed across vertices. Returns an STC of z-scored t-values.
     """
-    from scipy.stats import ttest_rel
+    from scipy.stats import ttest_rel, norm
 
     if not contra_stcs or not ipsi_stcs or len(contra_stcs) != len(ipsi_stcs):
         print(f"  Cannot compute t-test for {component_name}: Mismatched or empty data.")
@@ -245,21 +257,38 @@ def compute_t_test_stc(contra_stcs, ipsi_stcs, component_name):
     X_contra = np.stack(X_contra_avg, axis=0)
     X_ipsi = np.stack(X_ipsi_avg, axis=0)
 
+    # --- Determine the 'alternative' for ttest_rel based on component and test_type ---
+    if test_type == 'one-sided':
+        if component_name == 'Pd': # Pd: contra > ipsi (positive effect)
+            alternative_ttest = 'greater'
+        elif component_name == 'N2ac': # N2ac: contra < ipsi (negative effect)
+            alternative_ttest = 'less'
+        else:
+            raise ValueError(f"Unknown component_name '{component_name}' for one-sided test.")
+    elif test_type == 'two-sided':
+        alternative_ttest = 'two-sided'
+    else:
+        raise ValueError("test_type must be 'one-sided' or 'two-sided'")
+
+    print(f"  Performing {test_type} t-test for {component_name} with alternative='{alternative_ttest}'...")
+
     # Perform paired t-test for each vertex and time point
-    # We are interested in contra vs ipsi, so the test is on the difference
-    # The result will have shape (n_vertices, 1)
-    t_values, _ = ttest_rel(X_contra, X_ipsi, axis=0, nan_policy='omit')
+    t_values, p_values = ttest_rel(X_contra, X_ipsi, axis=0, nan_policy='omit', alternative=alternative_ttest)
 
-    # Z-transform the t-values across all vertices
-    mean_t = np.nanmean(t_values)
-    std_t = np.nanstd(t_values)
-    z_t_values = (t_values - mean_t) / std_t
-    print(f"  T-values z-transformed (mean={mean_t:.2f}, std={std_t:.2f}).")
+    # Convert p-values to z-scores
+    if test_type == 'one-sided':
+        z_scores = norm.isf(p_values) # p_values are already one-sided
+    elif test_type == 'two-sided':
+        z_scores = norm.isf(p_values / 2) # Convert two-sided p to one-sided for norm.isf
+    else:
+        raise ValueError("test_type must be 'one-sided' or 'two-sided'")
+    z_scores[np.isinf(z_scores)] = 0 # Handle cases where p=0 -> z=inf
+    z_scores *= np.sign(t_values) # Re-apply the original sign of the effect
 
-    # Create a new STC to store the t-values
+    # Create a new STC to store the z-scores
     # This STC will have only one "time" point, representing the average over the window
     t_stc = mne.SourceEstimate(
-        z_t_values, vertices=contra_stcs[0].vertices, tmin=0, tstep=1, subject=FSMRI_SUBJ
+        z_scores, vertices=contra_stcs[0].vertices, tmin=0, tstep=1, subject=FSMRI_SUBJ
     )
     print(f"  Computed t-test for {component_name} based on average activity in {ERP_TMIN*1000:.0f}-{ERP_TMAX*1000:.0f} ms window.")
     return t_stc
@@ -292,53 +321,137 @@ def _get_contra_ipsi_stcs(subject_estimates, left_key, right_key):
     return contra_stcs, ipsi_stcs
 
 
+def report_significant_clusters(stc, threshold, component_name, subjects_dir):
+    """
+    Identifies and reports the anatomical labels corresponding to significant
+    clusters in a source estimate, based on a z-score threshold.
+
+    Args:
+        stc (mne.SourceEstimate): The source estimate containing z-scores.
+        threshold (float): The z-score significance threshold.
+        component_name (str): The name of the component (e.g., 'N2ac', 'Pd').
+        subjects_dir (str): Path to the FreeSurfer subjects directory.
+    """
+    print(f"\n--- Anatomical Report for {component_name} (Threshold: z > {abs(threshold):.2f}) ---")
+
+    # Load the Desikan-Killiany atlas ('aparc')
+    try:
+        labels_aparc = mne.read_labels_from_annot('fsaverage', parc='aparc', subjects_dir=subjects_dir)
+    except Exception as e:
+        print(f"  Could not load 'aparc' atlas. Error: {e}. Skipping report.")
+        return
+
+    # Determine which vertices are significant
+    # For N2ac (negative effect), we look for z < -threshold. For Pd (positive), z > threshold.
+    if threshold < 0:
+        sig_mask = stc.data < threshold
+    else:
+        sig_mask = stc.data > threshold
+
+    # Get the vertex numbers for each hemisphere
+    sig_lh_verts = stc.vertices[0][np.where(sig_mask[:len(stc.vertices[0])])[0]]
+    sig_rh_verts = stc.vertices[1][np.where(sig_mask[len(stc.vertices[0]):])[0]]
+
+    # Find which labels contain these significant vertices
+    report = {}
+    for label in labels_aparc:
+        label_verts = label.vertices
+        hemi_verts = sig_lh_verts if label.hemi == 'lh' else sig_rh_verts
+        
+        # Find the intersection of significant vertices and vertices in the current label
+        n_sig_in_label = len(np.intersect1d(hemi_verts, label_verts))
+        
+        if n_sig_in_label > 0:
+            report[label.name] = n_sig_in_label
+
+    if not report:
+        print("  No significant clusters found in any atlas labels.")
+    else:
+        # Sort and print the report for clarity
+        sorted_report = sorted(report.items(), key=lambda item: item[1], reverse=True)
+        print("  Significant activity found in the following regions:")
+        for label_name, count in sorted_report:
+            print(f"    - {label_name}: {count} vertices")
+
 # --- Reorganize data for Contra vs. Ipsi comparison ---
 print("\n--- Assembling Contralateral and Ipsilateral Datasets ---")
 contra_target_stcs_full, ipsi_target_stcs_full = _get_contra_ipsi_stcs(subject_source_estimates, 'left_target', 'right_target')
 contra_distractor_stcs_full, ipsi_distractor_stcs_full = _get_contra_ipsi_stcs(subject_source_estimates, 'left_distractor', 'right_distractor')
 
 # --- N2ac (Target) T-test ---
-t_stc_n2ac = compute_t_test_stc(contra_target_stcs_full, ipsi_target_stcs_full, 'N2ac')
+t_stc_n2ac = compute_t_test_stc(contra_target_stcs_full, ipsi_target_stcs_full, 'N2ac', TEST_TYPE) # Pass TEST_TYPE
 if t_stc_n2ac:
-    brain_n2ac = t_stc_n2ac.plot( # Plot both lateral and medial views
-        subject=FSMRI_SUBJ, hemi='split', size=(800, 600),
-        views=['lat', 'med'],
-        smoothing_steps=20,
-        # Show only negative values: from min_z to 0
-        colormap='mne_analyze', # Good for single-sided data
-        clim="auto",
-        time_label=f'N2ac Z-scores (Contra vs Ipsi)\nAvg: {ERP_TMIN*1000:.0f}-{ERP_TMAX*1000:.0f} ms',
-        surface="inflated",
-        cortex="classic",
-    )
-    # Save the plot as an image file
-    save_path_n2ac = 'group_N2ac_zmap.png'
-    brain_n2ac.save_image(save_path_n2ac)
-    print(f"  Saved N2ac z-map image to {save_path_n2ac}")
-    brain_n2ac.close() # Close the plot window to avoid clutter
+    min_val = t_stc_n2ac.data.min()
+    # We are interested in negative z-scores (ipsi > contra for N2ac)
+    if min_val < -SIGNIFICANCE_Z_THRESHOLD:
+        # --- Plotting Logic for N2ac ---
+        # 1. Create a copy for plotting and threshold it.
+        t_stc_n2ac_plot = t_stc_n2ac.copy()
+        t_stc_n2ac_plot.data[t_stc_n2ac_plot.data > -SIGNIFICANCE_Z_THRESHOLD] = 0
+
+        # 2. Sign-flip the data to make it positive for easier visualization.
+        t_stc_n2ac_plot.data *= -1
+        max_val_flipped = t_stc_n2ac_plot.data.max()
+
+        # 3. Define color limits for the positive, sign-flipped data.
+        # The colormap will start at the significance threshold.
+        lims = [SIGNIFICANCE_Z_THRESHOLD, (SIGNIFICANCE_Z_THRESHOLD + max_val_flipped) / 2, max_val_flipped]
+
+        brain_n2ac = t_stc_n2ac_plot.plot(
+            subject=FSMRI_SUBJ, hemi='split', size=(1000, 800), # Consistent size
+            views=['lat', 'med'],
+            smoothing_steps=20, # Increased smoothing for visualization
+            clim=dict(kind='value', lims=lims), colormap='Greens',
+            time_label=f'N2ac z-scores\nAvg: {ERP_TMIN*1000:.0f}-{ERP_TMAX*1000:.0f} ms',
+            cortex="low_contrast",
+            surface="white"
+        )
+
+        # 4. Modify colorbar labels to show original negative values
+        # The scalar_bars attribute is a dictionary. We get the first colorbar actor
+        # from its values and then set the label format.
+        # The format string '-%g' adds a negative sign and uses a general format for the number.
+        scalar_bar = list(brain_n2ac._renderer.plotter.scalar_bars.values())[0]
+        scalar_bar.SetLabelFormat("-%.2f")
+        
+        # --- Generate and print the anatomical report for N2ac ---
+        report_significant_clusters(t_stc_n2ac, -SIGNIFICANCE_Z_THRESHOLD, 'N2ac', SUBJECTS_DIR)
+
+        # Save the plot as an image file
+        save_path_n2ac = 'group_N2ac_zmap.png'
+        brain_n2ac.save_image(save_path_n2ac)
+        print(f"  Saved N2ac z-map image to {save_path_n2ac}")
+    else:
+        print(f"  Skipping N2ac plot: No significant negative z-scores found "
+              f"(min_val: {min_val:.3f}, threshold: {-SIGNIFICANCE_Z_THRESHOLD}).")
 
 # --- Pd (Distractor) T-test ---
-t_stc_pd = compute_t_test_stc(contra_distractor_stcs_full, ipsi_distractor_stcs_full, 'Pd')
+t_stc_pd = compute_t_test_stc(contra_distractor_stcs_full, ipsi_distractor_stcs_full, 'Pd', TEST_TYPE) # Pass TEST_TYPE
 if t_stc_pd:
     # For Pd (contra > ipsi), we expect positive t-values.
-    # Find the max z-value to set the upper bound of the colormap.
-    max_z = t_stc_pd.data.max()
+    # We will only plot values that are more positive than our significance threshold.
+    max_val = t_stc_pd.data.max()
+    # The colormap will start at the significance threshold.
+    # The midpoint is halfway between the threshold and the most extreme value.
+    lims = [SIGNIFICANCE_Z_THRESHOLD, (SIGNIFICANCE_Z_THRESHOLD + max_val) / 2, max_val]
 
     brain_pd = t_stc_pd.plot( # Plot both lateral and medial views
-        subject=FSMRI_SUBJ, hemi='split', size=(800, 600),
+        subject=FSMRI_SUBJ, hemi='split', size=(1000, 800), # Consistent size
         views=['lat', 'med'],
         smoothing_steps=20,
         # Show only positive values: from 0 to max_z
-        colormap='mne_analyze',
-        clim=dict(kind='value', lims=[0, max_z / 2, max_z]),
-        time_label=f'Pd Z-scores (Contra vs Ipsi)\nAvg: {ERP_TMIN*1000:.0f}-{ERP_TMAX*1000:.0f} ms',
-        surface="inflated",
-        cortex="classic"
+        clim=dict(kind='value', lims=lims), colormap='Reds',
+        time_label=f'Pd z-scores\nAvg: {ERP_TMIN*1000:.0f}-{ERP_TMAX*1000:.0f} ms',
+        cortex="low_contrast",
+        surface="white"
     )
+    
+    # --- Generate and print the anatomical report for Pd ---
+    report_significant_clusters(t_stc_pd, SIGNIFICANCE_Z_THRESHOLD, 'Pd', SUBJECTS_DIR)
+    
     # Save the plot as an image file
     save_path_pd = 'group_Pd_zmap.png'
     brain_pd.save_image(save_path_pd)
     print(f"  Saved Pd z-map image to {save_path_pd}")
-    brain_pd.close() # Close the plot window to avoid clutter
 
 print("\\nSource localization script finished. Review the generated plots.")
