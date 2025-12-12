@@ -236,7 +236,7 @@ plot_ga_condition(ga_right_distractor, "Right Distractor")
 
 print("\n--- 2. Computing and Plotting Paired T-tests (Contra vs. Ipsi) ---")
 
-def compute_t_test_stc(contra_stcs, ipsi_stcs, component_name, test_type): # Added test_type
+def compute_t_test_stc(contra_stcs, ipsi_stcs, component_name, test_type, time_resolved=False): # Added test_type
     """
     Averages STCs in the ERP window (200-400ms) and then performs a paired t-test
     between contralateral and ipsilateral conditions. The resulting t-values are
@@ -248,14 +248,21 @@ def compute_t_test_stc(contra_stcs, ipsi_stcs, component_name, test_type): # Add
         print(f"  Cannot compute t-test for {component_name}: Mismatched or empty data.")
         return None
 
-    # 1. Average activity within the ERP time window for each subject and condition
-    # The resulting data array will have shape (n_vertices, 1) for each subject
-    X_contra_avg = [stc.copy().crop(ERP_TMIN, ERP_TMAX).mean().data for stc in contra_stcs]
-    X_ipsi_avg = [stc.copy().crop(ERP_TMIN, ERP_TMAX).mean().data for stc in ipsi_stcs]
+    # 1. Prepare data
+    if time_resolved:
+        X_contra_list = [stc.copy().crop(ERP_TMIN, ERP_TMAX).data for stc in contra_stcs]
+        X_ipsi_list = [stc.copy().crop(ERP_TMIN, ERP_TMAX).data for stc in ipsi_stcs]
+        ref_stc = contra_stcs[0].copy().crop(ERP_TMIN, ERP_TMAX)
+        tmin, tstep = ref_stc.tmin, ref_stc.tstep
+    else:
+        # Average activity within the ERP time window
+        X_contra_list = [stc.copy().crop(ERP_TMIN, ERP_TMAX).mean().data for stc in contra_stcs]
+        X_ipsi_list = [stc.copy().crop(ERP_TMIN, ERP_TMAX).mean().data for stc in ipsi_stcs]
+        tmin, tstep = 0, 1
 
-    # 2. Stack the averaged data from all subjects. Shape: (n_subjects, n_vertices, 1)
-    X_contra = np.stack(X_contra_avg, axis=0)
-    X_ipsi = np.stack(X_ipsi_avg, axis=0)
+    # 2. Stack the data. Shape: (n_subjects, n_vertices, n_times_or_1)
+    X_contra = np.stack(X_contra_list, axis=0)
+    X_ipsi = np.stack(X_ipsi_list, axis=0)
 
     # --- Determine the 'alternative' for ttest_rel based on component and test_type ---
     if test_type == 'one-sided':
@@ -286,11 +293,13 @@ def compute_t_test_stc(contra_stcs, ipsi_stcs, component_name, test_type): # Add
     z_scores *= np.sign(t_values) # Re-apply the original sign of the effect
 
     # Create a new STC to store the z-scores
-    # This STC will have only one "time" point, representing the average over the window
     t_stc = mne.SourceEstimate(
-        z_scores, vertices=contra_stcs[0].vertices, tmin=0, tstep=1, subject=FSMRI_SUBJ
+        z_scores, vertices=contra_stcs[0].vertices, tmin=tmin, tstep=tstep, subject=FSMRI_SUBJ
     )
-    print(f"  Computed t-test for {component_name} based on average activity in {ERP_TMIN*1000:.0f}-{ERP_TMAX*1000:.0f} ms window.")
+    if time_resolved:
+        print(f"  Computed time-resolved t-test for {component_name}.")
+    else:
+        print(f"  Computed t-test for {component_name} based on average activity in {ERP_TMIN*1000:.0f}-{ERP_TMAX*1000:.0f} ms window.")
     return t_stc
 
 
@@ -404,8 +413,8 @@ if t_stc_n2ac:
             smoothing_steps=20, # Increased smoothing for visualization
             clim=dict(kind='value', lims=lims), colormap='Greens',
             time_label=f'N2ac z-scores\nAvg: {ERP_TMIN*1000:.0f}-{ERP_TMAX*1000:.0f} ms',
-            cortex="low_contrast",
-            surface="white"
+            cortex="0.5",
+            surface="pial"
         )
 
         # 4. Modify colorbar labels to show original negative values
@@ -448,8 +457,8 @@ if t_stc_pd:
             # Show only positive values: from 0 to max_z
             clim=dict(kind='value', lims=lims), colormap='Reds',
             time_label=f'Pd z-scores\nAvg: {ERP_TMIN*1000:.0f}-{ERP_TMAX*1000:.0f} ms',
-            cortex="low_contrast",
-            surface="white"
+            cortex="0.5",
+            surface="pial"
         )
         
         # --- Generate and print the anatomical report for Pd ---
@@ -482,32 +491,37 @@ if t_stc_n2ac is not None and t_stc_pd is not None:
     t_stc_combined = t_stc_n2ac.copy()
     t_stc_combined.data = combined_data
 
-    max_abs_z = np.max(np.abs(t_stc_combined.data))
+    # Option: Clamp the max limit to avoid one strong peak desaturating the other
+    # For example, use the 99.9th percentile or a fixed cap if outliers are present
+    #max_abs_z = np.percentile(np.abs(t_stc_combined.data), 99.9)
+    max_abs_z = np.max(np.abs(t_stc_combined.data)) # Original line
 
     if max_abs_z > SIGNIFICANCE_Z_THRESHOLD:
         print(f"  Combined Z-score range: {t_stc_combined.data.min():.2f} to {t_stc_combined.data.max():.2f}")
 
-        # Mask insignificant values for cleaner plotting
-        t_stc_combined_plot = t_stc_combined.copy()
-        t_stc_combined_plot.data[np.abs(t_stc_combined_plot.data) < SIGNIFICANCE_Z_THRESHOLD] = 0
-
         # Plotting
-        brain_combined = t_stc_combined_plot.plot(
+        brain_combined = t_stc_combined.plot(
             subject=FSMRI_SUBJ, hemi='split', size=(1000, 800),
             views=['lat', 'med'],
             smoothing_steps=20,
-            colormap='RdBu_r', # Red for positive (Pd), Blue for negative (N2ac)
+            colormap='RdYlGn_r', # Red for positive (Pd), Green for negative (N2ac)
             clim=dict(kind='value', pos_lims=[SIGNIFICANCE_Z_THRESHOLD, SIGNIFICANCE_Z_THRESHOLD, max_abs_z]),
-            time_label=f'Combined N2ac (Blue) + Pd (Red)\nThreshold: |z| > {SIGNIFICANCE_Z_THRESHOLD}',
+            time_label=None,
             cortex="0.5",
-            surface="white",
-            transparent=True
+            surface="pial",
+            transparent=True,
+            background="white"
         )
 
         # Fix scalar bar title if possible
         try:
             scalar_bar = list(brain_combined._renderer.plotter.scalar_bars.values())[0]
             scalar_bar.SetTitle("Z-score")
+            # Adjust colorbar position and size
+            scalar_bar.SetOrientationToVertical()
+            scalar_bar.SetHeight(0.6)  # Length
+            scalar_bar.SetWidth(0.05)  # Thickness
+            scalar_bar.SetPosition(0.9, 0.2)  # x, y position (0-1)
         except Exception:
             pass
 
@@ -524,5 +538,58 @@ if t_stc_n2ac is not None and t_stc_pd is not None:
         print(f"  Skipping combined plot: No significant values found (max_abs_z: {max_abs_z:.3f}).")
 else:
     print("  Cannot perform comparison: Missing N2ac or Pd data.")
+
+print("\n--- Performing Time-Resolved Combined Analysis (200-400ms) ---")
+
+t_stc_n2ac_time = compute_t_test_stc(contra_target_stcs_full, ipsi_target_stcs_full, 'N2ac', TEST_TYPE, time_resolved=True)
+t_stc_pd_time = compute_t_test_stc(contra_distractor_stcs_full, ipsi_distractor_stcs_full, 'Pd', TEST_TYPE, time_resolved=True)
+
+if t_stc_n2ac_time is not None and t_stc_pd_time is not None:
+    print("  Combining time-resolved z-scores...")
+
+    # Filter N2ac (keep negative)
+    n2ac_data = t_stc_n2ac_time.data.copy()
+    n2ac_data[n2ac_data > 0] = 0
+
+    # Filter Pd (keep positive)
+    pd_data = t_stc_pd_time.data.copy()
+    pd_data[pd_data < 0] = 0
+
+    # Combine
+    combined_data_time = n2ac_data + pd_data
+
+    t_stc_combined_time = t_stc_n2ac_time.copy()
+    t_stc_combined_time.data = combined_data_time
+
+    max_abs_z_time = np.max(np.abs(t_stc_combined_time.data))
+
+    if max_abs_z_time > SIGNIFICANCE_Z_THRESHOLD:
+        print(f"  Time-resolved Combined Z-score range: {t_stc_combined_time.data.min():.2f} to {t_stc_combined_time.data.max():.2f}")
+
+        brain_combined_time = t_stc_combined_time.plot(
+            subject=FSMRI_SUBJ, hemi='split', size=(1400, 900),
+            views=['lat', 'med'],
+            smoothing_steps=20,
+            colormap='RdYlGn_r',
+            clim=dict(kind='value', pos_lims=[SIGNIFICANCE_Z_THRESHOLD, SIGNIFICANCE_Z_THRESHOLD, max_abs_z_time]),
+            time_label='Time: %0.3f s',
+            cortex="0.5",
+            surface="pial",
+            transparent=True,
+            background="white",
+            time_viewer=True
+        )
+        try:
+            scalar_bar = list(brain_combined_time._renderer.plotter.scalar_bars.values())[0]
+            scalar_bar.SetTitle("Z-score")
+            # Adjust colorbar position and size
+            scalar_bar.SetOrientationToVertical()
+            scalar_bar.SetHeight(0.6)  # Length
+            scalar_bar.SetWidth(0.05)  # Thickness
+            scalar_bar.SetPosition(0.475, 0.2)  # x, y position (0-1)
+        except Exception:
+            pass
+    else:
+        print("  No significant values found in time-resolved analysis.")
 
 print("\\nSource localization script finished. Review the generated plots.")
