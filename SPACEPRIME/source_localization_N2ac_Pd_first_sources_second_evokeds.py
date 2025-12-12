@@ -380,6 +380,7 @@ contra_distractor_stcs_full, ipsi_distractor_stcs_full = _get_contra_ipsi_stcs(s
 
 # --- N2ac (Target) T-test ---
 t_stc_n2ac = compute_t_test_stc(contra_target_stcs_full, ipsi_target_stcs_full, 'N2ac', TEST_TYPE) # Pass TEST_TYPE
+t_stc_n2ac_plot = None
 if t_stc_n2ac:
     min_val = t_stc_n2ac.data.min()
     # We are interested in negative z-scores (ipsi > contra for N2ac)
@@ -394,8 +395,8 @@ if t_stc_n2ac:
         max_val_flipped = t_stc_n2ac_plot.data.max()
 
         # 3. Define color limits for the positive, sign-flipped data.
-        # The colormap will start at the significance threshold.
-        lims = [SIGNIFICANCE_Z_THRESHOLD, (SIGNIFICANCE_Z_THRESHOLD + max_val_flipped) / 2, max_val_flipped]
+        # Start color exactly at threshold to avoid vague boundaries.
+        lims = [SIGNIFICANCE_Z_THRESHOLD, SIGNIFICANCE_Z_THRESHOLD, max_val_flipped]
 
         brain_n2ac = t_stc_n2ac_plot.plot(
             subject=FSMRI_SUBJ, hemi='split', size=(1000, 800), # Consistent size
@@ -427,31 +428,151 @@ if t_stc_n2ac:
 
 # --- Pd (Distractor) T-test ---
 t_stc_pd = compute_t_test_stc(contra_distractor_stcs_full, ipsi_distractor_stcs_full, 'Pd', TEST_TYPE) # Pass TEST_TYPE
+t_stc_pd_plot = None
 if t_stc_pd:
     # For Pd (contra > ipsi), we expect positive t-values.
-    # We will only plot values that are more positive than our significance threshold.
-    max_val = t_stc_pd.data.max()
-    # The colormap will start at the significance threshold.
-    # The midpoint is halfway between the threshold and the most extreme value.
-    lims = [SIGNIFICANCE_Z_THRESHOLD, (SIGNIFICANCE_Z_THRESHOLD + max_val) / 2, max_val]
+    # Mask non-significant values (z < 1.96)
+    t_stc_pd_plot = t_stc_pd.copy()
+    t_stc_pd_plot.data[t_stc_pd_plot.data < SIGNIFICANCE_Z_THRESHOLD] = 0
+    
+    max_val = t_stc_pd_plot.data.max()
+    
+    if max_val > SIGNIFICANCE_Z_THRESHOLD:
+        # Start color exactly at threshold to avoid vague boundaries.
+        lims = [SIGNIFICANCE_Z_THRESHOLD, SIGNIFICANCE_Z_THRESHOLD, max_val]
 
-    brain_pd = t_stc_pd.plot( # Plot both lateral and medial views
-        subject=FSMRI_SUBJ, hemi='split', size=(1000, 800), # Consistent size
-        views=['lat', 'med'],
-        smoothing_steps=20,
-        # Show only positive values: from 0 to max_z
-        clim=dict(kind='value', lims=lims), colormap='Reds',
-        time_label=f'Pd z-scores\nAvg: {ERP_TMIN*1000:.0f}-{ERP_TMAX*1000:.0f} ms',
-        cortex="low_contrast",
-        surface="white"
-    )
-    
-    # --- Generate and print the anatomical report for Pd ---
-    report_significant_clusters(t_stc_pd, SIGNIFICANCE_Z_THRESHOLD, 'Pd', SUBJECTS_DIR)
-    
-    # Save the plot as an image file
-    save_path_pd = 'group_Pd_zmap.png'
-    brain_pd.save_image(save_path_pd)
-    print(f"  Saved Pd z-map image to {save_path_pd}")
+        brain_pd = t_stc_pd_plot.plot( # Plot both lateral and medial views
+            subject=FSMRI_SUBJ, hemi='split', size=(1000, 800), # Consistent size
+            views=['lat', 'med'],
+            smoothing_steps=20,
+            # Show only positive values: from 0 to max_z
+            clim=dict(kind='value', lims=lims), colormap='Reds',
+            time_label=f'Pd z-scores\nAvg: {ERP_TMIN*1000:.0f}-{ERP_TMAX*1000:.0f} ms',
+            cortex="low_contrast",
+            surface="white"
+        )
+        
+        # --- Generate and print the anatomical report for Pd ---
+        report_significant_clusters(t_stc_pd, SIGNIFICANCE_Z_THRESHOLD, 'Pd', SUBJECTS_DIR)
+        
+        # Save the plot as an image file
+        save_path_pd = 'group_Pd_zmap.png'
+        brain_pd.save_image(save_path_pd)
+        print(f"  Saved Pd z-map image to {save_path_pd}")
+
+# --- Direct Comparison: Pd vs. N2ac ---
+print("\n--- Performing Direct Comparison: Pd vs. N2ac ---")
+
+if t_stc_n2ac is not None and t_stc_pd is not None:
+    print("  Combining computed z-scores from N2ac and Pd...")
+
+    # --- Prepare Data for Plotting ---
+    # 1. N2ac (Green): Absolute values of significant negative z-scores
+    n2ac_plot_data = t_stc_n2ac.data.copy()
+    # Keep only negative values (Contra < Ipsi)
+    n2ac_plot_data[n2ac_plot_data > 0] = 0
+    n2ac_plot_data = np.abs(n2ac_plot_data)
+    # Threshold
+    n2ac_mask = n2ac_plot_data > SIGNIFICANCE_Z_THRESHOLD
+    n2ac_plot_data[~n2ac_mask] = 0
+
+    # 2. Pd (Red): Significant positive z-scores
+    pd_plot_data = t_stc_pd.data.copy()
+    # Keep only positive values (Contra > Ipsi)
+    pd_plot_data[pd_plot_data < 0] = 0
+    # Threshold
+    pd_mask = pd_plot_data > SIGNIFICANCE_Z_THRESHOLD
+    pd_plot_data[~pd_mask] = 0
+
+    # 3. Overlap (Yellow): Where both are significant
+    overlap_mask = n2ac_mask & pd_mask
+    overlap_plot_data = np.zeros_like(n2ac_plot_data)
+    if np.any(overlap_mask):
+        # Use the maximum intensity of either signal for the overlap
+        overlap_plot_data[overlap_mask] = np.maximum(n2ac_plot_data[overlap_mask], pd_plot_data[overlap_mask])
+
+    max_n2ac = n2ac_plot_data.max()
+    max_pd = pd_plot_data.max()
+    max_overlap = overlap_plot_data.max()
+
+    if max_n2ac > 0 or max_pd > 0:
+        print(f"  Plotting Combined Map: N2ac (Green), Pd (Red), Overlap (Yellow)")
+
+        # Initialize Brain with N2ac (Green)
+        stc_combined = t_stc_n2ac.copy()
+        stc_combined.data = n2ac_plot_data
+
+        # Ensure upper limit is valid
+        upper_lim_n2ac = max(max_n2ac, SIGNIFICANCE_Z_THRESHOLD + 0.1)
+        clim_n2ac = dict(kind='value', pos_lims=[SIGNIFICANCE_Z_THRESHOLD, SIGNIFICANCE_Z_THRESHOLD, upper_lim_n2ac])
+
+        brain_combined = stc_combined.plot(
+            subject=FSMRI_SUBJ, hemi='split', size=(1000, 800),
+            views=['lat', 'med'],
+            smoothing_steps=20,
+            colormap='Greens',
+            clim=clim_n2ac,
+            time_label=f'N2ac (Green) + Pd (Red) + Overlap (Yellow)\nThreshold: |z| > {SIGNIFICANCE_Z_THRESHOLD}',
+            cortex="low_contrast",
+            surface="white",
+            transparent=True,
+            background='black'
+        )
+
+        # Add Pd layer (Red)
+        if max_pd > SIGNIFICANCE_Z_THRESHOLD:
+            brain_combined.add_data(
+                pd_plot_data,
+                colormap='Reds',
+                vertices=t_stc_pd.vertices,
+                smoothing_steps=20,
+                fmin=SIGNIFICANCE_Z_THRESHOLD,
+                fmid=SIGNIFICANCE_Z_THRESHOLD,
+                fmax=max_pd,
+                transparent=True,
+                colorbar=False
+            )
+
+        # Add Overlap layer (Yellow)
+        if max_overlap > SIGNIFICANCE_Z_THRESHOLD:
+            print(f"  Highlighting {np.sum(overlap_mask)} overlapping vertices in Yellow.")
+            brain_combined.add_data(
+                overlap_plot_data,
+                colormap='Wistia', # Yellowish
+                vertices=t_stc_pd.vertices,
+                smoothing_steps=20,
+                fmin=SIGNIFICANCE_Z_THRESHOLD,
+                fmid=SIGNIFICANCE_Z_THRESHOLD,
+                fmax=max_overlap,
+                transparent=True,
+                colorbar=False
+            )
+
+        # Fix scalar bar title if possible
+        try:
+            scalar_bar = list(brain_combined._renderer.plotter.scalar_bars.values())[0]
+            scalar_bar.SetTitle("Z-score (N2ac)")
+        except Exception:
+            pass
+
+        print("\n--- Anatomical Report for Combined Map ---")
+        print("N2ac Clusters (Green):")
+        report_significant_clusters(t_stc_n2ac, -SIGNIFICANCE_Z_THRESHOLD, 'N2ac', SUBJECTS_DIR)
+        print("Pd Clusters (Red):")
+        report_significant_clusters(t_stc_pd, SIGNIFICANCE_Z_THRESHOLD, 'Pd', SUBJECTS_DIR)
+
+        if np.any(overlap_mask):
+            stc_overlap = t_stc_n2ac.copy()
+            stc_overlap.data = overlap_plot_data
+            print("Overlap Clusters (Yellow):")
+            report_significant_clusters(stc_overlap, SIGNIFICANCE_Z_THRESHOLD, 'Overlap', SUBJECTS_DIR)
+
+        save_path_combined = 'group_combined_N2ac_Pd_zmap.png'
+        brain_combined.save_image(save_path_combined)
+        print(f"  Saved combined z-map image to {save_path_combined}")
+    else:
+        print(f"  Skipping combined plot: No significant values found.")
+else:
+    print("  Cannot perform comparison: Missing N2ac or Pd data.")
 
 print("\\nSource localization script finished. Review the generated plots.")
