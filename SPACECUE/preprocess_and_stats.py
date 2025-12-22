@@ -22,8 +22,21 @@ df["rt"] = df["rt"] - df["cue_stim_delay_jitter"]
 # do quantile split
 df['delay'] = pd.qcut(df['cue_stim_delay_jitter'], q=3, labels=['low', 'medium', 'high'])
 
+# Create the 'age_group' column
+# Bins: [0, 35) is 'young', [35, infinity) is 'old'
+df['age_group'] = pd.cut(df['age'],
+                        bins=[0, 35, float('inf')],
+                        labels=['young', 'old'],
+                        right=False)
+
 # Starting from your df_mean DataFrame
-df_mean = df.groupby(["subject_id", "CueInstruction", "delay"])[["rt", "select_target"]].mean().reset_index()
+df_mean = df.groupby(["subject_id", "CueInstruction", "delay", "age_group"])[["rt", "select_target"]].mean().reset_index()
+df_mean['select_target'] = pd.to_numeric(df_mean['select_target'], errors='coerce')
+df_mean['rt'] = pd.to_numeric(df_mean['rt'], errors='coerce')
+# do pairwise tests
+pt = pg.pairwise_tests(data=df_mean, dv="select_target", within=["CueInstruction", "delay"], between="age_group",
+                       subject="subject_id", effsize="cohen", return_desc=True, padjust="bonf", parametric=True,
+                       within_first=False, interaction=False)
 
 # Pivot the table to get cue instructions as columns for the 'select_target' metric
 df_pivot = df_mean.pivot_table(
@@ -111,65 +124,6 @@ plt.axhline(0, color='black', linestyle='--') # A line at 0 for reference
 plt.legend(title='Effect Type')
 plt.show()
 
-
-# --- ANOVA Data Preparation ---
-
-# 1. Get a unique age for each subject from the original dataframe
-# We use .first() because age is constant for each subject
-df_age = df.groupby('subject_id')['age'].first().reset_index()
-
-# 2. Create the 'age_group' column
-# Bins: [0, 35) is 'young', [35, infinity) is 'old'
-df_age['age_group'] = pd.cut(df_age['age'],
-                           bins=[0, 35, float('inf')],
-                           labels=['young', 'old'],
-                           right=False)
-
-# --- 3x3x2 ANOVA Preparation (Using Raw Scores) ---
-
-# 1. Start with the mean data per subject and condition.
-# We use .copy() to ensure we don't modify the original df_mean.
-df_anova_raw = df_mean.copy()
-
-# 2. Merge the age_group information (df_age was created in the previous step)
-df_anova_raw = pd.merge(df_anova_raw, df_age[['subject_id', 'age_group']], on='subject_id')
-
-# 3. Create the combined within-subjects factor.
-# This time, it will have 3 (cue) x 3 (delay) = 9 levels.
-df_anova_raw['within_factor'] = df_anova_raw['CueInstruction'].astype(str) + "_" + df_anova_raw['delay'].astype(str)
-
-print("\nSample of data prepared for 3x3x2 ANOVA:")
-print(df_anova_raw.head())
-
-# --- FIX: Ensure Dependent Variables are Numeric ---
-# We explicitly convert the DV columns to a numeric type before the ANOVA.
-# `errors='coerce'` will handle any problematic values by turning them into NaN.
-df_anova_raw['select_target'] = pd.to_numeric(df_anova_raw['select_target'], errors='coerce')
-df_anova_raw['rt'] = pd.to_numeric(df_anova_raw['rt'], errors='coerce')
-
-# --- 3x3x2 Mixed ANOVA on Raw Accuracy (select_target) ---
-print("\n--- Running 3x3x2 Mixed ANOVA on Raw Accuracy ---")
-
-aov_acc_raw = pg.mixed_anova(data=df_anova_raw,
-                             dv='select_target',
-                             within='within_factor',
-                             between='age_group',
-                             subject='subject_id')
-
-pg.print_table(aov_acc_raw)
-
-
-# --- 3x3x2 Mixed ANOVA on Raw Response Time (rt) ---
-print("\n--- Running 3x3x2 Mixed ANOVA on Raw Response Time ---")
-
-aov_rt_raw = pg.mixed_anova(data=df_anova_raw,
-                            dv='rt',
-                            within='within_factor',
-                            between='age_group',
-                            subject='subject_id')
-
-pg.print_table(aov_rt_raw)
-
 # --- Prepare and Save Single-Trial DataFrame for Jamovi ---
 
 # You are correct! Mixed models are most powerful with single-trial data.
@@ -177,7 +131,7 @@ pg.print_table(aov_rt_raw)
 
 # 1. Merge the 'age_group' information into the single-trial dataframe.
 #    df_age was created earlier in the script.
-df_single_trials = pd.merge(df, df_age[['subject_id', 'age_group']], on='subject_id')
+df_single_trials = df.copy()
 
 # 2. Create the 'experimenter' column based on subject_id ranges.
 #    We use pd.cut for a clean and efficient way to bin the numeric subject IDs.
