@@ -414,7 +414,7 @@ if t_stc_n2ac:
             clim=dict(kind='value', lims=lims), colormap='Greens',
             time_label=f'N2ac z-scores\nAvg: {ERP_TMIN*1000:.0f}-{ERP_TMAX*1000:.0f} ms',
             cortex="0.5",
-            surface="pial"
+            surface="inflated"
         )
 
         # 4. Modify colorbar labels to show original negative values
@@ -458,11 +458,11 @@ if t_stc_pd:
             clim=dict(kind='value', lims=lims), colormap='Reds',
             time_label=f'Pd z-scores\nAvg: {ERP_TMIN*1000:.0f}-{ERP_TMAX*1000:.0f} ms',
             cortex="0.5",
-            surface="pial"
+            surface="inflated"
         )
         
         # --- Generate and print the anatomical report for Pd ---
-        report_significant_clusters(t_stc_pd, SIGNIFICANCE_Z_THRESHOLD, 'Pd', SUBJECTS_DIR)
+        report_significant_clusters(t_stc_pd, SIGNIFICANCE_Z_THRESHOLD/2, 'Pd', SUBJECTS_DIR)
         
         # Save the plot as an image file
         save_path_pd = 'group_Pd_zmap.png'
@@ -485,8 +485,9 @@ if t_stc_n2ac is not None and t_stc_pd is not None:
     pd_filtered = t_stc_pd.data.copy()
     pd_filtered[pd_filtered < 0] = 0
 
-    # Sum the filtered z-scores
-    combined_data = n2ac_filtered + pd_filtered
+    # Combine preserving the stronger signal (avoid cancellation)
+    # If a voxel has both negative (N2ac) and positive (Pd) values, we keep the one with larger magnitude.
+    combined_data = np.where(np.abs(n2ac_filtered) > np.abs(pd_filtered), n2ac_filtered, pd_filtered)
 
     t_stc_combined = t_stc_n2ac.copy()
     t_stc_combined.data = combined_data
@@ -508,7 +509,7 @@ if t_stc_n2ac is not None and t_stc_pd is not None:
             clim=dict(kind='value', pos_lims=[SIGNIFICANCE_Z_THRESHOLD, SIGNIFICANCE_Z_THRESHOLD, max_abs_z]),
             time_label=None,
             cortex="0.5",
-            surface="pial",
+            surface="inflated",
             transparent=True,
             background="white"
         )
@@ -555,8 +556,8 @@ if t_stc_n2ac_time is not None and t_stc_pd_time is not None:
     pd_data = t_stc_pd_time.data.copy()
     pd_data[pd_data < 0] = 0
 
-    # Combine
-    combined_data_time = n2ac_data + pd_data
+    # Combine preserving the stronger signal (avoid cancellation)
+    combined_data_time = np.where(np.abs(n2ac_data) > np.abs(pd_data), n2ac_data, pd_data)
 
     t_stc_combined_time = t_stc_n2ac_time.copy()
     t_stc_combined_time.data = combined_data_time
