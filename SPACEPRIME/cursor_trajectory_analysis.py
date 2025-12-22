@@ -758,6 +758,9 @@ towardness_df = analysis_df[['subject_id', 'block', 'trial_nr', 'target_towardne
 output_path = f'{SPACEPRIME.get_data_path()}concatenated/target_towardness.csv'
 towardness_df.to_csv(output_path, index=True)
 
+output_path_whole_analysis_df = f'{SPACEPRIME.get_data_path()}concatenated/target_towardness_all_variables.csv'
+analysis_df.to_csv(output_path_whole_analysis_df, index=True)
+
 # ===================================================================
 #       STATISTICAL ANALYSIS: CAPTURE SCORE BY PRIMING
 # ===================================================================
