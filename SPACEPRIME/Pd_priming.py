@@ -12,7 +12,7 @@ from stats import remove_outliers
 plt.ion()
 
 # --- Parameters ---
-EPOCH_TMIN, EPOCH_TMAX = 0, 0.7
+EPOCH_TMIN, EPOCH_TMAX = -0.1, 0.7
 SAVGOL_WINDOW = 51
 SAVGOL_POLYORDER = 3
 AMPLITUDE_SCALE_FACTOR = 1e6
