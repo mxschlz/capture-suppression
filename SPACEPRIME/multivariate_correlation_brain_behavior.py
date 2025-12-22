@@ -84,10 +84,13 @@ print("Loading FOOOF data ...")
 fooof_data = SPACEPRIME.load_concatenated_csv("fooof_exponents.csv")
 fooof_data[SUBJECT_ID_COL] = fooof_data[SUBJECT_ID_COL].astype(int)
 
+# include target and distractor towardness into the dataframes
+towardness_dataframe = df.groupby(SUBJECT_ID_COL)[["target_towardness", "distractor_towardness"]].mean()
+
 ### MERGED ### --- Merge All Data for Correlation ---
 print("\nMerging all EEG and behavioral data sources...")
 # Start with a list of all dataframes to merge
-data_frames = [flanker_subject_df, singleton_effect_df, questionnaire_data, fooof_data, n2ac_df, pd_df]
+data_frames = [flanker_subject_df, singleton_effect_df, questionnaire_data, fooof_data, n2ac_df, pd_df, towardness_dataframe]
 
 # Merge all dataframes on 'subject_id'
 # Start with the first dataframe and iteratively merge the rest
