@@ -155,9 +155,10 @@ for subject_id in subject_ids:
             mne.viz.plot_cov(noise_cov, epochs.info, show_svd=False)
 
         # Inverse operator
-        # The depth parameter compensates for the bias of MNE solutions towards superficial sources.
-        # The default of 0.8 is optimized for MEG. For EEG, a value between 2.0 and 5.0 is recommended
-        # due to the stronger smearing effect of the skull. We'll use 3.0 as a good starting point.
+        # The 'depth' parameter can be used to compensate for the bias of the 'MNE' method towards
+        # superficial sources. However, when using 'dSPM' or 'sLORETA', this correction is
+        # already part of the method's noise normalization. Therefore, depth weighting should be
+        # turned off (depth=0.0 or None) to avoid over-correcting and creating a bias for deep sources.
         depth_weighting = 0.0
         inverse_operator = mne.minimum_norm.make_inverse_operator(epochs.info, fwd, noise_cov, rank=None, loose="auto", depth=depth_weighting, verbose=False)
         
