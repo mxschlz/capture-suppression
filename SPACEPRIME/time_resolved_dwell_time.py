@@ -41,12 +41,12 @@ def infer_sampling_frequency(df):
 # ===================================================================
 WIDTH = 1920
 HEIGHT = 1080
-DG_VA = 2
+DG_VA = 1
 SCREEN_SIZE_CM_Y = 30
-SCREEN_SIZE_CM_X = 40
+SCREEN_SIZE_CM_X = 53
 VIEWING_DISTANCE_CM = 70
 DWELL_TIME_FILTER_RADIUS = 0
-SIGMA = 5
+SIGMA = 0
 
 # ===================================================================
 # Data Loading and Preparation
@@ -101,10 +101,10 @@ print(f"Inferred sampling frequency: {sampling_frequency:.2f} Hz")
 
 # Calculate pixel coordinates
 df['x_pixels'] = df["x"] * degrees_va_to_pixels(
-    degrees=DG_VA, screen_pixels=WIDTH, screen_size_cm=SCREEN_SIZE_CM_X, viewing_distance_cm=VIEWING_DISTANCE_CM
+    degrees=1, screen_pixels=WIDTH, screen_size_cm=SCREEN_SIZE_CM_X, viewing_distance_cm=VIEWING_DISTANCE_CM
 )
 df['y_pixels'] = df["y"] * degrees_va_to_pixels(
-    degrees=DG_VA, screen_pixels=HEIGHT, screen_size_cm=SCREEN_SIZE_CM_Y, viewing_distance_cm=VIEWING_DISTANCE_CM
+    degrees=1, screen_pixels=HEIGHT, screen_size_cm=SCREEN_SIZE_CM_Y, viewing_distance_cm=VIEWING_DISTANCE_CM
 )
 
 # --- Load and Merge Behavioral Data ---
@@ -163,10 +163,42 @@ print("Data preparation complete.")
 # ===================================================================
 
 # Define a region of interest to zoom in on the plots
-ROI_WIDTH = 800  # pixels
-ROI_HEIGHT = 400  # pixels
+ROI_WIDTH = 150  # pixels
+ROI_HEIGHT = 150  # pixels
 X_LIMITS = [(WIDTH - ROI_WIDTH) / 2, (WIDTH + ROI_WIDTH) / 2]
 Y_LIMITS = [(HEIGHT - ROI_HEIGHT) / 2, (HEIGHT + ROI_HEIGHT) / 2]
+
+def add_digit_overlays(ax):
+    """
+    Plots the ideal digit locations on the given axis.
+    Assumes a 3x3 grid (Numpad layout) centered on the screen.
+    """
+    center_x = WIDTH / 2
+    center_y = HEIGHT / 2
+
+    # Calculate pixel offsets for 0.6 degrees visual angle
+    offset_x = degrees_va_to_pixels(
+        degrees=DG_VA, screen_pixels=WIDTH, screen_size_cm=SCREEN_SIZE_CM_X, viewing_distance_cm=VIEWING_DISTANCE_CM
+    )
+    offset_y = degrees_va_to_pixels(
+        degrees=DG_VA, screen_pixels=HEIGHT, screen_size_cm=SCREEN_SIZE_CM_Y, viewing_distance_cm=VIEWING_DISTANCE_CM
+    )
+
+    # Define positions relative to center (Numpad layout)
+    # 7 8 9
+    # 4 5 6
+    # 1 2 3
+    # 5 is at (0, 0)
+    digit_positions = {
+        7: (-offset_x, -offset_y), 8: (0, -offset_y), 9: (offset_x, -offset_y),
+        4: (-offset_x, 0),         5: (0, 0),         6: (offset_x, 0),
+        1: (-offset_x, offset_y),  2: (0, offset_y),  3: (offset_x, offset_y)
+    }
+
+    for digit, (dx, dy) in digit_positions.items():
+        ax.text(center_x + dx, center_y + dy, str(digit),
+                color='black', alpha=0.5, ha='center', va='center',
+                fontsize=15, fontweight='bold')
 
 def calculate_smoothed_histogram(data, n_trials, sampling_frequency, phase_duration_s=None):
     """Calculates a smoothed, normalized histogram for the given data."""
@@ -226,13 +258,17 @@ for i, (s_start, s_end) in enumerate(SAMPLE_BINS):
     sample_hists.append(hist)
 
 if sample_hists:
-    # Use a single vmax for all panels, as they are now comparable proportions
-    vmax1 = np.percentile(np.concatenate([h.ravel() for h in sample_hists]), 99.9)
+    # Use vmax from the second subplot (Response interval) for optimal color coding
+    if len(sample_hists) > 1:
+        vmax1 = np.percentile(sample_hists[1].ravel(), 99.99)
+    else:
+        vmax1 = np.percentile(np.concatenate([h.ravel() for h in sample_hists]), 99.99)
 
     im = None # Initialize im to be accessible for colorbar
     for i, (s_start, s_end) in enumerate(SAMPLE_BINS):
         ax = axes1[i]
         im = ax.imshow(sample_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='inferno', vmax=vmax1, vmin=0)
+        #add_digit_overlays(ax)
         
         # Set aspect ratio and zoom
         ax.set_aspect(ROI_WIDTH / ROI_HEIGHT)
@@ -255,6 +291,7 @@ if sample_hists:
     cbar_ax = fig1.add_axes([0.92, 0.15, 0.02, 0.7])
     fig1.colorbar(im, cax=cbar_ax, label='Dwell time (% of Phase)')
     plt.show()
+
 plt.savefig(f"{get_data_path()}plots/cursor_dwell_time_phases.svg")
 
 # --- Plot 1a: Difference Heatmaps for Phase-Resolved Dwell Time ---
@@ -309,6 +346,7 @@ if distractor_hists:
     for i, cond in enumerate(distractor_conditions):
         ax = axes2[i]
         im = ax.imshow(distractor_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='inferno', vmax=vmax2, vmin=0)
+        add_digit_overlays(ax)
         
         # Set aspect ratio and zoom
         ax.set_aspect(ROI_WIDTH / ROI_HEIGHT)
@@ -369,6 +407,7 @@ if priming_hists:
     for i, cond in enumerate(priming_conditions):
         ax = axes3[i]
         im = ax.imshow(priming_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='inferno', vmax=vmax3, vmin=0)
+        add_digit_overlays(ax)
         
         # Set aspect ratio and zoom
         ax.set_aspect(ROI_WIDTH / ROI_HEIGHT)
