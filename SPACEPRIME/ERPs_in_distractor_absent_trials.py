@@ -130,8 +130,8 @@ for subject_id_num in subject_ids:
 
     try:
         # TARGETS
-        left_target_epochs = epochs_sub[[x for x in all_conds_sub if "Target-1-Singleton-0" in x]].copy()
-        right_target_epochs = epochs_sub[[x for x in all_conds_sub if "Target-3-Singleton-0" in x]].copy()
+        left_target_epochs = epochs_sub[[x for x in all_conds_sub if "Target-2-Singleton-0" in x]].copy()
+        right_target_epochs = epochs_sub[[x for x in all_conds_sub if "Target-2-Singleton-0" in x]].copy()
         print(f"  Target trials: {len(left_target_epochs)} left, {len(right_target_epochs)} right")
         if len(left_target_epochs) == 0 or len(right_target_epochs) == 0:
             print(f"  Skipping {subject_str} due to zero trials in one of the target conditions.")
