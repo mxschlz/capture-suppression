@@ -37,11 +37,11 @@ for subject_id in subject_ids:
     raw = raw_orig.copy().resample(params['resampling_freq'])
     # get events from annotations
     events, event_id = mne.events_from_annotations(raw)
-    # add reference channel
-    raw.add_reference_channels([params["add_ref_channel"]])
     # Add a montage to the data
     montage = mne.channels.read_custom_montage(settings_path + "CACS-64_NO_REF.bvef")
     raw.set_montage(montage)
+    # add reference channel back after setting the montage
+    raw.add_reference_channels([params["add_ref_channel"]])
     # interpolate bad channels
     bads = bad_chs[subject_id]
     if bads:
