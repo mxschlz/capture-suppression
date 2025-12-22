@@ -9,13 +9,17 @@ from SPACEPRIME import load_concatenated_epochs
 from stats import remove_outliers
 from utils import calculate_fractional_area_latency
 from mne.stats import permutation_t_test
+import seaborn as sns
+import mne
+sns.set_theme(context="talk", style="ticks")
 
+# Set plot to be interactive
 plt.ion()
 
 # --- Parameters ---
 
 # Epoching and Time Windows
-EPOCH_TMIN, EPOCH_TMAX = 0.0, 0.7  # Seconds, crop for comparability
+EPOCH_TMIN, EPOCH_TMAX = -0.1, 0.7  # Seconds, crop for comparability
 
 # Electrodes for Contra/Ipsi Calculation
 ELECTRODE_LEFT_HEMISPHERE = "C3"
@@ -52,25 +56,34 @@ SEED = 42
 
 # --- End of Parameters ---
 
-
 # --- Data Storage for Subject-Level Results ---
 # Format: subject_diff_waves['sub-01']['distractor_lateral'] = wave_array
 subject_diff_waves = {}
 
 times_vector = None  # To be populated from the first subject
 
-# load epochs and preprocess
-epochs = load_concatenated_epochs("spaceprime").crop(EPOCH_TMIN, EPOCH_TMAX)
-print(f"Loaded {len(epochs)} epochs.")
+# --- Load and Preprocess Data ---
+print("--- Loading and Preprocessing Data ---")
+epochs = load_concatenated_epochs("spaceprime").crop(EPOCH_TMIN, EPOCH_TMAX).apply_baseline()
+print(f"Original number of trials: {len(epochs)}")
 
+# Get metadata for preprocessing
 df = epochs.metadata.copy().reset_index(drop=True)
+
+# 2. Remove RT outliers
 if REACTION_TIME_COL in df.columns:
     print(f"Removing RT outliers (threshold: {OUTLIER_RT_THRESHOLD} SD)...")
     df = remove_outliers(df, column_name=REACTION_TIME_COL, threshold=OUTLIER_RT_THRESHOLD)
     print(f"  Trials remaining after RT outlier removal: {len(df)}")
 
+# 3. Apply the filter back to the epochs object
+# The index of the cleaned dataframe corresponds to the trials to keep
 epochs = epochs[df.index]
 print(f"Final number of trials after preprocessing: {len(epochs)}")
+# --- End of Preprocessing ---
+# use standard montage (the existing montage of the epochs is wrong)
+montage = mne.channels.make_standard_montage("easycap-M1")
+epochs.set_montage(montage)
 
 # --- Subject Loop ---
 print("\n--- Starting subject-level processing ---")
@@ -169,7 +182,7 @@ for sub_id, cond_data in subject_diff_waves.items():
 print("\n--- Calculating Grand Averages ---")
 ga_diff_waves = {}
 stacked_diff_waves = {}
-condition_keys = list(PLOT_LEGENDS.keys())[1:]
+condition_keys = list(PLOT_LEGENDS.keys())
 
 for key in condition_keys:
     waves_list = [data[key] for sub, data in subject_diff_waves.items() if key in data]
@@ -191,28 +204,11 @@ for key in condition_keys:
         n_subs = stacked_data.shape[0]
 
         ga_wave_plot = savgol_filter(ga_wave, SAVGOL_WINDOW_LENGTH, SAVGOL_POLYORDER) * AMPLITUDE_SCALE_FACTOR
-        sem_wave = sem(stacked_data, axis=0)
-        t_crit = t.ppf(1 - 0.05 / 2, n_subs - 1)
-        ci_range = sem_wave * t_crit * AMPLITUDE_SCALE_FACTOR
+        sem_wave = sem(stacked_data, axis=0) * AMPLITUDE_SCALE_FACTOR
 
         ax.plot(times_vector, ga_wave_plot, color=PLOT_COLORS[key], lw=2.5, label=f"{PLOT_LEGENDS[key]} (N={n_subs})")
-        ax.fill_between(times_vector, ga_wave_plot - ci_range, ga_wave_plot + ci_range, color=PLOT_COLORS[key],
+        ax.fill_between(times_vector, ga_wave_plot - sem_wave, ga_wave_plot + sem_wave, color=PLOT_COLORS[key],
                         alpha=0.1)
-
-        # Add crosshairs based on GA wave metrics
-        is_target_comp = 'target' in key
-        analysis_window = N2AC_ANALYSIS_WINDOW if is_target_comp else PD_ANALYSIS_WINDOW
-        latency_on_ga = calculate_fractional_area_latency(
-            ga_wave, times_vector, percentage=LATENCY_PERCENTAGE, is_target=is_target_comp,
-            analysis_window_times=analysis_window)
-
-        if not np.isnan(latency_on_ga) and (times_vector[0] <= latency_on_ga <= times_vector[-1]):
-            amplitude_on_ga = np.interp(latency_on_ga, times_vector, ga_wave_plot)
-            ax.plot([latency_on_ga, latency_on_ga], [0, amplitude_on_ga], color=PLOT_COLORS[key], linestyle=':', lw=1.5)
-            ax.plot([ax.get_xlim()[0], latency_on_ga], [amplitude_on_ga, amplitude_on_ga], color=PLOT_COLORS[key],
-                    linestyle=':', lw=1.5)
-            ax.plot(latency_on_ga, amplitude_on_ga, 'o', markerfacecolor=PLOT_COLORS[key], markeredgecolor='k',
-                    markersize=8, zorder=11)
 
 # --- Paired Permutation t-tests on Metrics ---
 print("\n--- Running Paired Permutation t-tests on Metrics ---")
@@ -220,40 +216,10 @@ comparisons = list(itertools.combinations(condition_keys, 2))
 stats_text_handles = []
 
 for cond1, cond2 in comparisons:
-    print(f"\n--- Comparing: {PLOT_LEGENDS[cond1]} vs {PLOT_LEGENDS[cond2]} ---")
-
-
-    def run_metric_test(metric_name):
-        common_subjects = [s for s, m in subject_metrics.items() if cond1 in m and cond2 in m and
-                           not np.isnan(m[cond1][metric_name]) and not np.isnan(m[cond2][metric_name])]
-
-        if len(common_subjects) < 3:
-            print(f"  Not enough common subjects ({len(common_subjects)}) for {metric_name} test. Skipping.")
-            return "p=n.s."
-
-        metric1 = [subject_metrics[s][cond1][metric_name] for s in common_subjects]
-        metric2 = [subject_metrics[s][cond2][metric_name] for s in common_subjects]
-        diffs = np.array(metric1) - np.array(metric2)
-
-        _, p_val, _ = permutation_t_test(diffs[:, np.newaxis], n_permutations=N_PERMUTATIONS_TTEST, seed=SEED)
-        p_val_float = p_val[0]
-
-        p_str = f"p={p_val_float:.3f}" if p_val_float >= 0.001 else "p<0.001"
-        if p_val_float < P_VAL_ALPHA:
-            p_str += '*'
-        return p_str
-
-
-    p_text_lat = run_metric_test('latency')
-    p_text_amp = run_metric_test('amplitude')
-
     name1_short = PLOT_LEGENDS[cond1].split('(')[0].strip()
     name2_short = PLOT_LEGENDS[cond2].split('(')[0].strip()
 
     stats_text_handles.append(Line2D([0], [0], color='w', label=f"'{name1_short}' vs '{name2_short}':"))
-    stats_text_handles.append(Line2D([0], [0], color='w', label=f"  Latency: {p_text_lat}"))
-    stats_text_handles.append(Line2D([0], [0], color='w', label=f"  Amplitude: {p_text_amp}"))
-    stats_text_handles.append(Line2D([0], [0], color='w', label=" "))  # Spacer
 
 # --- Finalize Plot ---
 ax.axhline(0, color="black", linestyle="--", linewidth=1)
@@ -261,9 +227,6 @@ ax.axvline(0, color="black", linestyle=":", linewidth=1)
 
 # Create legend
 handles, labels = ax.get_legend_handles_labels()
-handles.append(Line2D([0], [0], marker='o', color='w', markeredgecolor='k', label='Metric on GA Wave', markersize=8,
-                      linestyle='None'))
-handles.extend(stats_text_handles)
 ax.legend(handles=handles, loc='best', title="Paired Comparisons", fontsize=10)
 
 ax.set_title(
@@ -271,7 +234,11 @@ ax.set_title(
     fontsize=16, weight='bold')
 ax.set_ylabel("Amplitude (µV)", fontsize=14)
 ax.set_xlabel("Time (s)", fontsize=14)
-ax.grid(True, linestyle=':', alpha=0.6)
 ax.tick_params(axis='both', which='major', labelsize=12)
 plt.tight_layout()
-plt.show(block=True)
+sns.despine()
+plt.show()
+
+# Save the figure as an SVG file
+savepath = f'n2ac_pd_latency.svg'
+plt.savefig(savepath, format='svg', bbox_inches='tight')
