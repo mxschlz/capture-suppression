@@ -9,6 +9,7 @@ from SPACEPRIME.subjects import subject_ids
 from stats import remove_outliers
 import SPACEPRIME
 import pingouin as pg
+sns.set_theme(style="ticks", context="talk")
 plt.ion()
 
 
@@ -20,7 +21,6 @@ os.makedirs(output_dir, exist_ok=True)
 
 # --- 1. Data Loading & Preprocessing ---
 OUTLIER_RT_THRESHOLD = 2.0
-FILTER_PHASE = 2
 
 # --- 2. Column Names ---
 SUBJECT_ID_COL = 'subject_id'
@@ -47,8 +47,6 @@ subjects = os.listdir(data_root)
 df = pd.concat([pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/sub-{subject}/beh/sub-{subject}_clean*.csv")[0]) for subject in subject_ids])
 
 # --- Preprocessing Steps (largely unchanged) ---
-if PHASE_COL in df.columns and FILTER_PHASE is not None:
-    df = df[df[PHASE_COL] != FILTER_PHASE]
 if REACTION_TIME_COL in df.columns:
     df = remove_outliers(df, column_name=REACTION_TIME_COL, threshold=OUTLIER_RT_THRESHOLD)
 if SUBJECT_ID_COL in df.columns:
@@ -126,6 +124,18 @@ posthoc_targetloc = pg.pairwise_tests(
 )
 # Display a cleaner version of the results table
 print(posthoc_targetloc[['A', 'B', 'T', 'p-corr', 'cohen']])
+
+print("Post-hoc for Main Effect of Target Location (Bonferroni-corrected):")
+posthoc_targetloc_absent = pg.pairwise_tests(
+    data=df_mean.query("distractor_presence=='absent'"),
+    dv='target_towardness',
+    within='TargetLoc',
+    subject=SUBJECT_ID_COL,
+    padjust='bonf',
+    effsize='cohen'
+)
+# Display a cleaner version of the results table
+print(posthoc_targetloc_absent[['A', 'B', 'T', 'p-corr', 'cohen']])
 
 
 # Post-hoc for the main effect of distractor_presence
@@ -314,14 +324,70 @@ for metric in metrics_to_test:
         print("  Could not be computed (likely insufficient data).")
 
 # --- 4. Combined Plotting: Mosaic Layout ---
+# Helper function for annotating significance
+def annotate_significance(ax, stats, x_order, p_col='p-corr', d_col='cohen'):
+    """
+    Annotates the axes with significance brackets based on the provided statistics DataFrame.
+    """
+    if stats is None or stats.empty:
+        return
+
+    # Filter for significance (p < 0.05)
+    sig_stats = stats[stats[p_col] < 0.05].copy()
+    if sig_stats.empty:
+        return
+
+    # Map x-axis labels to positions
+    x_map = {label: i for i, label in enumerate(x_order)}
+    
+    # Calculate positions
+    sig_stats['x1'] = sig_stats['A'].map(x_map)
+    sig_stats['x2'] = sig_stats['B'].map(x_map)
+    # Filter out any rows where mapping failed
+    sig_stats = sig_stats.dropna(subset=['x1', 'x2'])
+    
+    sig_stats['dist'] = abs(sig_stats['x1'] - sig_stats['x2'])
+    # Sort by distance (shortest first) to nest brackets
+    sig_stats = sig_stats.sort_values('dist')
+
+    # Determine starting y-position based on the highest bar in the plot
+    max_h = 0
+    for patch in ax.patches:
+        if np.isfinite(patch.get_height()):
+            max_h = max(max_h, patch.get_height())
+    
+    # Start slightly above the highest bar
+    y_curr = max_h + 0.05
+    y_step = 0.08  # Vertical space per bracket
+
+    for _, row in sig_stats.iterrows():
+        x1, x2 = row['x1'], row['x2']
+        p_val = row[p_col]
+        d_val = row[d_col]
+
+        # Draw bracket
+        h = 0.01
+        ax.plot([x1, x1, x2, x2], [y_curr, y_curr + h, y_curr + h, y_curr], lw=1.5, c='k')
+
+        # Add text
+        label = f"p={p_val:.3f}\nd={d_val:.2f}"
+        ax.text((x1 + x2) * 0.5, y_curr + h + 0.005, label, ha='center', va='bottom', fontsize=9)
+
+        y_curr += y_step
+
+    # Adjust y-limits to fit annotations if needed
+    current_ylim = ax.get_ylim()
+    if current_ylim[1] < y_curr + 0.02:
+        ax.set_ylim(current_ylim[0], y_curr + 0.02)
+
 # Create a figure using subplot_mosaic for a more intuitive layout.
 # 'e' is the new summary plot. 'a' is distractor absent. 'b', 'c', 'd' are distractor present.
 fig, axes = plt.subplot_mosaic(
     mosaic="""
-    eaa
+    ea.
     bcd
     """,
-    figsize=(15, 10),
+    figsize=(16, 11),
     sharey=True,
     gridspec_kw={'width_ratios': [1, 1, 1]} # Ensure columns have equal width
 )
@@ -346,17 +412,11 @@ sns.barplot(
     errorbar=('se', 1),
     ax=ax_a
 )
-sns.stripplot(
-    data=df_absent,
-    x=TARGET_COL,
-    y='target_towardness',
-    order=target_order,
-    color=".3",
-    alpha=0.4,
-    ax=ax_a
-)
 ax_a.set_title("A: Distractor Absent", fontsize=14, weight='bold')
-ax_a.axhline(0, color='grey', linestyle='--', lw=1)
+
+# Add annotations for Panel A
+stats_absent = stats_df[stats_df[DISTRACTOR_COL] == 'absent']
+annotate_significance(ax_a, stats_absent, target_order)
 
 # --- Print Stats for Panel A ---
 print("\n--- Panel A: Distractor Absent Stats ---")
@@ -379,18 +439,8 @@ sns.barplot(
     errorbar=('se', 1),
     ax=ax_e
 )
-sns.stripplot(
-    data=df_presence_summary,
-    x='distractor_presence',
-    y='target_towardness',
-    order=['absent', 'present'],
-    color=".3",
-    alpha=0.4,
-    ax=ax_e,
-)
 ax_e.set_title("E: Distractor Presence", fontsize=14, weight='bold')
 ax_e.set_xlabel("Distractor Presence", fontsize=12)
-ax_e.axhline(0, color='grey', linestyle='--', lw=1)
 
 # --- Stats for Panel E ---
 print("\n--- Panel E: Distractor Presence Stats ---")
@@ -400,6 +450,15 @@ data_pres = df_presence_summary[df_presence_summary['distractor_presence'] == 'p
 ttest_presence = pg.ttest(data_abs, data_pres, paired=True)
 print("  Paired T-test (Absent vs. Present):")
 print(f"    t = {ttest_presence['T'].iloc[0]:.3f}, p = {ttest_presence['p-val'].iloc[0]:.3f}, Cohen's d = {ttest_presence['cohen-d'].iloc[0]:.3f}")
+
+# Add annotations for Panel E
+stats_presence = pd.DataFrame({
+    'A': ['absent'],
+    'B': ['present'],
+    'p-val': ttest_presence['p-val'].values,
+    'cohen': ttest_presence['cohen-d'].values
+})
+annotate_significance(ax_e, stats_presence, ['absent', 'present'], p_col='p-val', d_col='cohen')
 
 for cond in ['absent', 'present']:
     data = df_presence_summary[df_presence_summary['distractor_presence'] == cond]['target_towardness']
@@ -428,6 +487,14 @@ for ax, dist_loc, panel_label in zip(axes_b, distractor_locations_present, panel
         n = len(data)
         print(f"    Target: {target_loc.capitalize():<5} | Mean: {mean:.3f}, SEM: {sem:.3f}, N: {n}")
 
+    # Print significant stats to console
+    stats_subplot = stats_df[stats_df[DISTRACTOR_COL] == dist_loc]
+    print(f"  Pairwise Differences ({dist_loc}) [Plotting only p < 0.05]:")
+    if not stats_subplot.empty:
+        print(stats_subplot[['A', 'B', 'p-corr', 'cohen']])
+    else:
+        print("    No stats computed.")
+
     # Create the bar plot
     sns.barplot(
         data=df_subplot,
@@ -439,17 +506,10 @@ for ax, dist_loc, panel_label in zip(axes_b, distractor_locations_present, panel
         ax=ax
     )
 
-    sns.stripplot(
-        data=df_subplot,
-        x=TARGET_COL,
-        y='target_towardness',
-        order=target_order,
-        color=".3",
-        alpha=0.4,
-        ax=ax
-    )
     ax.set_title(panel_label, fontsize=14, weight='bold')
-    ax.axhline(0, color='grey', linestyle='--', lw=1)
+    
+    # Add annotations
+    annotate_significance(ax, stats_subplot, target_order)
 
 
 # --- 5. Final Figure-Wide Touches ---
@@ -458,7 +518,7 @@ fig.supxlabel("Target Location", fontsize=14)
 fig.supylabel("Target Towardness", fontsize=14)
 
 # Set a consistent Y-limit for all plots by accessing the dictionary's values
-plt.setp(list(axes.values()), ylim=(0.0, 0.5))
+#plt.setp(list(axes.values()), ylim=(-0.05, 0.55))
 
 # Clean up the overall figure appearance
 sns.despine(fig=fig)
@@ -466,8 +526,6 @@ fig.tight_layout(rect=[0.02, 0.02, 1, 0.98]) # Adjust layout for super-labels
 
 # Save the combined figure with a new name reflecting the layout
 fig.savefig(os.path.join(output_dir, "combined_spatial_performance_mosaic.svg"))
-
-plt.show() # Display the final combined plot
 
 # --- 6. Distribution of Target Towardness by Accuracy ---
 plt.figure(figsize=(8, 6))
