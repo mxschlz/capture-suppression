@@ -3,6 +3,8 @@ import SPACEPRIME
 import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.lines import Line2D
+sns.set_theme(context="talk", style="ticks")
+plt.ion()
 
 
 def plot_latency_amplitude_by_towardness(df, component_name, ax, subject_col='subject_id',
@@ -38,26 +40,25 @@ def plot_latency_amplitude_by_towardness(df, component_name, ax, subject_col='su
             continue
 
         median_towardness = subject_df['target_towardness'].median()
-        low_df = subject_df[subject_df['target_towardness'] <= median_towardness]
+        low_df = subject_df[subject_df['target_towardness'] < median_towardness]
         high_df = subject_df[subject_df['target_towardness'] > median_towardness]
 
-        if high_df.empty and not low_df.empty:
-            high_df = low_df  # Handle cases with no variability in towardness
+        # Only include subjects that have data for both conditions to ensure valid within-subject contrasts
+        if low_df.empty or high_df.empty:
+            continue
 
-        if not low_df.empty:
-            subject_means.append({
-                subject_col: subject_id,
-                'towardness_level': 'Low',
-                'latency': low_df[latency_col].mean(),
-                'amplitude': low_df[amplitude_col].mean()
-            })
-        if not high_df.empty:
-            subject_means.append({
-                subject_col: subject_id,
-                'towardness_level': 'High',
-                'latency': high_df[latency_col].mean(),
-                'amplitude': high_df[amplitude_col].mean()
-            })
+        subject_means.append({
+            subject_col: subject_id,
+            'towardness_level': 'Low',
+            'latency': low_df[latency_col].mean(),
+            'amplitude': low_df[amplitude_col].mean()
+        })
+        subject_means.append({
+            subject_col: subject_id,
+            'towardness_level': 'High',
+            'latency': high_df[latency_col].mean(),
+            'amplitude': high_df[amplitude_col].mean()
+        })
 
     agg_df = pd.DataFrame(subject_means)
     if agg_df.empty:
@@ -72,19 +73,16 @@ def plot_latency_amplitude_by_towardness(df, component_name, ax, subject_col='su
         subject_grand_means = plot_df.groupby(subject_col)[['latency', 'amplitude']].transform('mean')
         plot_df['latency'] -= subject_grand_means['latency']
         plot_df['amplitude'] -= subject_grand_means['amplitude']
-        x_label, y_label = 'Latency (Centered, ms)', 'Amplitude (Centered, µV)'
+        x_label, y_label = 'Latency (Centered, s)', 'Amplitude (Centered, µV)'
     else:
-        x_label, y_label = 'Latency (ms)', 'Amplitude (µV)'
+        x_label, y_label = 'Latency (s)', 'Amplitude (µV)'
 
-    # --- 3. Plotting (using plot_df) ---
-    sns.lineplot(
-        data=plot_df, x='latency', y='amplitude', hue='towardness_level',
-        units=subject_col, estimator=None, color='grey', alpha=0.4,
-        ax=ax, legend=False
-    )
+    # High-contrast color scheme (Okabe-Ito: Blue vs. Vermilion)
+    colors = {'Low': '#0072B2', 'High': '#D55E00'}
+
     sns.scatterplot(
         data=plot_df, x='latency', y='amplitude', hue='towardness_level',
-        palette={'Low': 'royalblue', 'High': 'firebrick'}, s=80, alpha=0.8,
+        palette=colors, s=80, alpha=0.4,
         ax=ax, legend=False
     )
 
@@ -97,12 +95,12 @@ def plot_latency_amplitude_by_towardness(df, component_name, ax, subject_col='su
     ).reset_index()
 
     for _, row in summary_stats.iterrows():
-        color = 'royalblue' if row['towardness_level'] == 'Low' else 'firebrick'
+        color = colors[row['towardness_level']]
         ax.errorbar(
             x=row['mean_latency'], y=row['mean_amplitude'],
             xerr=row['sem_latency'], yerr=row['sem_amplitude'],
             fmt='X', markersize=0, markeredgecolor='white', markerfacecolor=color,
-            color=color, elinewidth=2.5, capsize=5, zorder=10
+            color=color, elinewidth=3, capsize=0, zorder=20
         )
 
     # --- 5. Final Touches ---
@@ -112,8 +110,8 @@ def plot_latency_amplitude_by_towardness(df, component_name, ax, subject_col='su
 
     if add_legend:
         legend_handles = [
-            Line2D([0], [0], marker='o', color='w', label='Low', markerfacecolor='royalblue', markersize=10),
-            Line2D([0], [0], marker='o', color='w', label='High', markerfacecolor='firebrick', markersize=10)
+            Line2D([0], [0], marker='o', color='w', label='Low', markerfacecolor=colors['Low'], markersize=10),
+            Line2D([0], [0], marker='o', color='w', label='High', markerfacecolor=colors['High'], markersize=10)
         ]
         ax.legend(handles=legend_handles, labels=['Low Towardness', 'High Towardness'],
                   title='Condition', title_fontsize='14', fontsize='12', loc='best')
@@ -124,11 +122,11 @@ n2ac_df = SPACEPRIME.load_concatenated_csv("spaceprime_n2ac_erp_behavioral_lmm_l
 pd_df = SPACEPRIME.load_concatenated_csv("spaceprime_pd_erp_behavioral_lmm_long_data_between-within.csv")
 
 # Create a figure with two subplots
-fig, axes = plt.subplots(1, 2, figsize=(20, 9), sharey=False) # sharey=False because N2ac is inverted
+fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True) # sharey=False because N2ac is inverted
 
 # --- Generate the plot for the N2ac component on the first axis ---
 plot_latency_amplitude_by_towardness(
-    df=n2ac_df,
+    df=n2ac_df.dropna(),
     component_name="N2ac",
     ax=axes[0],
     subject_col='subject_id',
@@ -138,7 +136,7 @@ plot_latency_amplitude_by_towardness(
 
 # --- Generate the plot for the Pd component on the second axis ---
 plot_latency_amplitude_by_towardness(
-    df=pd_df,
+    df=pd_df.dropna(),
     component_name="Pd",
     ax=axes[1],
     subject_col='subject_id',
@@ -148,5 +146,6 @@ plot_latency_amplitude_by_towardness(
 
 # Clean up the layout and display the plot
 sns.despine(fig=fig)
-plt.tight_layout(rect=[0, 0, 1, 0.95]) # Adjust layout to make room for suptitle
-plt.show()
+plt.tight_layout() # Adjust layout to make room for suptitle
+
+plt.savefig("neuro-behavioral_plots.svg")
