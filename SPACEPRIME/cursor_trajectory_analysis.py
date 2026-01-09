@@ -419,9 +419,9 @@ print("\\n--- Visualizing Derived Capture Scores by Priming Condition and Block 
 
 # Define the scores to plot and their user-friendly titles
 scores_to_plot = {
-    'target_towardness': 'Target towardness',
-    'distractor_towardness': 'Distractor towardness',
-    'target_distractor_towardness_diff': 'Target vs. Distractor Difference'
+    'target_towardness_std': 'Target towardness',
+    'distractor_towardness_std': 'Distractor towardness',
+    'target_distractor_towardness_diff_std': 'Target vs. Distractor Difference'
 }
 
 # Create a figure with 3 subplots in a row, sharing the y-axis for easy comparison
