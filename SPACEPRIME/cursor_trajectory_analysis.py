@@ -7,6 +7,7 @@ from stats import remove_outliers
 from scipy.stats import ttest_rel, spearmanr
 import pingouin as pg
 import SPACEPRIME
+sns.set_theme(context="talk", style="ticks")
 
 plt.ion()
 
@@ -22,7 +23,6 @@ VIEWING_DISTANCE_CM = 70
 DWELL_TIME_FILTER_RADIUS = 0.4
 MOVEMENT_THRESHOLD = 0.05
 SIGMA = 25
-FILTER_PHASE = 2
 OUTLIER_THRESHOLD = 2
 WINDOW_SIZE = 31
 RESAMP_FREQ = 50
@@ -161,9 +161,8 @@ merged_df = pd.merge(
     on=['subject_id', 'block', 'trial_nr'],
     how='left'  # Keeps all rows from df_behavioral_example and adds path_length_pixels
 )
-df_clean = merged_df[merged_df["phase"]!=FILTER_PHASE]
 
-df_clean = remove_outliers(df_clean, column_name="rt", threshold=OUTLIER_THRESHOLD)
+df_clean = remove_outliers(merged_df, column_name="rt", threshold=OUTLIER_THRESHOLD)
 
 # ===================================================================
 #                  ANALYSIS OF FIRST MOUSE MOVEMENT (REVISED)
@@ -355,11 +354,11 @@ analysis_df['distractor_vec_length'] = analysis_df['SingletonDigit'].apply(get_v
 # --- Create the Standardized Scores ---
 # The standardized score is the projection value divided by the length of the ideal vector.
 # This converts the score from an absolute distance (in dva) to a relative proportion.
-analysis_df['target_towardness_std'] = analysis_df['target_towardness'] / (analysis_df['target_vec_length'])
-analysis_df['distractor_towardness_std'] = analysis_df['distractor_towardness'] / (analysis_df['distractor_vec_length'])
+analysis_df['target_towardness'] = analysis_df['target_towardness'] / (analysis_df['target_vec_length'])
+analysis_df['distractor_towardness'] = analysis_df['distractor_towardness'] / (analysis_df['distractor_vec_length'])
 
 # The difference score is now a comparison of these relative proportions
-analysis_df['target_distractor_towardness_diff_std'] = analysis_df['target_towardness_std'] - analysis_df['distractor_towardness_std']
+#analysis_df['target_distractor_towardness_diff_std'] = analysis_df['target_towardness_std'] - analysis_df['distractor_towardness_std']
 
 # ===================================================================
 #      NEW: FILTER OUT NOISY TRAJECTORIES
@@ -419,13 +418,18 @@ print("\\n--- Visualizing Derived Capture Scores by Priming Condition and Block 
 
 # Define the scores to plot and their user-friendly titles
 scores_to_plot = {
-    'target_towardness_std': 'Target towardness',
-    'distractor_towardness_std': 'Distractor towardness',
-    'target_distractor_towardness_diff_std': 'Target vs. Distractor Difference'
+    'target_towardness': 'Target towardness',
+    'distractor_towardness': 'Distractor towardness',
+    'target_distractor_towardness_diff': 'Target vs. Distractor Difference'
 }
 
+# Aggregate data to subject level to ensure error bars represent between-subject variability
+analysis_df_subject_block = analysis_df.groupby(['subject_id', 'block', 'PrimingCondition'])[
+    list(scores_to_plot.keys())
+].mean().reset_index()
+
 # Create a figure with 3 subplots in a row, sharing the y-axis for easy comparison
-fig, axes = plt.subplots(1, 3, figsize=(24, 7), sharey=True)
+fig, axes = plt.subplots(1, 3, figsize=(24, 7), sharey=False)
 
 # Define common plotting parameters for a consistent look
 hue_order = ['Negative', 'No', 'Positive']
@@ -434,7 +438,7 @@ palette = {'Positive': 'mediumseagreen', 'No': 'gray', 'Negative': 'salmon'}
 for i, (col_name, title) in enumerate(scores_to_plot.items()):
     ax = axes[i]
     sns.pointplot(
-        data=analysis_df,
+        data=analysis_df_subject_block,
         x='block',
         y=col_name,
         hue='PrimingCondition',
@@ -457,21 +461,75 @@ for i, (col_name, title) in enumerate(scores_to_plot.items()):
 
     ax.grid(True, which='major', axis='y', linestyle=':', linewidth=0.5)
     sns.despine(ax=ax)
+    ax.tick_params(bottom=True, left=True)
 
     # Only show the legend on the last (rightmost) plot to avoid redundancy
-    if i < len(scores_to_plot) - 1:
-        ax.get_legend().remove()
-    else:
+    if i == 2:
         ax.legend(title='Priming Condition', bbox_to_anchor=(1.02, 1), loc='upper left')
+    else:
+        if ax.get_legend() is not None:
+            ax.get_legend().remove()
 
-plt.tight_layout() # Adjust layout to prevent title overlap
+# Share Y axis manually for the first figure
+y_mins = [ax.get_ylim()[0] for ax in axes]
+y_maxs = [ax.get_ylim()[1] for ax in axes]
+for ax in axes:
+    ax.set_ylim(min(y_mins), max(y_maxs))
+
+
+# --- Add Bar Plots for Specific Comparisons (Positive vs No, Negative vs No) ---
+fig2, axes2 = plt.subplots(1, 2, figsize=(14, 7), sharey=False)
+
+# Aggregate to subject level for bar plots (averaging over blocks)
+analysis_df_subject_priming = analysis_df.groupby(['subject_id', 'PrimingCondition'])[
+    ['target_towardness']
+].mean().reset_index()
+
+# Plot Positive vs No (Index 3)
+ax = axes2[0]
+sns.barplot(
+    data=analysis_df_subject_priming[analysis_df_subject_priming['PrimingCondition'].isin(['Positive', 'No'])],
+    x='PrimingCondition',
+    y='target_towardness',
+    hue='PrimingCondition',
+    order=['No', 'Positive'],
+    palette=palette,
+    ax=ax,
+)
+ax.set_title('Positive vs. No Priming', fontsize=14)
+ax.set_xlabel('Priming Condition', fontsize=12)
+ax.legend("")
+sns.despine(ax=ax)
+ax.tick_params(bottom=True, left=True)
+
+# Plot Negative vs No (Index 4)
+ax = axes2[1]
+sns.barplot(
+    data=analysis_df_subject_priming[analysis_df_subject_priming['PrimingCondition'].isin(['Negative', 'No'])],
+    x='PrimingCondition',
+    y='target_towardness',
+    hue='PrimingCondition',
+    order=['No', 'Negative'],
+    palette=palette,
+    ax=ax,
+)
+ax.set_title('Negative vs. No Priming', fontsize=14)
+ax.set_xlabel('Priming Condition', fontsize=12)
+ax.legend("")
+sns.despine(ax=ax)
+ax.tick_params(bottom=True, left=True)
+
+# Share Y axis manually for the second figure
+y_mins_2 = [ax.get_ylim()[0] for ax in axes2]
+y_maxs_2 = [ax.get_ylim()[1] for ax in axes2]
+for ax in axes2:
+    ax.set_ylim(min(y_mins_2), max(y_maxs_2))
+
+plt.savefig("plots/neg_pos_priming.svg")
 
 # Compare capture score effect sizes versus response time and accuracy effect sizes in Priming conditions
-analysis_df_mean = analysis_df.groupby(["subject_id", "Priming"])[["rt", "select_target", "target_towardness_std",
-                                                                   "target_towardness", "distractor_towardness",
-                                                                   "target_distractor_towardness_diff",
-                                                      "distractor_towardness_std",
-                                                      "target_distractor_towardness_diff_std"]].mean().reset_index()
+analysis_df_mean = analysis_df.groupby(["subject_id", "Priming"])[["rt", "select_target", "target_towardness", "distractor_towardness"
+                                                    ]].mean().reset_index()
 
 # ===================================================================
 #       EFFECT SIZE COMPARISON: CAPTURE SCORE vs. RT vs. ACCURACY
@@ -531,7 +589,8 @@ for metric_name, col_name in metrics_to_compare.items():
         'Metric': metric_name,
         'Comparison': 'Positive vs. No Priming',
         "Cohen's d": cohens_d_pos,
-        "p-val": p_val_pos  # Store the p-value
+        "p-val": p_val_pos,  # Store the p-value,
+        'T': ttest_pos_vs_no['T'].iloc[0]
     })
 
     # --- Comparison 2: Negative Priming vs. No Priming ---
@@ -547,7 +606,8 @@ for metric_name, col_name in metrics_to_compare.items():
         'Metric': metric_name,
         'Comparison': 'Negative vs. No Priming',
         "Cohen's d": cohens_d_neg,
-        "p-val": p_val_neg # Store the p-value
+        "p-val": p_val_neg, # Store the p-value
+        'T': ttest_neg_vs_no['T'].iloc[0]
     })
 
     # --- Comparison 3: Positive Priming vs. Negative Priming ---
@@ -563,7 +623,8 @@ for metric_name, col_name in metrics_to_compare.items():
         'Metric': metric_name,
         'Comparison': 'Positive vs. Negative Priming',
         "Cohen's d": cohens_d_pos_neg,
-        "p-val": p_val_pos_neg
+        "p-val": p_val_pos_neg,
+        'T': ttest_pos_vs_neg['T'].iloc[0]
     })
 
 
@@ -699,11 +760,8 @@ plt.tight_layout()
 #       CORRELATION MATRIX OF PERFORMANCE METRICS
 # ===================================================================
 # Compare capture score effect sizes versus response time and accuracy effect sizes in Priming conditions
-corr_df = analysis_df.groupby(["subject_id"])[["rt", "select_target", "target_towardness_std",
-                                                                   "target_towardness", "distractor_towardness",
-                                                                   "target_distractor_towardness_diff",
-                                                      "distractor_towardness_std",
-                                                      "target_distractor_towardness_diff_std"]].mean().reset_index()
+corr_df = analysis_df.groupby(["subject_id"])[["rt", "select_target", "target_towardness", "distractor_towardness",
+                                                                   "target_distractor_towardness_diff"]].mean().reset_index()
 
 # Select the columns for the correlation matrix from the df_effects DataFrame.
 # These are the subject-level average scores for each metric, across all conditions.
@@ -1317,10 +1375,10 @@ print(f"Created a combined analysis dataframe with {len(full_analysis_df)} trial
 # --- Define pairs of digits that are opposite each other on the numpad ---
 # These pairs have the maximal angular distance.
 opposite_pairs = [
-    (1, 9), (9, 1),
-    (3, 7), (7, 3),
-    (2, 8), (8, 2),
-    (4, 6), (6, 4)
+    (4, 2), (2, 4),
+    (2, 6), (6, 2),
+    (4, 8), (8, 4),
+    (6, 8), (8, 6)
 ]
 
 # --- Create a boolean mask for trials where the target and distractor are opposites ---
@@ -1346,7 +1404,7 @@ candidate_trials = full_analysis_df[
 if not candidate_trials.empty:
     # Select one of these interesting trials at random
     #example_trial_for_poster = candidate_trials.sample(n=1).iloc[0]
-    example_trial_for_poster = candidate_trials.query("subject_id==136&block==7.0&trial_nr==171").iloc[0]
+    example_trial_for_poster = candidate_trials.query("subject_id==146&block==7.0&trial_nr==165").iloc[0]
 
     print(f"Found a great example! Plotting trial {example_trial_for_poster['trial_nr']}, block {example_trial_for_poster['block']}, from subject {example_trial_for_poster['subject_id']}.")
     print(f"  -> Target: {int(example_trial_for_poster['TargetDigit'])}, Distractor: {int(example_trial_for_poster['SingletonDigit'])}")

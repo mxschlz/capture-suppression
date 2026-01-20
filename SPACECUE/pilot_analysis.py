@@ -8,7 +8,7 @@ import pingouin as pg
 plt.ion()
 
 
-df = pd.read_csv("G:\\Meine Ablage\\PhD\\data\\SPACECUE_behavioral_pilot\\concatenated\\all_subjects_merged_data.csv")
+df = pd.read_csv("G:\\Meine Ablage\\PhD\\data\\SPACECUE_behavioral_pilot\\concatenated\\data_for_jamovi_single_trials.csv")
 # --- Corrected & Robust Cohort Assignment ---
 
 # 1. Calculate a single, consistent age for each subject (using the mean).

@@ -12,7 +12,6 @@ plt.ion()
 
 # --- 1. Preprocessing Parameters (adopted from LMM script) ---
 OUTLIER_RT_THRESHOLD = 2.0
-FILTER_PHASE = 2
 REACTION_TIME_COL = 'rt'
 PHASE_COL = 'phase'
 
@@ -72,12 +71,6 @@ print(f"Original number of trials: {len(epochs)}")
 
 # Get metadata for preprocessing
 df = epochs.metadata.copy().reset_index(drop=True)
-
-# 1. Filter by phase
-if PHASE_COL in df.columns and FILTER_PHASE is not None:
-    print(f"Filtering out trials from phase {FILTER_PHASE}...")
-    df = df[df[PHASE_COL] != FILTER_PHASE]
-    print(f"  Trials remaining after phase filter: {len(df)}")
 
 # 2. Remove RT outliers
 if REACTION_TIME_COL in df.columns:
@@ -330,6 +323,112 @@ def _get_contra_ipsi_stcs(subject_estimates, left_key, right_key):
     return contra_stcs, ipsi_stcs
 
 
+def rotate_brain_view(brain, azimuth_lh=0, azimuth_rh=0, elevation=0):
+    """
+    Rotates the camera view for all subplots in the brain object.
+    """
+    try:
+        # Access the PyVista plotter from the MNE Brain object
+        plotter = brain._renderer.plotter
+
+        # Iterate over all renderers (subplots)
+        for i, renderer in enumerate(plotter.renderers):
+            camera = renderer.GetActiveCamera()
+            # Even indices are Left Hemisphere, Odd indices are Right Hemisphere
+            if i % 2 == 0:
+                camera.Azimuth(azimuth_lh)
+            else:
+                camera.Azimuth(azimuth_rh)
+            camera.Elevation(elevation)
+            renderer.ResetCameraClippingRange()
+
+        plotter.render()
+    except Exception as e:
+        print(f"  Warning: Failed to rotate view: {e}")
+
+
+def adjust_colorbar(brain, title=None):
+    """
+    Moves the colorbar to the lower-right subplot and adjusts its style.
+    """
+    try:
+        plotter = brain._renderer.plotter
+        if not plotter.scalar_bars:
+            return
+
+        scalar_bar = list(plotter.scalar_bars.values())[0]
+
+        # Move to the last renderer (usually Bottom-Right) to ensure it is on the far right bottom
+        if len(plotter.renderers) > 1:
+            target_renderer = plotter.renderers[-1]
+            for renderer in plotter.renderers:
+                renderer.RemoveActor(scalar_bar)
+            target_renderer.AddActor(scalar_bar)
+
+        if title is not None:
+            scalar_bar.SetTitle(title)
+
+        # Adjust colorbar position and size
+        scalar_bar.SetOrientationToVertical()
+        scalar_bar.SetHeight(1.0)  # Height relative to the subplot
+        scalar_bar.SetWidth(0.1)  # Width
+        scalar_bar.SetPosition(0.92, 0.05)  # x=0.92 (Far Right), y=0.05 (Bottom)
+        scalar_bar.SetNumberOfLabels(0)
+    except Exception as e:
+        print(f"  Warning: Failed to adjust colorbar: {e}")
+
+
+def save_transparent_screenshot(brain, filename, spacing=10):
+    """
+    Takes a screenshot of the brain instance, makes the white background transparent,
+    crops the image to the content with some padding, and saves it.
+    """
+    # Get the screenshot as a numpy array
+    img = brain.screenshot()
+
+    # Ensure it's a writable numpy array
+    img = np.array(img)
+
+    # Check if RGB or RGBA
+    if img.shape[2] == 3:
+        # Add alpha channel
+        alpha = np.full((img.shape[0], img.shape[1], 1), 255, dtype=np.uint8)
+        img = np.concatenate([img, alpha], axis=2)
+
+    # Identify white background pixels (assuming [255, 255, 255])
+    mask = (img[:, :, 0] == 255) & (img[:, :, 1] == 255) & (img[:, :, 2] == 255)
+
+    # Set alpha to 0 for background
+    img[mask, 3] = 0
+
+    # Identify rows and columns that have at least one non-transparent pixel
+    non_empty_rows = np.where(np.any(img[:, :, 3] > 0, axis=1))[0]
+    non_empty_cols = np.where(np.any(img[:, :, 3] > 0, axis=0))[0]
+
+    if non_empty_rows.size > 0 and non_empty_cols.size > 0:
+        # Add spacing to the indices to preserve some whitespace around content
+        n_rows, n_cols = img.shape[:2]
+
+        # Expand rows
+        expanded_rows = np.concatenate([non_empty_rows + i for i in range(-spacing, spacing + 1)])
+        expanded_rows = np.unique(expanded_rows)
+        expanded_rows = expanded_rows[(expanded_rows >= 0) & (expanded_rows < n_rows)]
+
+        # Expand cols
+        expanded_cols = np.concatenate([non_empty_cols + i for i in range(-spacing, spacing + 1)])
+        expanded_cols = np.unique(expanded_cols)
+        expanded_cols = expanded_cols[(expanded_cols >= 0) & (expanded_cols < n_cols)]
+
+        # Use np.ix_ to select the intersection of expanded rows and cols.
+        img_cropped = img[np.ix_(expanded_rows, expanded_cols)]
+    else:
+        img_cropped = img
+
+    # Save using matplotlib
+    plt.imsave(filename, img_cropped)
+    print(f"  Saved transparent screenshot to {filename}")
+
+
 def report_significant_clusters(stc, threshold, component_name, subjects_dir):
     """
     Identifies and reports the anatomical labels corresponding to significant
@@ -408,29 +507,24 @@ if t_stc_n2ac:
         lims = [SIGNIFICANCE_Z_THRESHOLD, SIGNIFICANCE_Z_THRESHOLD, max_val_flipped]
 
         brain_n2ac = t_stc_n2ac_plot.plot(
-            subject=FSMRI_SUBJ, hemi='split', size=(1000, 800), # Consistent size
+            subject=FSMRI_SUBJ, hemi='split', size=(1500, 1000), # Consistent size
             views=['lat', 'med'],
             smoothing_steps=20, # Increased smoothing for visualization
             clim=dict(kind='value', lims=lims), colormap='Greens',
-            time_label=f'N2ac z-scores\nAvg: {ERP_TMIN*1000:.0f}-{ERP_TMAX*1000:.0f} ms',
-            cortex="0.5",
-            surface="inflated"
+            cortex="low_contrast",
+            surface="inflated",
+            background="white"
         )
+        # Fix scalar bar title if possible
+        adjust_colorbar(brain_n2ac)
 
-        # 4. Modify colorbar labels to show original negative values
-        # The scalar_bars attribute is a dictionary. We get the first colorbar actor
-        # from its values and then set the label format.
-        # The format string '-%g' adds a negative sign and uses a general format for the number.
-        scalar_bar = list(brain_n2ac._renderer.plotter.scalar_bars.values())[0]
-        scalar_bar.SetLabelFormat("-%.2f")
-        
         # --- Generate and print the anatomical report for N2ac ---
         report_significant_clusters(t_stc_n2ac, -SIGNIFICANCE_Z_THRESHOLD, 'N2ac', SUBJECTS_DIR)
 
+        rotate_brain_view(brain_n2ac, azimuth_lh=-30, azimuth_rh=30)
         # Save the plot as an image file
         save_path_n2ac = 'group_N2ac_zmap.png'
-        brain_n2ac.save_image(save_path_n2ac)
-        print(f"  Saved N2ac z-map image to {save_path_n2ac}")
+        save_transparent_screenshot(brain_n2ac, save_path_n2ac, spacing=20)
     else:
         print(f"  Skipping N2ac plot: No significant negative z-scores found "
               f"(min_val: {min_val:.3f}, threshold: {-SIGNIFICANCE_Z_THRESHOLD}).")
@@ -451,23 +545,25 @@ if t_stc_pd:
         lims = [SIGNIFICANCE_Z_THRESHOLD, SIGNIFICANCE_Z_THRESHOLD, max_val]
 
         brain_pd = t_stc_pd_plot.plot( # Plot both lateral and medial views
-            subject=FSMRI_SUBJ, hemi='split', size=(1000, 800), # Consistent size
+            subject=FSMRI_SUBJ, hemi='split', size=(1500, 1000), # Consistent size
             views=['lat', 'med'],
             smoothing_steps=20,
             # Show only positive values: from 0 to max_z
             clim=dict(kind='value', lims=lims), colormap='Reds',
-            time_label=f'Pd z-scores\nAvg: {ERP_TMIN*1000:.0f}-{ERP_TMAX*1000:.0f} ms',
-            cortex="0.5",
-            surface="inflated"
+            cortex="low_contrast",
+            surface="inflated",
+            background="white"
         )
-        
+        # Fix scalar bar title if possible
+        adjust_colorbar(brain_pd)
+
         # --- Generate and print the anatomical report for Pd ---
         report_significant_clusters(t_stc_pd, SIGNIFICANCE_Z_THRESHOLD/2, 'Pd', SUBJECTS_DIR)
         
+        rotate_brain_view(brain_pd, azimuth_lh=-30, azimuth_rh=30)
         # Save the plot as an image file
         save_path_pd = 'group_Pd_zmap.png'
-        brain_pd.save_image(save_path_pd)
-        print(f"  Saved Pd z-map image to {save_path_pd}")
+        save_transparent_screenshot(brain_pd, save_path_pd, spacing=20)
 
 # --- Direct Comparison: Pd vs. N2ac ---
 print("\n--- Performing Direct Comparison: Pd vs. N2ac ---")
@@ -508,23 +604,14 @@ if t_stc_n2ac is not None and t_stc_pd is not None:
             colormap='RdYlGn_r', # Red for positive (Pd), Green for negative (N2ac)
             clim=dict(kind='value', pos_lims=[SIGNIFICANCE_Z_THRESHOLD, SIGNIFICANCE_Z_THRESHOLD, max_abs_z]),
             time_label=None,
-            cortex="0.5",
+            cortex="low_contrast",
             surface="inflated",
             transparent=True,
             background="white"
         )
 
         # Fix scalar bar title if possible
-        try:
-            scalar_bar = list(brain_combined._renderer.plotter.scalar_bars.values())[0]
-            scalar_bar.SetTitle("Z-score")
-            # Adjust colorbar position and size
-            scalar_bar.SetOrientationToVertical()
-            scalar_bar.SetHeight(0.6)  # Length
-            scalar_bar.SetWidth(0.05)  # Thickness
-            scalar_bar.SetPosition(0.9, 0.2)  # x, y position (0-1)
-        except Exception:
-            pass
+        adjust_colorbar(brain_combined, title="Z-score")
 
         print("\n--- Anatomical Report for Combined Map ---")
         print("Positive Clusters (Pd dominant):")
@@ -532,9 +619,9 @@ if t_stc_n2ac is not None and t_stc_pd is not None:
         print("Negative Clusters (N2ac dominant):")
         report_significant_clusters(t_stc_combined, -SIGNIFICANCE_Z_THRESHOLD, 'N2ac (Combined)', SUBJECTS_DIR)
 
+        rotate_brain_view(brain_combined, azimuth_lh=-10, azimuth_rh=10)
         save_path_combined = 'group_combined_N2ac_Pd_zmap.png'
-        brain_combined.save_image(save_path_combined)
-        print(f"  Saved combined z-map image to {save_path_combined}")
+        save_transparent_screenshot(brain_combined, save_path_combined)
     else:
         print(f"  Skipping combined plot: No significant values found (max_abs_z: {max_abs_z:.3f}).")
 else:

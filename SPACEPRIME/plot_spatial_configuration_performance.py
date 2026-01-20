@@ -427,6 +427,12 @@ for loc in target_order:
     n = len(data)
     print(f"  Target: {loc.capitalize()} | Mean: {mean:.3f}, SEM: {sem:.3f}, N: {n}")
 
+print(f"  Pairwise Differences (Absent):")
+if not stats_absent.empty:
+    print(stats_absent[['A', 'B', 'p-corr', 'cohen']])
+else:
+    print("    No stats computed.")
+
 # --- 4aa. Plotting Panel E: Distractor Present vs. Absent ---
 df_presence_summary = df_mean.groupby(['subject_id', 'distractor_presence'])['target_towardness'].mean().reset_index()
 

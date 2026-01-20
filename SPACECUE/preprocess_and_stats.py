@@ -7,13 +7,11 @@ import seaborn as sns
 import pingouin as pg
 
 
-FILTER_PHASE = 4
 OUTLIER_THRESH = 2
 
 subjects = sorted(os.listdir(f"{SPACECUE.get_data_path()}derivatives\\preprocessing")[1:])
 df = pd.concat([pd.read_csv(f"{SPACECUE.get_data_path()}derivatives\\preprocessing\\{subject}\\beh\\{subject}_clean.csv") for subject in subjects])
 
-df = df.query(f"phase!={FILTER_PHASE}")
 df = remove_outliers(df, threshold=OUTLIER_THRESH, column_name="rt")
 
 # further preprocessing
