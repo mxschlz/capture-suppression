@@ -7,44 +7,56 @@ import seaborn as sns
 import pingouin as pg
 import glob
 from utils import calculate_trajectory_projections, get_vector_length # Assuming utils is importable
+sns.set_theme(context="talk", style="ticks")
 
 
 OUTLIER_THRESH = 2
+TRAJECTORY_BOUNDARY_DVA = 2
 
 # Define the locations of the stimuli in degrees of visual angle (dva)
 # This is crucial for calculating trajectory projections.
 locations_map = {
-    0: (0, -4),  # Top
-    1: (4, 0),   # Right
-    # Location 2 is excluded in your data
-    3: (0, 4),   # Bottom
-    4: (-4, 0),  # Left
+    7: (-0.6, -0.6), 8: (0, -0.6), 9: (0.6, -0.6),
+    4: (-0.6, 0), 5: (0, 0), 6: (0.6, 0),
+    1: (-0.6, 0.6), 2: (0, 0.6), 3: (0.6, 0.6),
 }
+
+def p_to_asterisks(p):
+    if p < 0.001: return '***'
+    if p < 0.01: return '**'
+    if p < 0.05: return '*'
+    return 'ns'
 
 data_path = SPACECUE_implicit.get_data_path()
 df = pd.concat([pd.read_csv(f"{data_path}pilot/distractor/{file}") for file in os.listdir(f"{data_path}pilot/distractor")])
 
-df = df.query('SingletonLoc != 2')
+#df = df.query('SingletonLoc != 1.0')
+#df = df.query("TargetLoc != 'Front'")
 
 # Ensure key columns are of integer type for merging with mouse data
-df['Subject ID'] = df['Subject ID'].astype(int, errors="ignore")
-df['Block'] = df['Block'].astype(int, errors="ignore")
-df['Trial Nr'] = df['Trial Nr'].astype(int, errors="ignore")
+df['Subject ID'] = df['subject_id'].astype(int, errors="ignore")
+df['Block'] = df['block'].astype(int, errors="ignore")
+df['Trial Nr'] = df['trial_nr'].astype(int, errors="ignore")
 
-df["IsCorrect"] = df["IsCorrect"].astype(float, errors="ignore")
+df["IsCorrect"] = df["select_target"].astype(float, errors="ignore")
 df = remove_outliers(df, threshold=OUTLIER_THRESH, column_name="rt", subject_id_column="Subject ID")
+
+# Create snake_case columns for merging and filtering
+df['subject_id'] = df['Subject ID'].astype(int, errors='ignore')
+df['block'] = df['Block'].astype(int, errors='ignore')
+df['trial_nr'] = df['Trial Nr'].astype(int, errors='ignore')
 
 
 # --- Load and process raw trajectory data for towardness analysis ---
 print("Loading and processing raw trajectory data for towardness analysis...")
 
 # Find all subject folders for raw mouse data
-raw_data_base_path = os.path.join(SPACECUE_implicit.get_data_path(), 'sourcedata', 'raw', 'beh')
-subject_folders = glob.glob(f"{raw_data_base_path}/sub-*")
+raw_data_base_path = os.path.join(SPACECUE_implicit.get_data_path(), 'sourcedata', 'raw')
+subject_folders = glob.glob(f"{raw_data_base_path}/sci-*")
 
 df_mouse_list = []
 for subject_folder in subject_folders:
-    mouse_file = glob.glob(f"{subject_folder}/*mouse_data.csv")
+    mouse_file = glob.glob(f"{subject_folder}/beh/*mouse_data.csv")
     if mouse_file:
         temp_df = pd.read_csv(mouse_file[0])
         sub_id_str = os.path.basename(subject_folder)
@@ -52,6 +64,30 @@ for subject_folder in subject_folders:
         df_mouse_list.append(temp_df)
 
 df_mouse = pd.concat(df_mouse_list, ignore_index=True)
+# Corrected line:
+df_mouse['block'] = df_mouse.groupby('subject_id')['trial_nr'].transform(
+    lambda x: ((x == 0) & (x.shift(1) != 0)).cumsum() - 1)
+
+# --- Filter out noisy trajectories ---
+print(f"Filtering out noisy trajectories beyond {TRAJECTORY_BOUNDARY_DVA} dva...")
+max_coords_per_trial = df_mouse.groupby(['subject_id', 'block', 'trial_nr']).agg(
+    max_abs_x=('x', lambda s: s.abs().max()),
+    max_abs_y=('y', lambda s: s.abs().max())
+).reset_index()
+
+noisy_mask = (max_coords_per_trial['max_abs_x'] > TRAJECTORY_BOUNDARY_DVA) | \
+             (max_coords_per_trial['max_abs_y'] > TRAJECTORY_BOUNDARY_DVA)
+noisy_trials_df = max_coords_per_trial[noisy_mask]
+
+noisy_trial_identifiers = set(zip(
+    noisy_trials_df['subject_id'],
+    noisy_trials_df['block'],
+    noisy_trials_df['trial_nr']
+))
+
+initial_count = len(df)
+df = df[~df.set_index(['subject_id', 'block', 'trial_nr']).index.isin(noisy_trial_identifiers)].copy()
+print(f"Removed {initial_count - len(df)} noisy trials.")
 
 # Calculate the average trajectory vector for each trial
 avg_trajectory_vectors_df = df_mouse.groupby(['subject_id', 'block', 'trial_nr']).agg(
@@ -67,16 +103,26 @@ avg_trajectory_vectors_df['trial_nr'] = avg_trajectory_vectors_df['trial_nr'].as
 # Merge the average vectors into the main behavioral dataframe
 df = pd.merge(df, avg_trajectory_vectors_df, on=['subject_id', 'block', 'trial_nr'], how='left')
 
-# Temporarily rename columns to match calculate_trajectory_projections expectations
-df.rename(columns={'TargetLoc': 'TargetDigit', 'SingletonLoc': 'SingletonDigit'}, inplace=True)
-
 # Calculate the towardness scores
 towardness_scores = df.apply(calculate_trajectory_projections, axis=1, locations_map=locations_map)
-df = pd.concat([df, towardness_scores], axis=1)
+tt_df = pd.concat([df, towardness_scores], axis=1)
+tt_df = tt_df[tt_df["TargetDigit"] != 5]
+#tt_df.dropna(subset=['proj_target'], inplace=True) # Drop trials where score couldn't be computed
 
-df_mean = df.groupby(["subject_id", "DistractorProb"])[["rt", "select_target"]].mean().reset_index()
+# Normalize by vector length
+tt_df['target_vec_length'] = tt_df['TargetDigit'].apply(get_vector_length, locations_map=locations_map)
+tt_df['target_towardness'] = tt_df['proj_target'] / tt_df['target_vec_length']
 
-df_mean['DistractorProb'] = pd.Categorical(df_mean['DistractorProb'], categories=["low-probability", "high-probability"], ordered=True)
+df_mean = tt_df.groupby(["subject_id", "DistractorProb"])[["rt", "IsCorrect", "target_towardness"]].mean().reset_index()
+
+df_mean['DistractorProb'] = pd.Categorical(df_mean['DistractorProb'], categories=["distractor-absent", "low-probability", "high-probability"], ordered=True)
+
+
+# Show spatial configuration performance
+df_mean_spatial = tt_df.groupby(["subject_id", "TargetLoc", "SingletonLoc"])[["IsCorrect", "rt", "target_towardness"]].mean().reset_index()
+sns.barplot(data=df_mean_spatial, x="TargetLoc", y="IsCorrect", errorbar=("se", 1), order=[1.0, 2.0, 3.0])
+sns.barplot(data=df_mean_spatial, x="SingletonLoc", y="IsCorrect", errorbar=("se", 1), order=[0.0, 1.0, 2.0, 3.0])
+
 
 fig, ax = plt.subplots()
 
@@ -90,12 +136,6 @@ sns.lineplot(data=df_mean, x="DistractorProb", y="rt",
 
 # --- Pairwise comparisons ---
 pairwise_tests = pg.pairwise_tests(data=df_mean, dv='rt', within='DistractorProb', subject='subject_id', effsize='cohen')
-
-def p_to_asterisks(p):
-    if p < 0.001: return '***'
-    if p < 0.01: return '**'
-    if p < 0.05: return '*'
-    return 'ns'
 
 y_max = df_mean['rt'].max()
 y_pos = y_max + 0.05
@@ -114,6 +154,36 @@ ax.set_ylabel("Reaction Time (s)") # Corrected label
 ax.set_xlabel("Distractor Probability")
 plt.show()
 
+fig, ax = plt.subplots()
+
+order = ["low-probability", "high-probability"]
+sns.barplot(data=df_mean, x="DistractorProb", y="IsCorrect", ax=ax,
+            errorbar=("se", 1), facecolor=(0, 0, 0, 0), edgecolor=".2", order=order)
+
+sns.lineplot(data=df_mean, x="DistractorProb", y="IsCorrect",
+             hue="subject_id", estimator=None,
+             linewidth=1, ax=ax, palette="tab10", legend=False)
+
+# --- Pairwise comparisons ---
+pairwise_tests = pg.pairwise_tests(data=df_mean, dv='IsCorrect', within='DistractorProb', subject='subject_id', effsize='cohen')
+
+y_max = df_mean['IsCorrect'].max()
+y_pos = y_max + 0.05
+h = 0.02
+
+# Comparison: low-probability vs high-probability
+stat2 = pairwise_tests[(pairwise_tests.A == 'low-probability') & (pairwise_tests.B == 'high-probability')].iloc[0]
+x1, x2 = 0, 1
+y, col = y_pos, 'k'
+ax.plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
+ax.text((x1+x2)*.5, y+h, f"d={stat2['cohen']:.2f}", ha='center', va='bottom', color=col)
+
+ax.set_ylim(top=y_pos + 0.2)
+
+ax.set_ylabel("Accuracy (%)") # Corrected label
+ax.set_xlabel("Distractor Probability")
+plt.show()
+
 # --- Performance when target is at the high-probability distractor location ---
 
 # NOTE: This assumes a column 'high_prob_loc' exists in your dataframe,
@@ -121,36 +191,36 @@ plt.show()
 
 # 1. Find the single high-probability location for each subject.
 # We can get this by looking at the 'SingletonLoc' on any 'high-probability' trial for that subject.
-high_prob_loc_map = df[df['DistractorProb'] == 'high-probability'].drop_duplicates('subject_id').set_index('subject_id')['SingletonLoc']
+high_prob_loc_map = tt_df[tt_df['DistractorProb'] == 'high-probability'].drop_duplicates('subject_id').set_index('subject_id')['SingletonLoc']
 
 # 2. Map this location back to all trials for each subject.
-df['high_prob_loc'] = df['subject_id'].map(high_prob_loc_map)
+tt_df['high_prob_loc'] = tt_df['subject_id'].map(high_prob_loc_map)
 
 # 3. Now, correctly identify trials where the target appeared at that high-probability location.
-df["target_at_high_prob_loc"] = df["TargetLoc"] == df["high_prob_loc"]
+tt_df["target_at_high_prob_loc"] = tt_df["TargetLoc"] == tt_df["high_prob_loc"]
 # Calculate the mean performance for each subject under each condition
-df_targetloc_mean = df.groupby(["subject_id", "target_at_high_prob_loc"])["select_target"].mean().reset_index()
+df_targetloc_mean = tt_df.groupby(["subject_id", "target_at_high_prob_loc"])["IsCorrect"].mean().reset_index()
 
 # Print the overall mean accuracy for each condition
 print("Mean accuracy based on target location relative to high-probability distractor location:")
-print(df_targetloc_mean.groupby("target_at_high_prob_loc")["select_target"].mean())
+print(df_targetloc_mean.groupby("target_at_high_prob_loc")["IsCorrect"].mean())
 
 # Create a new figure to visualize the results
 fig2, ax2 = plt.subplots(figsize=(6, 5))
 
 order2 = [False, True]
-sns.barplot(data=df_targetloc_mean, x="target_at_high_prob_loc", y="select_target",
+sns.barplot(data=df_targetloc_mean, x="target_at_high_prob_loc", y="IsCorrect",
             ax=ax2, errorbar=("ci", 95), capsize=.1, palette="viridis", order=order2)
 
-sns.lineplot(data=df_targetloc_mean, x="target_at_high_prob_loc", y="select_target",
+sns.lineplot(data=df_targetloc_mean, x="target_at_high_prob_loc", y="IsCorrect",
              hue="subject_id", estimator=None,
              linewidth=1, ax=ax2, palette="tab10")
 
 # --- Pairwise comparisons ---
-pairwise_tests2 = pg.pairwise_tests(data=df_targetloc_mean, dv='select_target', within='target_at_high_prob_loc', subject='subject_id', effsize='cohen')
+pairwise_tests2 = pg.pairwise_tests(data=df_targetloc_mean, dv='IsCorrect', within='target_at_high_prob_loc', subject='subject_id', effsize='cohen')
 stat_2 = pairwise_tests2.iloc[0]
 x1, x2 = 0, 1
-y_max2 = df_targetloc_mean['select_target'].max()
+y_max2 = df_targetloc_mean['IsCorrect'].max()
 y, h, col = y_max2 + 0.01, 0.01, 'k'
 ax2.plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
 ax2.text((x1+x2)*.5, y+h, f"d={stat_2['cohen']:.2f}", ha='center', va='bottom', color=col)
@@ -169,36 +239,36 @@ plt.show()
 
 # 1. Find the single high-probability location for each subject.
 # We can get this by looking at the 'SingletonLoc' on any 'high-probability' trial for that subject.
-high_prob_loc_map = df[df['DistractorProb'] == 'high-probability'].drop_duplicates('subject_id').set_index('subject_id')['SingletonLoc']
+high_prob_loc_map = tt_df[tt_df['DistractorProb'] == 'high-probability'].drop_duplicates('subject_id').set_index('subject_id')['SingletonLoc']
 
 # 2. Map this location back to all trials for each subject.
-df['high_prob_loc'] = df['subject_id'].map(high_prob_loc_map)
+tt_df['high_prob_loc'] = tt_df['subject_id'].map(high_prob_loc_map)
 
 # 3. Now, correctly identify trials where the target appeared at that high-probability location.
-df["distractor_at_high_prob_loc"] = df["SingletonLoc"] == df["high_prob_loc"]
+tt_df["distractor_at_high_prob_loc"] = tt_df["SingletonLoc"] == tt_df["high_prob_loc"]
 # Calculate the mean performance for each subject under each condition
-df_distractorloc_mean = df.groupby(["subject_id", "distractor_at_high_prob_loc"])["select_target"].mean().reset_index()
+df_distractorloc_mean = tt_df.groupby(["subject_id", "distractor_at_high_prob_loc"])["IsCorrect"].mean().reset_index()
 
 # Print the overall mean accuracy for each condition
 print("Mean accuracy based on distractor location relative to high-probability distractor location:")
-print(df_distractorloc_mean.groupby("distractor_at_high_prob_loc")["select_target"].mean())
+print(df_distractorloc_mean.groupby("distractor_at_high_prob_loc")["IsCorrect"].mean())
 
 # Create a new figure to visualize the results
 fig2, ax2 = plt.subplots(figsize=(6, 5))
 
 order2 = [False, True]
-sns.barplot(data=df_distractorloc_mean, x="distractor_at_high_prob_loc", y="select_target",
+sns.barplot(data=df_distractorloc_mean, x="distractor_at_high_prob_loc", y="IsCorrect",
             ax=ax2, errorbar=("ci", 95), capsize=.1, palette="viridis", order=order2)
 
-sns.lineplot(data=df_distractorloc_mean, x="distractor_at_high_prob_loc", y="select_target",
+sns.lineplot(data=df_distractorloc_mean, x="distractor_at_high_prob_loc", y="IsCorrect",
              hue="subject_id", estimator=None,
              linewidth=1, ax=ax2, palette="tab10")
 
 # --- Pairwise comparisons ---
-pairwise_tests2 = pg.pairwise_tests(data=df_distractorloc_mean, dv='select_target', within='distractor_at_high_prob_loc', subject='subject_id', effsize='cohen')
+pairwise_tests2 = pg.pairwise_tests(data=df_distractorloc_mean, dv='IsCorrect', within='distractor_at_high_prob_loc', subject='subject_id', effsize='cohen')
 stat_2 = pairwise_tests2.iloc[0]
 x1, x2 = 0, 1
-y_max2 = df_distractorloc_mean['select_target'].max()
+y_max2 = df_distractorloc_mean['IsCorrect'].max()
 y, h, col = y_max2 + 0.01, 0.01, 'k'
 ax2.plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=col)
 ax2.text((x1+x2)*.5, y+h, f"d={stat_2['cohen']:.2f}", ha='center', va='bottom', color=col)
@@ -216,7 +286,7 @@ plt.show()
 print("\n--- Analyzing Target Towardness by Distractor Probability ---")
 
 # Aggregate the new towardness score by subject and condition
-df_towardness_mean = df.groupby(["subject_id", "DistractorProb"])["target_towardness"].mean().reset_index()
+df_towardness_mean = tt_df.groupby(["subject_id", "DistractorProb"])["target_towardness"].mean().reset_index()
 df_towardness_mean['DistractorProb'] = pd.Categorical(df_towardness_mean['DistractorProb'], categories=["low-probability", "high-probability"], ordered=True)
 
 # --- Create the plot for Target Towardness ---
