@@ -31,14 +31,14 @@ data_path = SPACECUE_implicit.get_data_path()
 df = pd.concat([pd.read_csv(f"{data_path}pilot/distractor/{file}") for file in os.listdir(f"{data_path}pilot/distractor")])
 
 #df = df.query('SingletonLoc != 1.0')
-#df = df.query("TargetLoc != 'Front'")
+df = df.query("SingletonLoc != 'Front'")
 
 # Ensure key columns are of integer type for merging with mouse data
-df['Subject ID'] = df['subject_id'].astype(int, errors="ignore")
-df['Block'] = df['block'].astype(int, errors="ignore")
-df['Trial Nr'] = df['trial_nr'].astype(int, errors="ignore")
+df['Subject ID'] = df['Subject ID'].astype(int, errors="ignore")
+df['Block'] = df['Block'].astype(int, errors="ignore")
+df['Trial Nr'] = df['Trial Nr'].astype(int, errors="ignore")
 
-df["IsCorrect"] = df["select_target"].astype(float, errors="ignore")
+df["IsCorrect"] = df["IsCorrect"].astype(float, errors="ignore")
 df = remove_outliers(df, threshold=OUTLIER_THRESH, column_name="rt", subject_id_column="Subject ID")
 
 # Create snake_case columns for merging and filtering
@@ -116,13 +116,6 @@ tt_df['target_towardness'] = tt_df['proj_target'] / tt_df['target_vec_length']
 df_mean = tt_df.groupby(["subject_id", "DistractorProb"])[["rt", "IsCorrect", "target_towardness"]].mean().reset_index()
 
 df_mean['DistractorProb'] = pd.Categorical(df_mean['DistractorProb'], categories=["distractor-absent", "low-probability", "high-probability"], ordered=True)
-
-
-# Show spatial configuration performance
-df_mean_spatial = tt_df.groupby(["subject_id", "TargetLoc", "SingletonLoc"])[["IsCorrect", "rt", "target_towardness"]].mean().reset_index()
-sns.barplot(data=df_mean_spatial, x="TargetLoc", y="IsCorrect", errorbar=("se", 1), order=[1.0, 2.0, 3.0])
-sns.barplot(data=df_mean_spatial, x="SingletonLoc", y="IsCorrect", errorbar=("se", 1), order=[0.0, 1.0, 2.0, 3.0])
-
 
 fig, ax = plt.subplots()
 
