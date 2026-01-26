@@ -72,7 +72,7 @@ def plot_perf(data, x, y, **kwargs):
     # Draw points colored by Probability
     palette = {"High": "green", "Low": "red", "Absent": "blue"}
     sns.pointplot(data=data, x=x, y=y, hue="Probability", order=order,
-                  palette=palette, join=False, errorbar=("se", 1), dodge=False)
+                  palette=palette, join=False, errorbar=None, dodge=False)
 
 # 1. Response Time Visualization
 # Using FacetGrid to create a subplot for each subject
@@ -80,7 +80,6 @@ g_rt = sns.FacetGrid(df, col="subject_id", col_wrap=5, sharey=False, height=3.5,
 g_rt.map_dataframe(plot_perf, x=loc_col, y="rt")
 g_rt.set_titles("Sub {col_name}")
 g_rt.set_axis_labels(loc_col, "RT (s)")
-g_rt.fig.suptitle(f"Response Time by {loc_col} per Subject", y=1.02)
 plt.show()
 
 # 2. Accuracy Visualization
@@ -88,7 +87,6 @@ g_acc = sns.FacetGrid(df, col="subject_id", col_wrap=5, sharey=False, height=3.5
 g_acc.map_dataframe(plot_perf, x=loc_col, y="IsCorrect")
 g_acc.set_titles("Sub {col_name}")
 g_acc.set_axis_labels(loc_col, "Accuracy (%)")
-g_acc.fig.suptitle(f"Accuracy by {loc_col} per Subject", y=1.02)
 plt.show()
 
 # 3. Visualization by Distractor Probability
@@ -98,20 +96,18 @@ def plot_prob_perf(data, x, y, **kwargs):
     order = ["High", "Low", "Absent"]
     palette = {"High": "green", "Low": "red", "Absent": "blue"}
     sns.pointplot(data=data, x=x, y=y, order=order,
-                  palette=palette, join=False, errorbar=("se", 1))
+                  palette=palette, join=False, errorbar=None)
 
 g_rt_prob = sns.FacetGrid(df, col="subject_id", col_wrap=5, sharey=False, height=3.5, aspect=1)
 g_rt_prob.map_dataframe(plot_prob_perf, x="DistractorProb", y="rt")
 g_rt_prob.set_titles("Sub {col_name}")
 g_rt_prob.set_axis_labels("Distractor Prob", "RT (s)")
-g_rt_prob.fig.suptitle("Response Time by Distractor Probability per Subject", y=1.02)
 plt.show()
 
 g_acc_prob = sns.FacetGrid(df, col="subject_id", col_wrap=5, sharey=False, height=3.5, aspect=1)
 g_acc_prob.map_dataframe(plot_prob_perf, x="DistractorProb", y="IsCorrect")
 g_acc_prob.set_titles("Sub {col_name}")
 g_acc_prob.set_axis_labels("Distractor Prob", "Accuracy (%)")
-g_acc_prob.fig.suptitle("Accuracy by Distractor Probability per Subject", y=1.02)
 plt.show()
 
 # 4. Print aggregated data for inspection
@@ -131,12 +127,10 @@ palette = {"High": "green", "Low": "red", "Absent": "blue"}
 
 sns.barplot(data=subject_means, x="DistractorProb", y="rt", order=order, palette=palette, errorbar=("se", 1), ax=axes[0], alpha=0.5)
 sns.lineplot(data=subject_means, x="DistractorProb", y="rt", units="subject_id", estimator=None, color="black", alpha=0.2, ax=axes[0])
-axes[0].set_title("Response Time")
 axes[0].set_ylabel("RT (s)")
 
 sns.barplot(data=subject_means, x="DistractorProb", y="IsCorrect", order=order, palette=palette, errorbar=("se", 1), ax=axes[1], alpha=0.5)
 sns.lineplot(data=subject_means, x="DistractorProb", y="IsCorrect", units="subject_id", estimator=None, color="black", alpha=0.2, ax=axes[1])
-axes[1].set_title("Accuracy")
 axes[1].set_ylabel("Accuracy (%)")
 
 plt.tight_layout()
@@ -156,10 +150,10 @@ def get_target_prob(row):
         return 'High' # Target at Suppressed Location
     return 'Low' # Target at Non-Suppressed Location
 
-df['TargetProb'] = df.apply(get_target_prob, axis=1)
+df['Target_at_HP_distractor_loc'] = df.apply(get_target_prob, axis=1)
 
 # Aggregate plots for Target Prob
-subject_means_target = df.groupby(['subject_id', 'TargetProb'])[['rt', 'IsCorrect']].mean().reset_index()
+subject_means_target = df.groupby(['subject_id', 'Target_at_HP_distractor_loc'])[['rt', 'IsCorrect']].mean().reset_index()
 
 fig, axes = plt.subplots(1, 2, figsize=(10, 5))
 order_target = ["High", "Low"]
@@ -167,14 +161,14 @@ order_target = ["High", "Low"]
 # Low (Not Suppressed) -> Expect Faster RT -> Green
 palette_target = {"High": "red", "Low": "green"}
 
-sns.barplot(data=subject_means_target, x="TargetProb", y="rt", order=order_target, palette=palette_target, errorbar=("se", 1), ax=axes[0], alpha=0.5)
-sns.lineplot(data=subject_means_target, x="TargetProb", y="rt", units="subject_id", estimator=None, color="black", alpha=0.2, ax=axes[0])
-axes[0].set_title("Target Location: Response Time")
+sns.barplot(data=subject_means_target, x="Target_at_HP_distractor_loc", y="rt", order=order_target, palette=palette_target, errorbar=("se", 1), ax=axes[0], alpha=0.5)
+sns.lineplot(data=subject_means_target, x="Target_at_HP_distractor_loc", y="rt", units="subject_id", estimator=None, color="black", alpha=0.2, ax=axes[0])
+axes[0].set_title("Target at HP distractor location: Response Time")
 axes[0].set_ylabel("RT (s)")
 
-sns.barplot(data=subject_means_target, x="TargetProb", y="IsCorrect", order=order_target, palette=palette_target, errorbar=("se", 1), ax=axes[1], alpha=0.5)
-sns.lineplot(data=subject_means_target, x="TargetProb", y="IsCorrect", units="subject_id", estimator=None, color="black", alpha=0.2, ax=axes[1])
-axes[1].set_title("Target Location: Accuracy")
+sns.barplot(data=subject_means_target, x="Target_at_HP_distractor_loc", y="IsCorrect", order=order_target, palette=palette_target, errorbar=("se", 1), ax=axes[1], alpha=0.5)
+sns.lineplot(data=subject_means_target, x="Target_at_HP_distractor_loc", y="IsCorrect", units="subject_id", estimator=None, color="black", alpha=0.2, ax=axes[1])
+axes[1].set_title("Target at HP distractor location: Accuracy")
 axes[1].set_ylabel("Accuracy (%)")
 
 plt.tight_layout()
