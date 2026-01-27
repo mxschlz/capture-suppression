@@ -131,7 +131,7 @@ df_behavior['trial_nr'] = df_behavior['trial_nr'].astype(int)
 # Merge trajectory data with behavioral data
 merged_df = pd.merge(
     df,
-    df_behavior[['subject_id', 'block', 'trial_nr', 'SingletonPresent', 'Priming']],
+    df_behavior[['subject_id', 'block', 'trial_nr', 'SingletonPresent', 'Priming', 'select_target']],
     on=['subject_id', 'block', 'trial_nr'],
     how='left'
 )
@@ -151,6 +151,7 @@ SAMPLE_BINS = [(0, s_end_1), (s_end_1, s_end_2), (s_end_2, int(max_samples) + 1)
 priming_map = {1: 'Positive', 0: 'No', -1: 'Negative'}
 merged_df['PrimingCondition'] = merged_df['Priming'].map(priming_map)
 merged_df['Condition'] = np.where(merged_df['SingletonPresent'] == 1, 'Distractor Present', 'Distractor Absent')
+merged_df['Correctness'] = merged_df['select_target'].map({1: 'Correct', 0: 'Incorrect'})
 
 # Filter out central starting point data
 outside_center_mask = (merged_df['x']**2 + merged_df['y']**2) > (DWELL_TIME_FILTER_RADIUS**2)
@@ -239,6 +240,9 @@ def get_total_trials(df_behav, condition_col=None, condition_val=None, s_start=N
             priming_map_rev = {'Positive': 1, 'No': 0, 'Negative': -1}
             priming_val = priming_map_rev[condition_val]
             df_subset = df_subset[df_subset['Priming'] == priming_val]
+        elif condition_col == 'Correctness':
+            target_val = 1 if condition_val == 'Correct' else 0
+            df_subset = df_subset[df_subset['select_target'] == target_val]
 
     return df_subset[['subject_id', 'block', 'trial_nr']].drop_duplicates().shape[0]
 
@@ -455,4 +459,64 @@ if len(priming_hists) == 3:
     fig3a.subplots_adjust(right=0.9, top=0.85)
     cbar_ax = fig3a.add_axes([0.92, 0.15, 0.02, 0.7])
     fig3a.colorbar(im_diff, cax=cbar_ax, label='Difference in Average Dwell Time (s)')
+    plt.show()
+
+# --- Plot 4: Dwell Time by Correctness ---
+print("--- Generating Plot 4: Dwell Time by Correctness ---")
+correctness_conditions = ['Correct', 'Incorrect']
+fig4, axes4 = plt.subplots(1, len(correctness_conditions), figsize=(15, 7), sharey=True)
+fig4.suptitle('Total Dwell Time by Correctness', fontsize=20)
+correctness_hists = []
+
+for cond in correctness_conditions:
+    subset_df = merged_df[merged_df['Correctness'] == cond]
+    n_trials = get_total_trials(df_behavior, 'Correctness', cond)
+    hist = calculate_smoothed_histogram(subset_df, n_trials, sampling_frequency)
+    correctness_hists.append(hist)
+
+if correctness_hists:
+    vmax4 = np.percentile(np.concatenate([h.ravel() for h in correctness_hists]), 99.9)
+    im = None # Initialize im
+    for i, cond in enumerate(correctness_conditions):
+        ax = axes4[i]
+        im = ax.imshow(correctness_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='inferno', vmax=vmax4, vmin=0)
+        add_digit_overlays(ax)
+        
+        # Set aspect ratio and zoom
+        ax.set_aspect(ROI_WIDTH / ROI_HEIGHT)
+        ax.set_xlim(X_LIMITS)
+        ax.set_ylim(Y_LIMITS)
+        ax.set_title(cond)
+        ax.set_xlabel("X Position (pixels)")
+        if i == 0:
+            ax.set_ylabel("Y Position (pixels)")
+
+    # Adjust subplot layout and add a dedicated colorbar axis
+    fig4.subplots_adjust(right=0.88, top=0.85)
+    cbar_ax = fig4.add_axes([0.9, 0.15, 0.03, 0.7])
+    fig4.colorbar(im, cax=cbar_ax, label='Average Dwell Time per Trial (s)')
+    plt.show()
+
+# --- Plot 4a: Difference Heatmap for Correctness ---
+if len(correctness_hists) == 2:
+    print("--- Generating Plot 4a: Difference Heatmap for Correctness ---")
+    fig4a, ax4a = plt.subplots(1, 1, figsize=(8, 7))
+    fig4a.suptitle('Dwell Time Difference: Correct vs. Incorrect', fontsize=20)
+    
+    diff_hist = correctness_hists[0] - correctness_hists[1] # Correct - Incorrect
+    
+    vmax_diff4 = np.percentile(np.abs(diff_hist), 99.9)
+    im_diff = ax4a.imshow(diff_hist, extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='coolwarm', vmax=vmax_diff4, vmin=-vmax_diff4)
+    
+    # Set aspect ratio and zoom
+    ax4a.set_aspect(ROI_WIDTH / ROI_HEIGHT)
+    ax4a.set_xlim(X_LIMITS)
+    ax4a.set_ylim(Y_LIMITS)
+    ax4a.set_title('Correct - Incorrect')
+    ax4a.set_xlabel("X Position (pixels)")
+    ax4a.set_ylabel("Y Position (pixels)")
+
+    fig4a.subplots_adjust(right=0.85)
+    cbar_ax = fig4a.add_axes([0.87, 0.15, 0.03, 0.7])
+    fig4a.colorbar(im_diff, cax=cbar_ax, label='Difference in Average Dwell Time (s)')
     plt.show()
