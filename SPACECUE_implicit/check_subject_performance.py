@@ -8,11 +8,12 @@ import seaborn as sns
 sns.set_theme(context="talk", style="ticks")
 
 OUTLIER_THRESH = 2
+PALETTE = {"High": "green", "Low": "red", "Absent": "gray"}
 
 # --- Data Loading Logic (from implicit_learning_effect.py) ---
 print("Loading data...")
 data_path = SPACECUE_implicit.get_data_path()
-experiment_folder = "pilot/distractor"
+experiment_folder = "pilot/distractor-absent"
 
 # Load all CSV files in the directory
 df = pd.concat([pd.read_csv(f"{data_path}{experiment_folder}/{file}") for file in os.listdir(f"{data_path}{experiment_folder}")])
@@ -70,9 +71,8 @@ def plot_perf(data, x, y, **kwargs):
     sns.pointplot(data=data, x=x, y=y, order=order,
                   color="black", markers="", linestyles="-", errorbar=None)
     # Draw points colored by Probability
-    palette = {"High": "green", "Low": "red", "Absent": "blue"}
     sns.pointplot(data=data, x=x, y=y, hue="Probability", order=order,
-                  palette=palette, join=False, errorbar=None, dodge=False)
+                  palette=PALETTE, join=False, errorbar=None, dodge=False)
 
 # 1. Response Time Visualization
 # Using FacetGrid to create a subplot for each subject
@@ -94,9 +94,8 @@ print("Generating plots for Response Time and Accuracy by Distractor Probability
 
 def plot_prob_perf(data, x, y, **kwargs):
     order = ["High", "Low", "Absent"]
-    palette = {"High": "green", "Low": "red", "Absent": "blue"}
     sns.pointplot(data=data, x=x, y=y, order=order,
-                  palette=palette, join=False, errorbar=None)
+                  palette=PALETTE, join=False, errorbar=None)
 
 g_rt_prob = sns.FacetGrid(df, col="subject_id", col_wrap=5, sharey=False, height=3.5, aspect=1)
 g_rt_prob.map_dataframe(plot_prob_perf, x="DistractorProb", y="rt")
@@ -123,14 +122,36 @@ subject_means = df.groupby(['subject_id', 'DistractorProb'])[['rt', 'IsCorrect']
 
 fig, axes = plt.subplots(1, 2, figsize=(10, 5))
 order = ["High", "Low", "Absent"]
-palette = {"High": "green", "Low": "red", "Absent": "blue"}
 
-sns.barplot(data=subject_means, x="DistractorProb", y="rt", order=order, palette=palette, errorbar=("se", 1), ax=axes[0], alpha=0.5)
+sns.barplot(data=subject_means, x="DistractorProb", y="rt", order=order, palette=PALETTE, errorbar=("se", 1), ax=axes[0], alpha=0.5)
 sns.lineplot(data=subject_means, x="DistractorProb", y="rt", units="subject_id", estimator=None, color="black", alpha=0.2, ax=axes[0])
 axes[0].set_ylabel("RT (s)")
 
-sns.barplot(data=subject_means, x="DistractorProb", y="IsCorrect", order=order, palette=palette, errorbar=("se", 1), ax=axes[1], alpha=0.5)
+sns.barplot(data=subject_means, x="DistractorProb", y="IsCorrect", order=order, palette=PALETTE, errorbar=("se", 1), ax=axes[1], alpha=0.5)
 sns.lineplot(data=subject_means, x="DistractorProb", y="IsCorrect", units="subject_id", estimator=None, color="black", alpha=0.2, ax=axes[1])
+axes[1].set_ylabel("Accuracy (%)")
+
+plt.tight_layout()
+sns.despine()
+plt.show()
+
+# 7. Analysis: Learning Effect (Block-wise)
+print("Generating plots for Learning Effect (Block-wise)...")
+
+# Calculate subject means per block and condition
+block_means = df.groupby(['subject_id', 'block', 'DistractorProb'])[['rt', 'IsCorrect']].mean().reset_index()
+
+# Filter only High and Low
+block_means = block_means[block_means['DistractorProb'].isin(['High', 'Low'])]
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+sns.lineplot(data=block_means, x="block", y="rt", hue="DistractorProb", palette=PALETTE, errorbar=("se", 1), ax=axes[0], marker="o")
+axes[0].set_title("Reaction Time Learning Effect")
+axes[0].set_ylabel("RT (s)")
+
+sns.lineplot(data=block_means, x="block", y="IsCorrect", hue="DistractorProb", palette=PALETTE, errorbar=("se", 1), ax=axes[1], marker="o")
+axes[1].set_title("Accuracy Learning Effect")
 axes[1].set_ylabel("Accuracy (%)")
 
 plt.tight_layout()
@@ -157,16 +178,13 @@ subject_means_target = df.groupby(['subject_id', 'Target_at_HP_distractor_loc'])
 
 fig, axes = plt.subplots(1, 2, figsize=(10, 5))
 order_target = ["High", "Low"]
-# High (Suppressed) -> Expect Slower RT -> Red
-# Low (Not Suppressed) -> Expect Faster RT -> Green
-palette_target = {"High": "red", "Low": "green"}
 
-sns.barplot(data=subject_means_target, x="Target_at_HP_distractor_loc", y="rt", order=order_target, palette=palette_target, errorbar=("se", 1), ax=axes[0], alpha=0.5)
+sns.barplot(data=subject_means_target, x="Target_at_HP_distractor_loc", y="rt", order=order_target, palette=PALETTE, errorbar=("se", 1), ax=axes[0], alpha=0.5)
 sns.lineplot(data=subject_means_target, x="Target_at_HP_distractor_loc", y="rt", units="subject_id", estimator=None, color="black", alpha=0.2, ax=axes[0])
 axes[0].set_title("Target at HP distractor location: Response Time")
 axes[0].set_ylabel("RT (s)")
 
-sns.barplot(data=subject_means_target, x="Target_at_HP_distractor_loc", y="IsCorrect", order=order_target, palette=palette_target, errorbar=("se", 1), ax=axes[1], alpha=0.5)
+sns.barplot(data=subject_means_target, x="Target_at_HP_distractor_loc", y="IsCorrect", order=order_target, palette=PALETTE, errorbar=("se", 1), ax=axes[1], alpha=0.5)
 sns.lineplot(data=subject_means_target, x="Target_at_HP_distractor_loc", y="IsCorrect", units="subject_id", estimator=None, color="black", alpha=0.2, ax=axes[1])
 axes[1].set_title("Target at HP distractor location: Accuracy")
 axes[1].set_ylabel("Accuracy (%)")
