@@ -6,6 +6,8 @@ import os
 import numpy as np
 from SPACEPRIME import get_data_path
 from SPACEPRIME.subjects import subject_ids
+from scipy.stats import ttest_rel
+import matplotlib.gridspec as gridspec
 from stats import remove_outliers
 import SPACEPRIME
 import pingouin as pg
@@ -77,152 +79,56 @@ df_final = pd.merge(
     how='left'
 )
 
-# transform to subject averages
-df_mean = df_final.groupby(["subject_id", "TargetLoc", "SingletonLoc"])[["target_towardness", "rt", "select_target"]].mean().reset_index()
-
 # Create a new column to distinguish between distractor present and absent trials
-df_mean['distractor_presence'] = np.where(df_mean[DISTRACTOR_COL] == 'absent', 'absent', 'present')
+df_final['distractor_presence'] = np.where(df_final[DISTRACTOR_COL] == 'absent', 'absent', 'present')
+
+# transform to subject averages for 3x2 ANOVA
+df_3x2 = df_final.groupby(["subject_id", "TargetLoc", "distractor_presence"])[["target_towardness"]].mean().reset_index()
 
 # --- Save Dataframes for External Statistics (e.g., Jamovi) ---
 print(f"Saving aggregated dataframes to {output_dir}...")
 metric_map = {'target_towardness': 'TT', 'rt': 'RT', 'select_target': 'Acc'}
-df_mean_wide = df_mean.pivot(index='subject_id', columns=['TargetLoc', 'SingletonLoc'], values=['target_towardness', 'rt', 'select_target'])
-df_mean_wide.columns = [f"{metric_map.get(c[0], c[0])}_Target-{c[1]}_Dist-{c[2]}" for c in df_mean_wide.columns]
-df_mean_wide = df_mean_wide.reset_index()
-df_mean_wide.to_csv(os.path.join(f"{get_data_path()}concatenated", "stats_df_overall_wide.csv"), index=False)
+df_3x2.to_csv(os.path.join(f"{get_data_path()}concatenated", "stats_df_3x2.csv"), index=False)
 
 # --- 3a. Overall ANOVA: Target Location x Distractor Presence ---
-print("\n--- 3x2 Repeated Measures ANOVA (Target Location x Distractor Presence) ---")
-# This ANOVA tests the main effects of target location and distractor presence,
-# and their interaction.
-aov_presence = pg.rm_anova(
-    data=df_mean,
+print("\n" + "="*60)
+print(f"{'3x2 REPEATED MEASURES ANOVA (TargetLoc x DistractorPresence)':^60}")
+print("="*60)
+
+aov = pg.rm_anova(
+    data=df_3x2,
     dv='target_towardness',
     within=['TargetLoc', 'distractor_presence'],
     subject=SUBJECT_ID_COL,
     detailed=True,
     effsize="np2"  # Generalized eta-squared is a good effect size for RM designs
 )
-print("ANOVA Results (Target Location x Distractor Presence):")
-print(aov_presence)
+print(aov)
 
-# --- 3a-ii. Post-hoc tests for the 3x2 ANOVA ---
-print("\n--- Post-hoc Tests for 3x2 ANOVA ---")
+# --- Post-hoc tests ---
+print("\n" + "-"*60)
+print(f"{'POST-HOC ANALYSES (Bonferroni-corrected Paired T-tests)':^60}")
+print("-"*60)
 
-# Check if the interaction is significant, as this guides interpretation
-interaction_p_val = aov_presence.loc[aov_presence['Source'] == 'TargetLoc * distractor_presence', 'p-unc'].iloc[0]
-
-if interaction_p_val < 0.05:
-    print("NOTE: The interaction is significant (p < .05). Main effects should be interpreted with caution.")
-    print("The most informative follow-up tests are for the *simple effects* (e.g., comparing target locations")
-    print("separately for distractor-present and distractor-absent conditions), which are already performed in section 3c.\n")
-
-# --- Post-hocs for Main Effects ---
-# These are run for completeness, but be mindful of any significant interaction.
-
-# Post-hoc for the main effect of TargetLoc
-print("Post-hoc for Main Effect of Target Location (Bonferroni-corrected):")
-posthoc_targetloc = pg.pairwise_tests(
-    data=df_mean,
-    dv='target_towardness',
-    within='TargetLoc',
-    subject=SUBJECT_ID_COL,
-    padjust='bonf',
-    effsize='cohen'
-)
-# Display a cleaner version of the results table
-print(posthoc_targetloc[['A', 'B', 'T', 'p-corr', 'cohen']])
-
-print("Post-hoc for Main Effect of Target Location (Bonferroni-corrected):")
-posthoc_targetloc_absent = pg.pairwise_tests(
-    data=df_mean.query("distractor_presence=='absent'"),
-    dv='target_towardness',
-    within='TargetLoc',
-    subject=SUBJECT_ID_COL,
-    padjust='bonf',
-    effsize='cohen'
-)
-# Display a cleaner version of the results table
-print(posthoc_targetloc_absent[['A', 'B', 'T', 'p-corr', 'cohen']])
-
-
-# Post-hoc for the main effect of distractor_presence
-# Note: Since this factor only has 2 levels, this t-test is equivalent to the
-# F-test in the ANOVA table and the t-test you run for Panel E.
-print("\nPost-hoc for Main Effect of Distractor Presence:")
-posthoc_presence = pg.pairwise_tests(
-    data=df_mean,
-    dv='target_towardness',
-    within='distractor_presence',
-    subject=SUBJECT_ID_COL,
-    effsize='cohen'
-)
-# Display a cleaner version of the results table
-print(posthoc_presence[['A', 'B', 'T', 'p-unc', 'cohen']])
-
-# --- 3b. Focused ANOVA: Target Location x Distractor Location (Present Trials Only) ---
-print("\n--- 3x3 Repeated Measures ANOVA (Target Location x Distractor Location - Present Trials Only) ---")
-# This ANOVA focuses only on trials where a distractor was present to see how
-# the specific locations of the target and distractor interact.
-df_present_only = df_mean[df_mean['distractor_presence'] == 'present'].copy()
-df_present_wide = df_present_only.pivot(index='subject_id', columns=['TargetLoc', 'SingletonLoc'], values=['target_towardness', 'rt', 'select_target'])
-df_present_wide.columns = [f"{metric_map.get(c[0], c[0])}_Target-{c[1]}_Dist-{c[2]}" for c in df_present_wide.columns]
-df_present_wide = df_present_wide.reset_index()
-df_present_wide.to_csv(os.path.join(f"{get_data_path()}concatenated", "stats_df_present_only_wide.csv"), index=False)
-
-aov_locations = pg.rm_anova(
-    data=df_present_only,
-    dv='target_towardness',
-    within=['TargetLoc', 'SingletonLoc'],
-    subject=SUBJECT_ID_COL,
-    detailed=True,
-    effsize="np2"
-)
-print("ANOVA Results (Target Location x Distractor Location on Present Trials):")
-print(aov_locations)
-
-# --- 3. Statistical Analysis ---
-# Helper function to convert p-values to significance stars
-def p_to_stars(p):
-    if p is None or np.isnan(p):
-        return ""
-    if p < 0.001:
-        return '***'
-    elif p < 0.01:
-        return '**'
-    elif p < 0.05:
-        return '*'
-    return 'ns'
-
-# --- 3a. Pairwise tests comparing Target Locations within each Distractor condition ---
-stats_df = df_mean.groupby(DISTRACTOR_COL).apply(
-    lambda df: pg.pairwise_tests(
-        data=df.reset_index(),
+# 2. Simple Effects of Distractor Presence within each Target Location
+print("\n>>> Simple Effects: Distractor Presence within Target Location")
+posthoc_presence = []
+for target in ['left', 'mid', 'right']:
+    res = pg.pairwise_tests(
+        data=df_3x2[df_3x2['TargetLoc'] == target],
         dv='target_towardness',
-        within=TARGET_COL,
+        within='distractor_presence',
         subject=SUBJECT_ID_COL,
         padjust='bonf',
-	    effsize="cohen"
+        effsize='cohen'
     )
-).reset_index()
+    res.insert(0, 'TargetLoc', target)
+    posthoc_presence.append(res)
 
-print("--- Pairwise T-test Results ---")
-print(stats_df)
-
-# --- 3b. Pairwise tests comparing Distractor Locations within each Target condition ---
-stats_sloc_df = df_mean.groupby(TARGET_COL).apply(
-    lambda df: pg.pairwise_tests(
-        data=df.reset_index(),
-        dv='target_towardness',
-        within=DISTRACTOR_COL,
-        subject=SUBJECT_ID_COL,
-        padjust='bonf',
-	    effsize="cohen"
-    )
-).reset_index()
-
-print("\n--- Pairwise T-test Results (Singleton Location) ---")
-print(stats_sloc_df)
+posthoc_presence_df = pd.concat(posthoc_presence)
+# If only 1 comparison is made (e.g. 2 levels), pingouin returns 'p-unc' but not 'p-corr'
+p_col = 'p-corr' if 'p-corr' in posthoc_presence_df.columns else 'p-unc'
+print(posthoc_presence_df[['TargetLoc', 'A', 'B', 'T', p_col, 'cohen']].to_string(index=False))
 
 # --- 4. Reliability Analysis (Cronbach's Alpha over Blocks) ---
 print("\n--- 4. Reliability Analysis (Cronbach's Alpha over Blocks) ---")
@@ -339,221 +245,118 @@ for metric in metrics_to_test:
     else:
         print("  Could not be computed (likely insufficient data).")
 
-# --- 4. Combined Plotting: Mosaic Layout ---
-# Helper function for annotating significance
-def annotate_significance(ax, stats, x_order, p_col='p-corr', d_col='cohen'):
-    """
-    Annotates the axes with significance brackets based on the provided statistics DataFrame.
-    """
-    if stats is None or stats.empty:
-        return
+# --- 5. Plotting ---
+print("\n--- 5. Generating Summary Plots ---")
 
-    # Filter for significance (p < 0.05)
-    sig_stats = stats[stats[p_col] < 0.05].copy()
-    if sig_stats.empty:
-        return
+# Prepare data for Panel 3 (Distractor Location breakdown)
+df_panel3 = df_final[df_final['distractor_presence'] == 'present'].groupby(
+    [SUBJECT_ID_COL, DISTRACTOR_COL, TARGET_COL]
+)['target_towardness'].mean().reset_index()
 
-    # Map x-axis labels to positions
-    x_map = {label: i for i, label in enumerate(x_order)}
-    
-    # Calculate positions
-    sig_stats['x1'] = sig_stats['A'].map(x_map)
-    sig_stats['x2'] = sig_stats['B'].map(x_map)
-    # Filter out any rows where mapping failed
-    sig_stats = sig_stats.dropna(subset=['x1', 'x2'])
-    
-    sig_stats['dist'] = abs(sig_stats['x1'] - sig_stats['x2'])
-    # Sort by distance (shortest first) to nest brackets
-    sig_stats = sig_stats.sort_values('dist')
+fig = plt.figure(figsize=(18, 12))
+gs = gridspec.GridSpec(2, 3, figure=fig, height_ratios=[1, 1])
 
-    # Determine starting y-position based on the highest bar in the plot
-    max_h = 0
-    for patch in ax.patches:
-        if np.isfinite(patch.get_height()):
-            max_h = max(max_h, patch.get_height())
-    
-    # Start slightly above the highest bar
-    y_curr = max_h + 0.05
-    y_step = 0.08  # Vertical space per bracket
+def plot_sig_bar(ax, x1, x2, p, y_start, d=None, bf=None, h_factor=0.05, color='k'):
+    h = (ax.get_ylim()[1] - ax.get_ylim()[0]) * h_factor
+    y = y_start + h
+    ax.plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=color)
+    s = "ns"
+    if p < 0.001: s = "***"
+    elif p < 0.01: s = "**"
+    elif p < 0.05: s = "*"
+    if d is not None:
+        s += f"\n$d$={d:.2f}"
+    if p >= 0.05 and bf is not None:
+        s += f"\nBF$_{{10}}$={bf:.2f}"
+    ax.text((x1+x2)*.5, y+h, s, ha='center', va='bottom', color=color)
+    return y + h * 2
 
-    for _, row in sig_stats.iterrows():
-        x1, x2 = row['x1'], row['x2']
-        p_val = row[p_col]
-        d_val = row[d_col]
+# --- Panel 1: Absent vs Present ---
+ax1 = fig.add_subplot(gs[0, 0])
+df_p1 = df_3x2.groupby([SUBJECT_ID_COL, 'distractor_presence'])['target_towardness'].mean().reset_index()
+sns.boxplot(data=df_p1, x='distractor_presence', y='target_towardness', order=['absent', 'present'], ax=ax1)
+sns.stripplot(data=df_p1, x='distractor_presence', y='target_towardness', order=['absent', 'present'], ax=ax1, color='k', alpha=0.3, jitter=True)
+ax1.set_title("Distractor Presence")
+ax1.set_xlabel("")
+ax1.set_ylabel("Target Towardness")
 
-        # Draw bracket
-        h = 0.01
-        ax.plot([x1, x1, x2, x2], [y_curr, y_curr + h, y_curr + h, y_curr], lw=1.5, c='k')
+# Stats P1
+absent_vals = df_p1[df_p1['distractor_presence']=='absent'].set_index(SUBJECT_ID_COL)['target_towardness']
+present_vals = df_p1[df_p1['distractor_presence']=='present'].set_index(SUBJECT_ID_COL)['target_towardness']
+common = absent_vals.index.intersection(present_vals.index)
+t_p1, p_p1 = ttest_rel(absent_vals.loc[common], present_vals.loc[common])
+y_max = df_p1['target_towardness'].max()
+d_p1 = pg.compute_effsize(absent_vals.loc[common], present_vals.loc[common], paired=True, eftype='cohen')
+bf_p1 = float(pg.ttest(absent_vals.loc[common], present_vals.loc[common], paired=True)['BF10'].values[0])
+plot_sig_bar(ax1, 0, 1, p_p1, y_max, d=d_p1, bf=bf_p1)
+print("\n--- Panel 1 Stats: Distractor Absent vs. Present ---")
+print(f"t({len(common)-1}) = {t_p1:.3f}, p = {p_p1:.4f}, d = {d_p1:.3f}, BF10 = {bf_p1:.3f}")
 
-        # Add text
-        label = f"p={p_val:.3f}\nd={d_val:.2f}"
-        ax.text((x1 + x2) * 0.5, y_curr + h + 0.005, label, ha='center', va='bottom', fontsize=9)
+# --- Panel 2: Target Loc in Absent ---
+ax2 = fig.add_subplot(gs[0, 1:], sharey=ax1)
+df_p2 = df_3x2[df_3x2['distractor_presence']=='absent']
+order_p2 = ['left', 'mid', 'right']
+sns.boxplot(data=df_p2, x='TargetLoc', y='target_towardness', order=order_p2, ax=ax2)
+sns.stripplot(data=df_p2, x='TargetLoc', y='target_towardness', order=order_p2, ax=ax2, color='k', alpha=0.3)
+plt.setp(ax2.get_yticklabels(), visible=False)
+ax2.set_title("Target Location (Distractor Absent)")
+ax2.set_xlabel("Target Location")
+ax2.set_ylabel("")
 
-        y_curr += y_step
+# Stats P2
+print("\n--- Panel 2 Stats: Target Location (Distractor Absent) ---")
+pairs = [('left', 'mid'), ('mid', 'right'), ('left', 'right')]
+y_curr = df_p2['target_towardness'].max()
+for pair in pairs:
+    d1 = df_p2[df_p2['TargetLoc']==pair[0]].set_index(SUBJECT_ID_COL)['target_towardness']
+    d2 = df_p2[df_p2['TargetLoc']==pair[1]].set_index(SUBJECT_ID_COL)['target_towardness']
+    common = d1.index.intersection(d2.index)
+    t, p = ttest_rel(d1.loc[common], d2.loc[common])
+    d_val = pg.compute_effsize(d1.loc[common], d2.loc[common], paired=True, eftype='cohen')
+    bf_val = float(pg.ttest(d1.loc[common], d2.loc[common], paired=True)['BF10'].values[0])
+    x1 = order_p2.index(pair[0])
+    x2 = order_p2.index(pair[1])
+    y_curr = plot_sig_bar(ax2, x1, x2, p, y_curr, d=d_val, bf=bf_val)
+    print(f"{pair[0]} vs {pair[1]}: t({len(common)-1}) = {t:.3f}, p = {p:.4f}, d = {d_val:.3f}, BF10 = {bf_val:.3f}")
 
-    # Adjust y-limits to fit annotations if needed
-    current_ylim = ax.get_ylim()
-    if current_ylim[1] < y_curr + 0.02:
-        ax.set_ylim(current_ylim[0], y_curr + 0.02)
+# --- Panel 3: Distractor Locs (Left, Mid, Right) ---
+print("\n--- Panel 3 Stats: Target Location by Distractor Location ---")
+dist_locs = ['left', 'mid', 'right']
+target_opts = {'left': ['mid', 'right'], 'mid': ['left', 'right'], 'right': ['left', 'mid']}
+full_order = ['left', 'mid', 'right']
 
-# Create a figure using subplot_mosaic for a more intuitive layout.
-# 'e' is the new summary plot. 'a' is distractor absent. 'b', 'c', 'd' are distractor present.
-fig, axes = plt.subplot_mosaic(
-    mosaic="""
-    ea.
-    bcd
-    """,
-    figsize=(16, 11),
-    sharey=True,
-    gridspec_kw={'width_ratios': [1, 1, 1]} # Ensure columns have equal width
-)
+for i, d_loc in enumerate(dist_locs):
+    ax = fig.add_subplot(gs[1, i], sharey=ax1)
+    curr_df = df_panel3[df_panel3[DISTRACTOR_COL] == d_loc]
+    curr_targets = target_opts[d_loc]
+    sns.boxplot(data=curr_df, x=TARGET_COL, y='target_towardness', order=full_order, ax=ax)
+    sns.stripplot(data=curr_df, x=TARGET_COL, y='target_towardness', order=full_order, ax=ax, color='k', alpha=0.3)
 
-# --- Define which axis is for which plot ---
-# With mosaic, axes is a dictionary. We access each subplot by its label.
-ax_e = axes['e']
-ax_a = axes['a']
-axes_b = [axes['b'], axes['c'], axes['d']] # Group the bottom axes for iteration
+    # Force x-axis to show all 3 positions and label the distractor
+    ax.set_xlim(-0.5, 2.5)
+    ax.text(full_order.index(d_loc), np.mean(ax.get_ylim()), 'Distractor', ha='center', va='center', rotation=90, color='gray', alpha=0.5)
 
-# --- 4a. Plotting Panel A: Distractor Absent ---
-df_absent = df_mean[df_mean[DISTRACTOR_COL] == 'absent']
-target_order = ["left", "mid", "right"]
-
-axes['a'].sharex(axes['b']) # Share x-axis between a and bcd
-sns.barplot(
-    data=df_absent,
-    x=TARGET_COL,
-    y='target_towardness',
-    order=target_order,
-    color="darkgreen",
-    errorbar=('se', 1),
-    ax=ax_a
-)
-ax_a.set_title("A: Distractor Absent", fontsize=14, weight='bold')
-
-# Add annotations for Panel A
-stats_absent = stats_df[stats_df[DISTRACTOR_COL] == 'absent']
-annotate_significance(ax_a, stats_absent, target_order)
-
-# --- Print Stats for Panel A ---
-print("\n--- Panel A: Distractor Absent Stats ---")
-for loc in target_order:
-    data = df_absent[df_absent[TARGET_COL] == loc]['target_towardness']
-    mean = data.mean()
-    sem = data.sem()
-    n = len(data)
-    print(f"  Target: {loc.capitalize()} | Mean: {mean:.3f}, SEM: {sem:.3f}, N: {n}")
-
-print(f"  Pairwise Differences (Absent):")
-if not stats_absent.empty:
-    print(stats_absent[['A', 'B', 'p-corr', 'cohen']])
-else:
-    print("    No stats computed.")
-
-# --- 4aa. Plotting Panel E: Distractor Present vs. Absent ---
-df_presence_summary = df_mean.groupby(['subject_id', 'distractor_presence'])['target_towardness'].mean().reset_index()
-
-sns.barplot(
-    data=df_presence_summary,
-    x='distractor_presence',
-    y='target_towardness',
-    order=['absent', 'present'],
-    palette={"absent": "darkgreen", "present": "darkred"},
-    errorbar=('se', 1),
-    ax=ax_e
-)
-ax_e.set_title("E: Distractor Presence", fontsize=14, weight='bold')
-ax_e.set_xlabel("Distractor Presence", fontsize=12)
-
-# --- Stats for Panel E ---
-print("\n--- Panel E: Distractor Presence Stats ---")
-data_abs = df_presence_summary[df_presence_summary['distractor_presence'] == 'absent']['target_towardness']
-data_pres = df_presence_summary[df_presence_summary['distractor_presence'] == 'present']['target_towardness']
-
-ttest_presence = pg.ttest(data_abs, data_pres, paired=True)
-print("  Paired T-test (Absent vs. Present):")
-print(f"    t = {ttest_presence['T'].iloc[0]:.3f}, p = {ttest_presence['p-val'].iloc[0]:.3f}, Cohen's d = {ttest_presence['cohen-d'].iloc[0]:.3f}")
-
-# Add annotations for Panel E
-stats_presence = pd.DataFrame({
-    'A': ['absent'],
-    'B': ['present'],
-    'p-val': ttest_presence['p-val'].values,
-    'cohen': ttest_presence['cohen-d'].values
-})
-annotate_significance(ax_e, stats_presence, ['absent', 'present'], p_col='p-val', d_col='cohen')
-
-for cond in ['absent', 'present']:
-    data = df_presence_summary[df_presence_summary['distractor_presence'] == cond]['target_towardness']
-    print(f"  Condition: {cond.capitalize():<7} | Mean: {data.mean():.3f}, SEM: {data.sem():.3f}, N: {len(data)}")
-
-
-
-# --- 4b. Plotting Panels B, C, and D: Distractor Present ---
-df_present = df_mean[df_mean[DISTRACTOR_COL] != 'absent']
-distractor_locations_present = ["left", "mid", "right"]
-panel_labels = ["B: Distractor Left", "C: Distractor Mid", "D: Distractor Right"]
-
-# --- Print Stats for Distractor Present Conditions ---
-print("\n--- Distractor Present Stats ---")
-
-# Loop through the bottom axes to create the distractor-present plots
-for ax, dist_loc, panel_label in zip(axes_b, distractor_locations_present, panel_labels):
-    df_subplot = df_present[df_present[DISTRACTOR_COL] == dist_loc]
-
-    # --- Print stats for this subplot ---
-    print(f"  Condition: {dist_loc.capitalize()}")
-    for target_loc in target_order:
-        data = df_subplot[df_subplot[TARGET_COL] == target_loc]['target_towardness']
-        mean = data.mean()
-        sem = data.sem()
-        n = len(data)
-        print(f"    Target: {target_loc.capitalize():<5} | Mean: {mean:.3f}, SEM: {sem:.3f}, N: {n}")
-
-    # Print significant stats to console
-    stats_subplot = stats_df[stats_df[DISTRACTOR_COL] == dist_loc]
-    print(f"  Pairwise Differences ({dist_loc}) [Plotting only p < 0.05]:")
-    if not stats_subplot.empty:
-        print(stats_subplot[['A', 'B', 'p-corr', 'cohen']])
+    ax.set_title(f"Distractor: {d_loc.capitalize()}")
+    ax.set_xlabel("Target Location")
+    if i == 0: ax.set_ylabel("Target Towardness")
     else:
-        print("    No stats computed.")
-
-    # Create the bar plot
-    sns.barplot(
-        data=df_subplot,
-        x=TARGET_COL,
-        y='target_towardness',
-        order=target_order,
-        color="darkred",
-        errorbar=('se', 1),
-        ax=ax
-    )
-
-    ax.set_title(panel_label, fontsize=14, weight='bold')
+        ax.set_ylabel("")
+        plt.setp(ax.get_yticklabels(), visible=False)
     
-    # Add annotations
-    annotate_significance(ax, stats_subplot, target_order)
+    if len(curr_targets) == 2:
+        d1 = curr_df[curr_df[TARGET_COL]==curr_targets[0]].set_index(SUBJECT_ID_COL)['target_towardness']
+        d2 = curr_df[curr_df[TARGET_COL]==curr_targets[1]].set_index(SUBJECT_ID_COL)['target_towardness']
+        common = d1.index.intersection(d2.index)
+        if len(common) > 1:
+            t, p = ttest_rel(d1.loc[common], d2.loc[common])
+            d_val = pg.compute_effsize(d1.loc[common], d2.loc[common], paired=True, eftype='cohen')
+            bf_val = float(pg.ttest(d1.loc[common], d2.loc[common], paired=True)['BF10'].values[0])
+            idx1 = full_order.index(curr_targets[0])
+            idx2 = full_order.index(curr_targets[1])
+            plot_sig_bar(ax, idx1, idx2, p, curr_df['target_towardness'].max(), d=d_val, bf=bf_val)
+            print(f"Distractor {d_loc}: {curr_targets[0]} vs {curr_targets[1]}: t({len(common)-1}) = {t:.3f}, p = {p:.4f}, d = {d_val:.3f}, BF10 = {bf_val:.3f}")
 
-
-# --- 5. Final Figure-Wide Touches ---
-# Set shared axis labels for the entire figure
-fig.supxlabel("Target Location", fontsize=14)
-fig.supylabel("Target Towardness", fontsize=14)
-
-# Set a consistent Y-limit for all plots by accessing the dictionary's values
-#plt.setp(list(axes.values()), ylim=(-0.05, 0.55))
-
-# Clean up the overall figure appearance
-sns.despine(fig=fig)
-fig.tight_layout(rect=[0.02, 0.02, 1, 0.98]) # Adjust layout for super-labels
-
-# Save the combined figure with a new name reflecting the layout
-fig.savefig(os.path.join(output_dir, "combined_spatial_performance_mosaic.svg"))
-
-# --- 6. Distribution of Target Towardness by Accuracy ---
-plt.figure(figsize=(8, 6))
-sns.kdeplot(data=df_final, x='target_towardness', hue=ACCURACY_COL, fill=True, common_norm=False)
-plt.title('Distribution of Target Towardness by Response Accuracy')
-plt.xlabel('Target Towardness')
-plt.ylabel('Density')
-sns.despine()
 plt.tight_layout()
+sns.despine()
+plt.savefig(os.path.join(output_dir, "spatial_configuration_performance.svg"))
+plt.show()
