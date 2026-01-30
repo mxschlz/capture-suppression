@@ -83,6 +83,14 @@ df_mean = df_final.groupby(["subject_id", "TargetLoc", "SingletonLoc"])[["target
 # Create a new column to distinguish between distractor present and absent trials
 df_mean['distractor_presence'] = np.where(df_mean[DISTRACTOR_COL] == 'absent', 'absent', 'present')
 
+# --- Save Dataframes for External Statistics (e.g., Jamovi) ---
+print(f"Saving aggregated dataframes to {output_dir}...")
+metric_map = {'target_towardness': 'TT', 'rt': 'RT', 'select_target': 'Acc'}
+df_mean_wide = df_mean.pivot(index='subject_id', columns=['TargetLoc', 'SingletonLoc'], values=['target_towardness', 'rt', 'select_target'])
+df_mean_wide.columns = [f"{metric_map.get(c[0], c[0])}_Target-{c[1]}_Dist-{c[2]}" for c in df_mean_wide.columns]
+df_mean_wide = df_mean_wide.reset_index()
+df_mean_wide.to_csv(os.path.join(f"{get_data_path()}concatenated", "stats_df_overall_wide.csv"), index=False)
+
 # --- 3a. Overall ANOVA: Target Location x Distractor Presence ---
 print("\n--- 3x2 Repeated Measures ANOVA (Target Location x Distractor Presence) ---")
 # This ANOVA tests the main effects of target location and distractor presence,
@@ -157,6 +165,10 @@ print("\n--- 3x3 Repeated Measures ANOVA (Target Location x Distractor Location 
 # This ANOVA focuses only on trials where a distractor was present to see how
 # the specific locations of the target and distractor interact.
 df_present_only = df_mean[df_mean['distractor_presence'] == 'present'].copy()
+df_present_wide = df_present_only.pivot(index='subject_id', columns=['TargetLoc', 'SingletonLoc'], values=['target_towardness', 'rt', 'select_target'])
+df_present_wide.columns = [f"{metric_map.get(c[0], c[0])}_Target-{c[1]}_Dist-{c[2]}" for c in df_present_wide.columns]
+df_present_wide = df_present_wide.reset_index()
+df_present_wide.to_csv(os.path.join(f"{get_data_path()}concatenated", "stats_df_present_only_wide.csv"), index=False)
 
 aov_locations = pg.rm_anova(
     data=df_present_only,
@@ -228,6 +240,10 @@ for col in ['target_towardness', 'rt', 'select_target']:
 df_block_means = df_final.groupby([SUBJECT_ID_COL, BLOCK_COL])[
     ['target_towardness', 'rt', 'select_target']
 ].mean().reset_index()
+df_block_wide = df_block_means.pivot(index=SUBJECT_ID_COL, columns=BLOCK_COL, values=['target_towardness', 'rt', 'select_target'])
+df_block_wide.columns = [f"{metric_map.get(c[0], c[0])}_Block-{c[1]}" for c in df_block_wide.columns]
+df_block_wide = df_block_wide.reset_index()
+df_block_wide.to_csv(os.path.join(f"{get_data_path()}concatenated", "stats_df_reliability_blocks_wide.csv"), index=False)
 
 # 2. Pivot the aggregated data for each metric
 # This creates a wide format where rows are subjects and columns are blocks.
