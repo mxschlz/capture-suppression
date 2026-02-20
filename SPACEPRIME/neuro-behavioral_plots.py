@@ -33,15 +33,16 @@ def plot_latency_amplitude_by_towardness(df, component_name, ax, subject_col='su
         ax.set_title(component_name)
         return
 
-    # --- 1. Data Preparation: Within-subject median split and aggregation ---
+    # --- 1. Data Preparation: Within-subject percentile split (25th/75th) and aggregation ---
     subject_means = []
     for subject_id, subject_df in df.groupby(subject_col):
         if subject_df.empty:
             continue
 
-        median_towardness = subject_df['target_towardness'].median()
-        low_df = subject_df[subject_df['target_towardness'] < median_towardness]
-        high_df = subject_df[subject_df['target_towardness'] > median_towardness]
+        q25 = subject_df['target_towardness'].quantile(0.25)
+        q75 = subject_df['target_towardness'].quantile(0.75)
+        low_df = subject_df[subject_df['target_towardness'] < q25]
+        high_df = subject_df[subject_df['target_towardness'] > q75]
 
         # Only include subjects that have data for both conditions to ensure valid within-subject contrasts
         if low_df.empty or high_df.empty:
@@ -122,7 +123,7 @@ n2ac_df = SPACEPRIME.load_concatenated_csv("spaceprime_n2ac_erp_behavioral_lmm_l
 pd_df = SPACEPRIME.load_concatenated_csv("spaceprime_pd_erp_behavioral_lmm_long_data_between-within.csv")
 
 # Create a figure with two subplots
-fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True) # sharey=False because N2ac is inverted
+fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True, sharex=True) # sharey=False because N2ac is inverted
 
 # --- Generate the plot for the N2ac component on the first axis ---
 plot_latency_amplitude_by_towardness(
