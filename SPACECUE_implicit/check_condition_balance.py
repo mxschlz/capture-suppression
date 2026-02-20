@@ -54,120 +54,85 @@ df['DistractorProb'] = df.apply(get_probability, axis=1)
 if "rt" in df.columns:
     df = remove_outliers(df, threshold=OUTLIER_THRESH, column_name="rt", subject_id_column="subject_id")
 
-# --- Define Scenarios ---
+# --- Analysis: Systematic Confound Check (Spatial x Condition) ---
+print("\nPlotting Systematic Spatial Confounds...")
+# 1. Determine High Probability Location per Subject
+df['HighProbLoc'] = df['subject_id'].apply(lambda x: 'Left' if x % 2 == 0 else 'Right')
 
-# Scenario 1: Remove ONLY Frontal Targets
-# Result: Low Prob contains both Lateral and Frontal distractors.
-df_s1 = df[df["TargetLoc"] != "Front"].copy()
-df_s1["Scenario"] = "1. No Front Targets"
+# 2. Determine Control Location
+def get_control_loc(row):
+    all_locs = {'Left', 'Front', 'Right'}
+    occupied = {row['TargetLoc'], row[loc_col]}
+    remaining = list(all_locs - occupied)
+    return remaining[0] if remaining else None
 
-# Scenario 2: Remove Frontal Targets AND Frontal Distractors
-# Result: Low Prob contains only Lateral distractors (symmetric to High Prob).
-df_s2 = df[(df["TargetLoc"] != "Front") & (df[loc_col] != "Front")].copy()
-df_s2["Scenario"] = "2. No Front Targets/Distractors"
+df['ControlLoc'] = df.apply(get_control_loc, axis=1)
 
-# Scenario 3: Remove ONLY Frontal Distractors
-# Result: Targets can be Frontal (Harder). Low Prob contains only Lateral distractors.
-df_s3 = df[df[loc_col] != "Front"].copy()
-df_s3["Scenario"] = "3. No Front Distractors"
+# 3. Restructure Data (Melt) for Plotting
+# Target Data
+df_t = df[['subject_id', 'rt', 'IsCorrect', 'TargetLoc', 'HighProbLoc']].rename(columns={'TargetLoc': 'Location'})
+df_t['SoundType'] = 'Target'
+# Distractor Data
+df_d = df[['subject_id', 'rt', 'IsCorrect', loc_col, 'HighProbLoc']].rename(columns={loc_col: 'Location'})
+df_d['SoundType'] = 'Distractor'
+# Control Data
+df_c = df[['subject_id', 'rt', 'IsCorrect', 'ControlLoc', 'HighProbLoc']].rename(columns={'ControlLoc': 'Location'})
+df_c['SoundType'] = 'Control'
 
-# --- Analysis 1: Trial Counts per Condition ---
-print("Calculating trial counts...")
-counts_s1 = df_s1.groupby(['subject_id', 'DistractorProb']).size().reset_index(name='TrialCount')
-counts_s1["Scenario"] = "1. No Front Targets"
+df_plot = pd.concat([df_t, df_d, df_c], ignore_index=True)
+df_plot = df_plot[df_plot['Location'].isin(['Left', 'Front', 'Right'])]
 
-counts_s2 = df_s2.groupby(['subject_id', 'DistractorProb']).size().reset_index(name='TrialCount')
-counts_s2["Scenario"] = "2. No Front Targets/Distractors"
+# 4. Define Conditions
+def get_plot_condition(row):
+    loc = row['Location']
+    stype = row['SoundType']
+    high_loc = row['HighProbLoc']
 
-counts_s3 = df_s3.groupby(['subject_id', 'DistractorProb']).size().reset_index(name='TrialCount')
-counts_s3["Scenario"] = "3. No Front Distractors"
+    if stype == 'Control':
+        return "Control"
+    elif stype == 'Distractor':
+        return "Distractor Expected" if loc == high_loc else "Distractor Unexpected"
+    elif stype == 'Target':
+        return "Target Unexpected" if loc == high_loc else "Target Expected"
+    return "Other"
 
-all_counts = pd.concat([counts_s1, counts_s2, counts_s3])
+df_plot['Condition'] = df_plot.apply(get_plot_condition, axis=1)
 
-plt.figure(figsize=(10, 6))
-sns.barplot(data=all_counts, x="DistractorProb", y="TrialCount", hue="Scenario",
-            order=["High", "Low", "Absent"], palette="viridis", errorbar=("se", 1))
-plt.title("Average Trial Counts per Subject by Condition")
-plt.ylabel("Number of Trials")
+# --- Aggregate per subject ---
+print("Aggregating data per subject...")
+df_agg = df_plot.groupby(['subject_id', 'Location', 'Condition'])[['rt', 'IsCorrect']].mean().reset_index()
+
+# 5. Plot
+plt.figure(figsize=(12, 7))
+order_cond = [
+    "Distractor Expected", "Distractor Unexpected",
+    "Target Expected", "Target Unexpected", "Control"
+]
+# Filter order to existing conditions
+order_cond = [c for c in order_cond if c in df_plot['Condition'].unique()]
+
+sns.barplot(
+    data=df_agg, x="Location", y="rt", hue="Condition",
+    order=["Left", "Front", "Right"], hue_order=order_cond,
+    palette="tab10", errorbar=("se", 1)
+)
+plt.title("Performance by Spatial Location and Condition Context")
+plt.ylabel("Reaction Time (s)")
+plt.legend(bbox_to_anchor=(1.01, 1), loc='upper left', title="Condition")
 sns.despine()
+plt.tight_layout()
 plt.show()
 
-# --- Analysis 2: Location Matrices (Heatmaps) ---
-# This visualizes exactly which geometric configurations remain in the dataset
-def plot_matrix(dataframe, title):
-    if dataframe.empty:
-        print(f"Skipping heatmap for '{title}': Dataframe is empty.")
-        return
-
-    # Count occurrences of Distractor vs Target locations
-    matrix = dataframe.groupby([loc_col, 'TargetLoc']).size().unstack(fill_value=0)
-    
-    # Reorder for visual clarity
-    loc_order = [l for l in ['Left', 'Front', 'Right', 'Absent'] if l in matrix.index]
-    target_order = [t for t in ['Left', 'Front', 'Right'] if t in matrix.columns]
-    
-    if not loc_order or not target_order:
-        print(f"Skipping heatmap for '{title}': No matching locations found (Indices: {matrix.index.tolist()}, Columns: {matrix.columns.tolist()}).")
-        return
-
-    matrix = matrix.reindex(index=loc_order, columns=target_order)
-    
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(matrix, annot=True, fmt="d", cmap="Blues", cbar=False)
-    plt.title(title)
-    plt.ylabel("Distractor Location")
-    plt.xlabel("Target Location")
-    plt.show()
-
-print("Plotting Location Matrices (Aggregated across all subjects)...")
-plot_matrix(df_s1, "Scenario 1: No Front Targets\n(Trial Counts)")
-plot_matrix(df_s2, "Scenario 2: No Front Targets & No Front Distractors\n(Trial Counts)")
-plot_matrix(df_s3, "Scenario 3: No Front Distractors\n(Trial Counts)")
-
-# --- Analysis 3: Balance Statistics ---
-piv_s1 = counts_s1.pivot(index='subject_id', columns='DistractorProb', values='TrialCount')
-piv_s1['Low_High_Ratio'] = piv_s1['Low'] / piv_s1['High']
-
-piv_s2 = counts_s2.pivot(index='subject_id', columns='DistractorProb', values='TrialCount')
-piv_s2['Low_High_Ratio'] = piv_s2['Low'] / piv_s2['High']
-
-piv_s3 = counts_s3.pivot(index='subject_id', columns='DistractorProb', values='TrialCount')
-piv_s3['Low_High_Ratio'] = piv_s3['Low'] / piv_s3['High']
-
-print("\n--- Balance Statistics (Low / High Trial Ratio) ---")
-print(f"Scenario 1 (No Front T) Mean Ratio: {piv_s1['Low_High_Ratio'].mean():.2f} (Low has ~2x trials)")
-print(f"Scenario 2 (No Front T/D) Mean Ratio: {piv_s2['Low_High_Ratio'].mean():.2f} (Balanced)")
-print(f"Scenario 3 (No Front D) Mean Ratio: {piv_s3['Low_High_Ratio'].mean():.2f} (Balanced)")
-
-# --- Analysis 4: Performance Confound Check (RT by Target Location) ---
-print("\nPlotting Performance Confound (RT by Target Location)...")
-if "rt" in df.columns:
-    # Filter for High/Low to focus on the specific comparison
-    df_confound = df[df["DistractorProb"].isin(["High", "Low"])].copy()
-
-    g = sns.catplot(
-        data=df_confound, x="DistractorProb", y="rt", col="TargetLoc",
-        col_order=["Left", "Front", "Right"], order=["High", "Low"],
-        kind="bar", palette="viridis", errorbar=("se", 1),
-        height=5, aspect=0.8
+if 'IsCorrect' in df_agg.columns:
+    plt.figure(figsize=(12, 7))
+    sns.barplot(
+        data=df_agg, x="Location", y="IsCorrect", hue="Condition",
+        order=["Left", "Front", "Right"], hue_order=order_cond,
+        palette="tab10", errorbar=("se", 1)
     )
-    g.set_axis_labels("Distractor Probability", "RT (s)")
-    g.fig.suptitle("RT by Distractor Probability split by Target Location\n(Check for Frontal Target Difficulty)", y=1.05)
+    plt.title("Accuracy by Spatial Location and Condition Context")
+    plt.ylabel("Proportion Correct")
+    plt.legend(bbox_to_anchor=(1.01, 1), loc='upper left', title="Condition")
+    sns.despine()
+    plt.tight_layout()
     plt.show()
-
-# --- Analysis 5: Geometric Balance Check ---
-print("\nPlotting Geometric Balance (Target Counts per Distractor Location)...")
-# Filter out Absent trials to focus on Distractor-Target relationship
-df_geo = df[df[loc_col] != "Absent"].copy()
-
-plt.figure(figsize=(10, 6))
-sns.countplot(data=df_geo, x=loc_col, hue="TargetLoc",
-              order=["Left", "Front", "Right"],
-              hue_order=["Left", "Front", "Right"],
-              palette="Set2")
-plt.title("Balance Check: Target Locations per Distractor Location\n(Are targets balanced within each distractor position?)")
-plt.xlabel("Distractor Location")
-plt.ylabel("Trial Count")
-plt.legend(title="Target Location")
-sns.despine()
-plt.show()
