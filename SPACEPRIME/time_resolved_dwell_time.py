@@ -46,7 +46,10 @@ SCREEN_SIZE_CM_Y = 30
 SCREEN_SIZE_CM_X = 53
 VIEWING_DISTANCE_CM = 70
 DWELL_TIME_FILTER_RADIUS = 0
-SIGMA = 0
+SIGMA = 1
+BIN_SIZE = 3
+CMAP_DWELL = 'magma'
+CMAP_DIFF = 'seismic'
 
 # ===================================================================
 # Data Loading and Preparation
@@ -151,7 +154,7 @@ SAMPLE_BINS = [(0, s_end_1), (s_end_1, s_end_2), (s_end_2, int(max_samples) + 1)
 priming_map = {1: 'Positive', 0: 'No', -1: 'Negative'}
 merged_df['PrimingCondition'] = merged_df['Priming'].map(priming_map)
 merged_df['Condition'] = np.where(merged_df['SingletonPresent'] == 1, 'Distractor Present', 'Distractor Absent')
-merged_df['Correctness'] = merged_df['select_target'].map({1: 'Correct', 0: 'Incorrect'})
+merged_df['Correctness'] = merged_df['select_target'].map({True: 'Correct', False: 'Incorrect'})
 
 # Filter out central starting point data
 outside_center_mask = (merged_df['x']**2 + merged_df['y']**2) > (DWELL_TIME_FILTER_RADIUS**2)
@@ -203,15 +206,19 @@ def add_digit_overlays(ax):
 
 def calculate_smoothed_histogram(data, n_trials, sampling_frequency, phase_duration_s=None):
     """Calculates a smoothed, normalized histogram for the given data."""
+    # Calculate number of bins based on BIN_SIZE
+    n_bins_y = int(HEIGHT / BIN_SIZE)
+    n_bins_x = int(WIDTH / BIN_SIZE)
+
     if data.empty or n_trials == 0:
-        return np.zeros((HEIGHT, WIDTH))
+        return np.zeros((n_bins_y, n_bins_x))
 
     center_x = WIDTH / 2
     center_y = HEIGHT / 2
     x_shifted = data["x_pixels"] + center_x
     y_shifted = data["y_pixels"] + center_y
 
-    hist, _, _ = np.histogram2d(y_shifted, x_shifted, bins=(HEIGHT, WIDTH), range=[[0, HEIGHT], [0, WIDTH]])
+    hist, _, _ = np.histogram2d(y_shifted, x_shifted, bins=(n_bins_y, n_bins_x), range=[[0, HEIGHT], [0, WIDTH]])
 
     # Normalize to get average dwell time in seconds per trial
     if sampling_frequency > 0 and n_trials > 0:
@@ -271,7 +278,7 @@ if sample_hists:
     im = None # Initialize im to be accessible for colorbar
     for i, (s_start, s_end) in enumerate(SAMPLE_BINS):
         ax = axes1[i]
-        im = ax.imshow(sample_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='inferno', vmax=vmax1, vmin=0)
+        im = ax.imshow(sample_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap=CMAP_DWELL, vmax=vmax1, vmin=0)
         #add_digit_overlays(ax)
         
         # Set aspect ratio and zoom
@@ -314,7 +321,7 @@ if len(sample_hists) > 1:
     im_diff = None
     for i, diff_hist in enumerate(diff_hists):
         ax = axes1a[i]
-        im_diff = ax.imshow(diff_hist, extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='coolwarm', vmax=vmax_diff1, vmin=-vmax_diff1)
+        im_diff = ax.imshow(diff_hist, extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap=CMAP_DIFF, vmax=vmax_diff1, vmin=-vmax_diff1)
         
         # Set aspect ratio and zoom
         ax.set_aspect(ROI_WIDTH / ROI_HEIGHT)
@@ -341,7 +348,8 @@ distractor_hists = []
 for cond in distractor_conditions:
     subset_df = merged_df[merged_df['Condition'] == cond]
     n_trials = get_total_trials(df_behavior, 'Condition', cond)
-    hist = calculate_smoothed_histogram(subset_df, n_trials, sampling_frequency)
+    avg_duration = len(subset_df) / sampling_frequency / n_trials if n_trials > 0 else 1.0
+    hist = calculate_smoothed_histogram(subset_df, n_trials, sampling_frequency, phase_duration_s=avg_duration)
     distractor_hists.append(hist)
 
 if distractor_hists:
@@ -349,7 +357,7 @@ if distractor_hists:
     im = None # Initialize im
     for i, cond in enumerate(distractor_conditions):
         ax = axes2[i]
-        im = ax.imshow(distractor_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='inferno', vmax=vmax2, vmin=0)
+        im = ax.imshow(distractor_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap=CMAP_DWELL, vmax=vmax2, vmin=0)
         add_digit_overlays(ax)
         
         # Set aspect ratio and zoom
@@ -364,7 +372,7 @@ if distractor_hists:
     # Adjust subplot layout and add a dedicated colorbar axis
     fig2.subplots_adjust(right=0.88, top=0.85)
     cbar_ax = fig2.add_axes([0.9, 0.15, 0.03, 0.7])
-    fig2.colorbar(im, cax=cbar_ax, label='Average Dwell Time per Trial (s)')
+    fig2.colorbar(im, cax=cbar_ax, label='Dwell time (% of Trial)')
     plt.show()
 
 # --- Plot 2a: Difference Heatmap for Distractor Presence ---
@@ -376,7 +384,7 @@ if len(distractor_hists) == 2:
     diff_hist = distractor_hists[0] - distractor_hists[1] # Present - Absent
     
     vmax_diff2 = np.percentile(np.abs(diff_hist), 99.9)
-    im_diff = ax2a.imshow(diff_hist, extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='coolwarm', vmax=vmax_diff2, vmin=-vmax_diff2)
+    im_diff = ax2a.imshow(diff_hist, extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap=CMAP_DIFF, vmax=vmax_diff2, vmin=-vmax_diff2)
     
     # Set aspect ratio and zoom
     ax2a.set_aspect(ROI_WIDTH / ROI_HEIGHT)
@@ -388,7 +396,7 @@ if len(distractor_hists) == 2:
 
     fig2a.subplots_adjust(right=0.85)
     cbar_ax = fig2a.add_axes([0.87, 0.15, 0.03, 0.7])
-    fig2a.colorbar(im_diff, cax=cbar_ax, label='Difference in Average Dwell Time (s)')
+    fig2a.colorbar(im_diff, cax=cbar_ax, label='Difference in Dwell Time (% of Trial)')
     plt.show()
 
 
@@ -402,7 +410,8 @@ priming_hists = []
 for cond in priming_conditions:
     subset_df = merged_df[merged_df['PrimingCondition'] == cond]
     n_trials = get_total_trials(df_behavior, 'PrimingCondition', cond)
-    hist = calculate_smoothed_histogram(subset_df, n_trials, sampling_frequency)
+    avg_duration = len(subset_df) / sampling_frequency / n_trials if n_trials > 0 else 1.0
+    hist = calculate_smoothed_histogram(subset_df, n_trials, sampling_frequency, phase_duration_s=avg_duration)
     priming_hists.append(hist)
 
 if priming_hists:
@@ -410,7 +419,7 @@ if priming_hists:
     im = None # Initialize im
     for i, cond in enumerate(priming_conditions):
         ax = axes3[i]
-        im = ax.imshow(priming_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='inferno', vmax=vmax3, vmin=0)
+        im = ax.imshow(priming_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap=CMAP_DWELL, vmax=vmax3, vmin=0)
         add_digit_overlays(ax)
         
         # Set aspect ratio and zoom
@@ -425,7 +434,7 @@ if priming_hists:
     # Adjust subplot layout and add a dedicated colorbar axis
     fig3.subplots_adjust(right=0.9, top=0.85)
     cbar_ax = fig3.add_axes([0.92, 0.15, 0.02, 0.7])
-    fig3.colorbar(im, cax=cbar_ax, label='Average Dwell Time per Trial (s)')
+    fig3.colorbar(im, cax=cbar_ax, label='Dwell time (% of Trial)')
     plt.show()
 
 # --- Plot 3a: Difference Heatmaps for Priming Condition ---
@@ -445,7 +454,7 @@ if len(priming_hists) == 3:
     im_diff = None
     for i, diff_hist in enumerate(diff_hists):
         ax = axes3a[i]
-        im_diff = ax.imshow(diff_hist, extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='coolwarm', vmax=vmax_diff3, vmin=-vmax_diff3)
+        im_diff = ax.imshow(diff_hist, extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap=CMAP_DIFF, vmax=vmax_diff3, vmin=-vmax_diff3)
         
         # Set aspect ratio and zoom
         ax.set_aspect(ROI_WIDTH / ROI_HEIGHT)
@@ -458,7 +467,7 @@ if len(priming_hists) == 3:
 
     fig3a.subplots_adjust(right=0.9, top=0.85)
     cbar_ax = fig3a.add_axes([0.92, 0.15, 0.02, 0.7])
-    fig3a.colorbar(im_diff, cax=cbar_ax, label='Difference in Average Dwell Time (s)')
+    fig3a.colorbar(im_diff, cax=cbar_ax, label='Difference in Dwell Time (% of Trial)')
     plt.show()
 
 # --- Plot 4: Dwell Time by Correctness ---
@@ -471,7 +480,8 @@ correctness_hists = []
 for cond in correctness_conditions:
     subset_df = merged_df[merged_df['Correctness'] == cond]
     n_trials = get_total_trials(df_behavior, 'Correctness', cond)
-    hist = calculate_smoothed_histogram(subset_df, n_trials, sampling_frequency)
+    avg_duration = len(subset_df) / sampling_frequency / n_trials if n_trials > 0 else 1.0
+    hist = calculate_smoothed_histogram(subset_df, n_trials, sampling_frequency, phase_duration_s=avg_duration)
     correctness_hists.append(hist)
 
 if correctness_hists:
@@ -479,7 +489,7 @@ if correctness_hists:
     im = None # Initialize im
     for i, cond in enumerate(correctness_conditions):
         ax = axes4[i]
-        im = ax.imshow(correctness_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='inferno', vmax=vmax4, vmin=0)
+        im = ax.imshow(correctness_hists[i], extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap=CMAP_DWELL, vmax=vmax4, vmin=0)
         add_digit_overlays(ax)
         
         # Set aspect ratio and zoom
@@ -494,19 +504,19 @@ if correctness_hists:
     # Adjust subplot layout and add a dedicated colorbar axis
     fig4.subplots_adjust(right=0.88, top=0.85)
     cbar_ax = fig4.add_axes([0.9, 0.15, 0.03, 0.7])
-    fig4.colorbar(im, cax=cbar_ax, label='Average Dwell Time per Trial (s)')
+    fig4.colorbar(im, cax=cbar_ax, label='Dwell time (% of Trial)')
     plt.show()
 
 # --- Plot 4a: Difference Heatmap for Correctness ---
 if len(correctness_hists) == 2:
     print("--- Generating Plot 4a: Difference Heatmap for Correctness ---")
-    fig4a, ax4a = plt.subplots(1, 1, figsize=(8, 7))
+    fig4a, ax4a = plt.subplots(1, 1, figsize=(12, 7))
     fig4a.suptitle('Dwell Time Difference: Correct vs. Incorrect', fontsize=20)
     
     diff_hist = correctness_hists[0] - correctness_hists[1] # Correct - Incorrect
     
     vmax_diff4 = np.percentile(np.abs(diff_hist), 99.9)
-    im_diff = ax4a.imshow(diff_hist, extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap='coolwarm', vmax=vmax_diff4, vmin=-vmax_diff4)
+    im_diff = ax4a.imshow(diff_hist, extent=[0, WIDTH, 0, HEIGHT], origin='lower', aspect='auto', cmap=CMAP_DIFF, vmax=vmax_diff4, vmin=-vmax_diff4)
     
     # Set aspect ratio and zoom
     ax4a.set_aspect(ROI_WIDTH / ROI_HEIGHT)
@@ -516,7 +526,8 @@ if len(correctness_hists) == 2:
     ax4a.set_xlabel("X Position (pixels)")
     ax4a.set_ylabel("Y Position (pixels)")
 
-    fig4a.subplots_adjust(right=0.85)
-    cbar_ax = fig4a.add_axes([0.87, 0.15, 0.03, 0.7])
-    fig4a.colorbar(im_diff, cax=cbar_ax, label='Difference in Average Dwell Time (s)')
+    fig4a.subplots_adjust(right=0.8)
+    cbar_ax = fig4a.add_axes([0.82, 0.15, 0.03, 0.7])
+    fig4a.colorbar(im_diff, cax=cbar_ax, label='Difference in Dwell Time (% of Trial)')
     plt.show()
+    plt.savefig(f"{get_data_path()}plots/correct-incorrect_trajectory_diff.svg")
