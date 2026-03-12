@@ -3,7 +3,7 @@ import pandas as pd
 from mne.viz.eyetracking import plot_gaze
 import numpy as np
 from matplotlib import pyplot as plt
-from encoding import EEG_TRIGGER_MAP
+from encoding import encoding
 
 
 # get headgaze data
