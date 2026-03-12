@@ -9,9 +9,9 @@ import pandas as pd
 df = load_concatenated_csv("target_towardness_all_variables.csv")
 
 # 1. Calculate behavioral metrics on a subject level
-subject_metrics = df.groupby(['subject_id', 'PrimingCondition'])[['rt', 'select_target', "target_towardness"]].mean().reset_index()
+subject_metrics = df.groupby(['subject_id', 'PrimingCondition'])[['rt', 'select_target', "target_towardness", "distractor_towardness"]].mean().reset_index()
 
-def plot_priming_comparison(data, condition_pairs, title_suffix):
+def plot_priming_comparison(data, condition_pairs, axes):
     """Helper function to plot RT and Accuracy for specific condition pairs."""
     subset = data[data['PrimingCondition'].isin(condition_pairs)]
 
@@ -53,13 +53,11 @@ def plot_priming_comparison(data, condition_pairs, title_suffix):
         ax.text(0.5, y_start + h, sig, ha='center', va='bottom', color='k')
         return y_start + h
 
-    fig, axes = plt.subplots(1, 3, figsize=(9, 6))
-
     # Plot Reaction Time
     sns.barplot(data=subset, x='PrimingCondition', y='rt', order=condition_pairs, ax=axes[0], errorbar=('ci', 95), alpha=1.0, palette=palette)
     #sns.stripplot(data=subset, x='PrimingCondition', y='rt', order=condition_pairs, ax=axes[0], color='black', alpha=0.2, jitter=True)
     axes[0].set_title(f'Reaction Time\n$d={rt_d:.2f}$')
-    axes[0].set_ylabel('Mean RT (s)')
+    axes[0].set_ylabel('RT (s)')
     add_significance(axes[0], subset['rt'], rt_p)
 
     # Plot Accuracy (select_target)
@@ -77,17 +75,37 @@ def plot_priming_comparison(data, condition_pairs, title_suffix):
     axes[2].set_ylabel('Target Towardness')
     add_significance(axes[2], subset['target_towardness'], tt_p)
 
-    sns.despine()
-    plt.tight_layout()
-    plt.show()
+fig, axes = plt.subplots(3, 3, figsize=(10, 15))
 
-# 2. Plot No Priming vs Positive Priming
-plot_priming_comparison(subject_metrics, ['No', 'Positive'], "No vs Positive")
-plt.savefig("plots/no_vs_positive.svg")
+# Panel A: Positive Priming Metrics
+plot_priming_comparison(subject_metrics, ['No', 'Positive'], axes[0])
 
-# 3. Plot No Priming vs Negative Priming
-plot_priming_comparison(subject_metrics, ['No', 'Negative'], "No vs Negative")
-plt.savefig("plots/no_vs_negative.svg")
+# Panel B: Negative Priming Metrics
+plot_priming_comparison(subject_metrics, ['No', 'Negative'], axes[1])
+
+# Panel C: Generalized Correlations
+subject_means_overall = subject_metrics.groupby('subject_id')[['rt', 'select_target', "target_towardness", "distractor_towardness"]].mean().reset_index()
+
+def plot_corr(ax, x_col, y_col, xlabel, ylabel):
+    clean_data = subject_means_overall[[x_col, y_col]].dropna()
+    stats = pg.corr(clean_data[x_col], clean_data[y_col])
+    r_val = stats['r'][0]
+    p_val = stats['p-val'][0]
+    
+    sns.regplot(data=clean_data, x=x_col, y=y_col, ax=ax, color='black', scatter_kws={'alpha': 0.5})
+    ax.set_title(f'$r={r_val:.2f}$\n'
+                 f'$p={p_val:.3f}$')
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+
+plot_corr(axes[2, 0], 'target_towardness', 'rt', 'Target Towardness', 'Mean RT (s)')
+plot_corr(axes[2, 1], 'target_towardness', 'select_target', 'Target Towardness', 'Proportion Correct')
+plot_corr(axes[2, 2], 'target_towardness', 'distractor_towardness', 'Target Towardness', 'Distractor Towardness')
+
+sns.despine()
+plt.tight_layout()
+plt.show()
+plt.savefig("plots/priming_correlation.svg")
 
 subject_metrics_selection = df.groupby(['subject_id'])[['select_distractor', 'select_target', "select_control"]].mean().reset_index()
 
