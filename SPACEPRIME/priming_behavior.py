@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 sns.set_theme(context="talk", style="ticks")
 from SPACEPRIME import load_concatenated_csv
 import pingouin as pg
+import pandas as pd
 
 
 df = load_concatenated_csv("target_towardness_all_variables.csv")
@@ -13,21 +14,21 @@ subject_metrics = df.groupby(['subject_id', 'PrimingCondition'])[['rt', 'select_
 def plot_priming_comparison(data, condition_pairs, title_suffix):
     """Helper function to plot RT and Accuracy for specific condition pairs."""
     subset = data[data['PrimingCondition'].isin(condition_pairs)]
-    
+
     if subset.empty:
         print(f"No data found for conditions: {condition_pairs}")
         return
-    
+
     palette = {'No': 'grey', 'Positive': 'green', 'Negative': 'red'}
-    
+
     # Calculate stats
     wide_df = subset.pivot(index='subject_id', columns='PrimingCondition', values=['rt', 'select_target', 'target_towardness']).dropna()
-    
+
     # RT Stats
     rt_stats = pg.ttest(wide_df[('rt', condition_pairs[0])], wide_df[('rt', condition_pairs[1])], paired=True)
     rt_p = rt_stats['p-val'][0]
     rt_d = rt_stats['cohen-d'][0]
-    
+
     # Accuracy Stats
     acc_stats = pg.ttest(wide_df[('select_target', condition_pairs[0])], wide_df[('select_target', condition_pairs[1])], paired=True)
     acc_p = acc_stats['p-val'][0]
@@ -42,12 +43,12 @@ def plot_priming_comparison(data, condition_pairs, title_suffix):
         y_max = y_data.max()
         y_start = y_max + (y_max * 0.05)
         h = y_max * 0.02
-        
+
         if p_val < 0.001: sig = '***'
         elif p_val < 0.01: sig = '**'
         elif p_val < 0.05: sig = '*'
         else: sig = 'n.s.'
-        
+
         ax.plot([0, 0, 1, 1], [y_start, y_start + h, y_start + h, y_start], lw=1.5, c='k')
         ax.text(0.5, y_start + h, sig, ha='center', va='bottom', color='k')
         return y_start + h
@@ -66,7 +67,7 @@ def plot_priming_comparison(data, condition_pairs, title_suffix):
     #sns.stripplot(data=subset, x='PrimingCondition', y='select_target', order=condition_pairs, ax=axes[1], color='black', alpha=0.2, jitter=True)
     axes[1].set_title(f'Accuracy\n$d={acc_d:.2f}$')
     axes[1].set_ylabel('Proportion Correct')
-    
+
     top_y = add_significance(axes[1], subset['select_target'], acc_p)
     axes[1].set_ylim(0, max(1.1, top_y * 1.1))
 
@@ -87,3 +88,38 @@ plt.savefig("plots/no_vs_positive.svg")
 # 3. Plot No Priming vs Negative Priming
 plot_priming_comparison(subject_metrics, ['No', 'Negative'], "No vs Negative")
 plt.savefig("plots/no_vs_negative.svg")
+
+subject_metrics_selection = df.groupby(['subject_id'])[['select_distractor', 'select_target', "select_control"]].mean().reset_index()
+
+# Prepare data for Target Towardness panel
+tt_data = []
+for sel_type in ['select_distractor', 'select_control', 'select_target']:
+    # Filter for trials where this selection occurred
+    subset = df[df[sel_type] == 1]
+    # Calculate mean target_towardness per subject
+    sub_means = subset.groupby('subject_id')['target_towardness'].mean().reset_index()
+    sub_means['Selection Type'] = sel_type
+    tt_data.append(sub_means)
+
+tt_long = pd.concat(tt_data)
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+# Panel 1: Selection Proportions
+selection_long = subject_metrics_selection.melt(id_vars='subject_id',
+                                                value_vars=['select_distractor', 'select_target', "select_control"],
+                                                var_name='Selection Type', value_name='Proportion')
+sns.boxplot(data=selection_long, x='Selection Type', y='Proportion', order=['select_distractor', 'select_control', "select_target"], ax=axes[0])
+sns.stripplot(data=selection_long, x='Selection Type', y='Proportion', order=['select_distractor', 'select_control', "select_target"], color='black', alpha=0.3, jitter=True, ax=axes[0])
+axes[0].set_title('Selection Proportions')
+
+# Panel 2: Target Towardness by Selection
+sns.boxplot(data=tt_long, x='Selection Type', y='target_towardness', order=['select_distractor', 'select_control', "select_target"], ax=axes[1])
+sns.stripplot(data=tt_long, x='Selection Type', y='target_towardness', order=['select_distractor', 'select_control', "select_target"], color='black', alpha=0.3, jitter=True, ax=axes[1])
+axes[1].set_title('Target Towardness by Selection')
+axes[1].set_ylabel('Target Towardness')
+
+sns.despine()
+plt.tight_layout()
+#plt.savefig("plots/selection_categories.svg")
+plt.show()
