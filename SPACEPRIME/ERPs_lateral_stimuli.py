@@ -3,26 +3,25 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from SPACEPRIME import get_data_path, load_concatenated_epochs
-from mne.stats import permutation_cluster_1samp_test
+from mne.stats import permutation_cluster_1samp_test, spatio_temporal_cluster_1samp_test
 from scipy.stats import t
 from SPACEPRIME.subjects import subject_ids
 from SPACEPRIME.plotting import difference_topos # Assuming this function is available and works as expected
 import seaborn as sns
 from stats import remove_outliers # Added for preprocessing
-
+from mne.channels import find_ch_adjacency
+sns.set_theme(context="talk", style="ticks")
 plt.ion()
 
 # --- Script Parameters ---
 
 # --- 1. Preprocessing Parameters (adopted from LMM script) ---
 OUTLIER_RT_THRESHOLD = 2.0
-FILTER_PHASE = 2
 REACTION_TIME_COL = 'rt'
-PHASE_COL = 'phase'
 
 # --- 2. General Script Parameters ---
 # Whether to plot the topographies or not (because that takes a while)
-PLOT_TOPOS = False
+PLOT_TOPOS = True
 
 # Paths
 SETTINGS_PATH = os.path.join(get_data_path(), "settings")
@@ -58,9 +57,9 @@ TOPO_TIME_STEP = 0.01             # Time step for topomap sequence within signif
 TOPO_CMAP = 'RdBu_r'              # Colormap for topographies
 
 # --- Parameters for Sensor-Space Cluster Permutation Test ---
-PLOT_SIGNIFICANT_SENSORS_TOPO = False # Whether to run and plot sensor cluster results
+PLOT_SIGNIFICANT_SENSORS_TOPO = True # Whether to run and plot sensor cluster results
 # Define time windows for averaging topo data for cluster analysis (in seconds)
-N2AC_TOPO_CLUSTER_WINDOW = (0.55, 0.6) # Example: 220-380ms for N2ac-like activity
+N2AC_TOPO_CLUSTER_WINDOW = (0.2, 0.4) # Example: 220-380ms for N2ac-like activity
 PD_TOPO_CLUSTER_WINDOW = (0.3, 0.4)   # Example: 290-380ms for Pd-like activity
 # Alpha for sensor cluster p-values (can be same as ALPHA_STAT_CLUSTER)
 ALPHA_SENSOR_CLUSTER = 0.05
@@ -92,12 +91,6 @@ print(f"Original number of trials: {len(epochs)}")
 # Get metadata for preprocessing
 df = epochs.metadata.copy().reset_index(drop=True)
 
-# 1. Filter by phase
-if PHASE_COL in df.columns and FILTER_PHASE is not None:
-    print(f"Filtering out trials from phase {FILTER_PHASE}...")
-    df = df[df[PHASE_COL] != FILTER_PHASE]
-    print(f"  Trials remaining after phase filter: {len(df)}")
-
 # 2. Remove RT outliers
 if REACTION_TIME_COL in df.columns:
     print(f"Removing RT outliers (threshold: {OUTLIER_RT_THRESHOLD} SD)...")
@@ -109,6 +102,9 @@ if REACTION_TIME_COL in df.columns:
 epochs = epochs[df.index]
 print(f"Final number of trials after preprocessing: {len(epochs)}")
 # --- End of Preprocessing ---
+# use standard montage (the existing montage of the epochs is wrong)
+montage = mne.channels.make_standard_montage("easycap-M1")
+epochs.set_montage(montage)
 
 # --- Subject Loop ---
 for subject_id_num in subject_ids:
@@ -266,11 +262,11 @@ erp_plot_params = {
 # Group Level Statistics (Cluster Permutation Test)
 n_subs = len(processed_subjects)
 if n_subs >= 2: # Need at least 2 subjects for t-test based threshold and cluster test
-    df = n_subs - 1
-    t_thresh_cluster = t.ppf(1 - ALPHA_STAT_CLUSTER / 2, df) if df > 0 else None # Threshold for forming clusters
+    deg_f = n_subs - 1
+    t_thresh_cluster = t.ppf(1 - ALPHA_STAT_CLUSTER / 2, deg_f) if deg_f > 0 else None # Threshold for forming clusters
     print(f"\n--- Running Cluster Permutation Tests (N={n_subs}) ---")
     if t_thresh_cluster:
-        print(f"Using cluster-forming t-threshold: {t_thresh_cluster:.3f} (df={df}, alpha={ALPHA_STAT_CLUSTER}, two-tailed)")
+        print(f"Using cluster-forming t-threshold: {t_thresh_cluster:.3f} (df={deg_f}, alpha={ALPHA_STAT_CLUSTER}, two-tailed)")
     else:
         print("Cannot calculate t-threshold for cluster forming (df <=0). Skipping cluster tests.")
 
@@ -306,7 +302,7 @@ for cond_name, params in erp_plot_params.items():
     ax.plot(times_vector, params['ipsi'] * AMPLITUDE_SCALE_FACTOR, color=IPSI_COLOR, linestyle='--', label="Ipsi")
     ax.plot(times_vector, params['diff'] * AMPLITUDE_SCALE_FACTOR, color=params['color_diff'], label="Contra-Ipsi", linewidth=2.5)
 
-    # --- Add shaded error bands (SEM) that match the line colors ---
+    """# --- Add shaded error bands (SEM) that match the line colors ---
     if n_subs > 1:
         # Error band for Contra wave
         contra_data_all_subs = subject_data[f'{cond_name.lower()}_contra']
@@ -333,7 +329,7 @@ for cond_name, params in erp_plot_params.items():
         ax.fill_between(times_vector,
                         (mean_diff - sem_diff) * AMPLITUDE_SCALE_FACTOR,
                         (mean_diff + sem_diff) * AMPLITUDE_SCALE_FACTOR,
-                        color=params['color_diff'], alpha=0.2, label='_nolegend_')
+                        color=params['color_diff'], alpha=0.2, label='_nolegend_')"""
 
     ax.axhline(y=0, color='k', linestyle='--', linewidth=0.8)
     ax.axvline(x=0, color='k', linestyle=':', linewidth=0.8)
@@ -384,9 +380,19 @@ for cond_name in ['Target', 'Distractor']:
                 start_time_ms = cluster_times[0] * 1000
                 end_time_ms = cluster_times[-1] * 1000
 
+                # --- Calculate Effect Sizes for Reporting ---
+                # 1. T-values within the cluster
+                t_obs_cluster = res['t_obs'][cluster_mask]
+                mean_t = np.mean(t_obs_cluster)
+                peak_t = t_obs_cluster[np.argmax(np.abs(t_obs_cluster))]
+
+                # 2. Cohen's d from T-value (d = t / sqrt(N))
+                cohens_d = mean_t / np.sqrt(n_subs)
+
                 print(f"  {cond_name} -> "
                       f"Time Window: {start_time_ms:.0f}-{end_time_ms:.0f} ms, "
-                      f"p-value: {p_val:.4f}")
+                      f"p-value: {p_val:.4f}, "
+                      f"Mean t: {mean_t:.2f}, Peak t: {peak_t:.2f}, Cohen's d: {cohens_d:.2f}")
 
         if not significant_clusters_found:
             print(f"  {cond_name}: No significant time clusters found.")
@@ -699,3 +705,123 @@ if PLOT_SIGNIFICANT_SENSORS_TOPO and n_subs >= 2:
         cbar.set_label('Amplitude Difference [µV]')
     fig_summary_topo.suptitle(f"Summary of Sensor-Space Cluster Analysis (N={n_subs})", fontsize=14, y=0.98)
     fig_summary_topo.tight_layout(rect=[0, 0, 0.85, 0.92])
+
+# Reveal mass univariate analysis results for N2ac
+# 1. define reshaped data
+X = subject_data["distractor_diff_topo"].transpose([0, 2, 1])
+# 2. Define the Spatial Connectivity
+# This tells the algorithm which electrodes are neighbors so it can form spatial clusters.
+connectivity, ch_names = find_ch_adjacency(epochs.info, ch_type='eeg')
+
+# 3. Run the Mass Univariate Test
+# We use a 1-sample t-test to see where the difference is significantly different from 0.
+t_obs, clusters, cluster_pv, H0 = spatio_temporal_cluster_1samp_test(
+    X,
+    adjacency=connectivity,
+    n_permutations=1000,
+    tail=0,  # Two-tailed test
+    threshold=None # Uses a standard t-threshold based on p < 0.05
+)
+
+# 4. Identify Significant Clusters
+significant_points = np.where(cluster_pv < 0.05)[0]
+
+if len(significant_points) > 0:
+    print(f"\n--- Visualizing {len(significant_points)} Significant Spatio-Temporal Clusters ---")
+
+    # Determine common scale for all cluster plots based on T-values
+    v_max_abs = np.nanmax(np.abs(t_obs))
+
+    for i_clust, clust_idx in enumerate(significant_points):
+        # clusters[clust_idx] is a tuple of arrays (time_indices, channel_indices)
+        time_inds, ch_inds = clusters[clust_idx]
+
+        # Get time window
+        t_min = times_vector[time_inds.min()]
+        t_max = times_vector[time_inds.max()]
+
+        # Create mask for significant sensors (union across time)
+        mask = np.zeros(len(epochs_info.ch_names), dtype=bool)
+        mask[np.unique(ch_inds)] = True
+
+        # Average T-values over the cluster time window
+        # t_obs is (n_times, n_channels)
+        t_map = np.nanmean(t_obs[time_inds.min():time_inds.max() + 1, :], axis=0)
+
+        # --- Calculate Effect Sizes for Spatio-Temporal Cluster ---
+        # t_obs is (n_times, n_channels)
+        t_vals_cluster = t_obs[time_inds, ch_inds]
+        mean_t_cluster = np.mean(t_vals_cluster)
+        peak_t_cluster = t_vals_cluster[np.argmax(np.abs(t_vals_cluster))]
+
+        # Cohen's d from T-value
+        cohens_d_st = mean_t_cluster / np.sqrt(X.shape[0])
+
+        fig, ax = plt.subplots(figsize=(5, 5))
+        im, _ = mne.viz.plot_topomap(
+            t_map,
+            epochs_info,
+            mask=mask,
+            mask_params=dict(marker='o', markerfacecolor='w', markeredgecolor='k', linewidth=0, markersize=8),
+            axes=ax,
+            show=False,
+            cmap='RdBu_r',
+            vlim=(-v_max_abs, v_max_abs)
+        )
+        plt.colorbar(im, ax=ax, label='T-value')
+        ax.set_title(f"Cluster {i_clust + 1} (p={cluster_pv[clust_idx]:.3f})\n{t_min * 1000:.0f} - {t_max * 1000:.0f} ms\nMean t={mean_t_cluster:.2f}, d={cohens_d_st:.2f}")
+else:
+    print("No significant spatio-temporal clusters found.")
+
+# 5. Butterfly Plot of T-values (MNE Joint Plot)
+print("\n--- Visualizing Temporal Evolution of T-values (MNE Joint Plot) ---")
+
+# Create Evoked object from T-values
+# t_obs is (n_times, n_channels), needs transpose for EvokedArray
+# Replace NaNs with 0 for plotting, as plot_joint cannot handle NaNs
+t_obs_plot = t_obs.copy()
+t_obs_plot[np.isnan(t_obs_plot)] = 0
+t_evoked = mne.EvokedArray(t_obs_plot.T, epochs_info, tmin=times_vector[0], nave=n_subs, comment='T-values')
+
+# Calculate threshold for visualization
+n_samples = X.shape[0]
+deg_f = n_samples - 1
+t_thresh = t.ppf(1 - ALPHA_STAT_CLUSTER / 2, deg_f)
+
+# Plot joint (Butterfly + Topomaps)
+fig_joint = t_evoked.plot_joint(times='peaks', title='Mass Univariate T-values', show=False)
+
+# Add threshold lines to the butterfly plot axes
+for ax in fig_joint.axes:
+    if ax.get_xlabel().startswith('Time'):
+        ax.axhline(t_thresh, color='red', linestyle='--', alpha=0.5, label=f'p<{ALPHA_STAT_CLUSTER}')
+        ax.axhline(-t_thresh, color='red', linestyle='--', alpha=0.5)
+
+# 6. Image Plot of T-values
+print("\n--- Visualizing T-values (Image Plot) ---")
+
+# Create mask for significant clusters
+# t_obs is (n_times, n_channels)
+sig_mask = np.zeros(t_obs.shape, dtype=bool)
+if len(significant_points) > 0:
+    for clust_idx in significant_points:
+        time_inds, ch_inds = clusters[clust_idx]
+        sig_mask[time_inds, ch_inds] = True
+
+# Transpose to (n_channels, n_times) for Evoked
+# Mask should be True for values to HIDE (non-significant)
+mask_to_plot = sig_mask.T
+
+# Create ROIs by checking channel labels
+selections = mne.channels.make_1020_channel_selections(epochs.info, midline="12z")
+
+v_max = np.max(np.abs(t_obs_plot))
+t_evoked.plot_image(
+    picks='all',
+    units=dict(eeg='T-value'), # Label colorbar correctly
+    cmap='RdBu_r',
+    show_names='all',          # Show electrode names
+    mask=mask_to_plot,         # Mask non-significant values
+    show=False,
+    group_by=selections
+)
