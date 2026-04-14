@@ -345,7 +345,6 @@ print("Calculating new, improved scores from projections...")
 control_proj = analysis_df['proj_control_max']
 analysis_df['target_towardness'] = analysis_df['proj_target']
 analysis_df['distractor_towardness'] = analysis_df['proj_distractor']
-analysis_df['target_distractor_towardness_diff'] = analysis_df['target_towardness'] - analysis_df['distractor_towardness']
 
 # Calculate the length of the ideal vector to the target and distractor for each trial
 analysis_df['target_vec_length'] = analysis_df['TargetDigit'].apply(get_vector_length, locations_map=numpad_locations_dva)
@@ -358,7 +357,7 @@ analysis_df['target_towardness'] = analysis_df['target_towardness'] / (analysis_
 analysis_df['distractor_towardness'] = analysis_df['distractor_towardness'] / (analysis_df['distractor_vec_length'])
 
 # The difference score is now a comparison of these relative proportions
-#analysis_df['target_distractor_towardness_diff_std'] = analysis_df['target_towardness_std'] - analysis_df['distractor_towardness_std']
+analysis_df['target_distractor_towardness_diff'] = analysis_df['target_towardness'] - analysis_df['distractor_towardness']
 
 # ===================================================================
 #      NEW: FILTER OUT NOISY TRAJECTORIES
@@ -455,7 +454,7 @@ for i, (col_name, title) in enumerate(scores_to_plot.items()):
 
     # Only set the y-label for the first (leftmost) plot
     if i == 0:
-        ax.set_ylabel('Capture Score', fontsize=12)
+        ax.set_ylabel('Towardness (%)', fontsize=12)
     else:
         ax.set_ylabel('')  # Hide y-label for other plots to avoid clutter
 
@@ -529,7 +528,7 @@ plt.savefig("plots/neg_pos_priming.svg")
 
 # Compare capture score effect sizes versus response time and accuracy effect sizes in Priming conditions
 analysis_df_mean = analysis_df.groupby(["subject_id", "Priming"])[["rt", "select_target", "target_towardness", "distractor_towardness"
-                                                    ]].mean().reset_index()
+                                                                   ]].mean().reset_index()
 
 # ===================================================================
 #       EFFECT SIZE COMPARISON: CAPTURE SCORE vs. RT vs. ACCURACY
@@ -544,8 +543,8 @@ df_effects = analysis_df_mean.copy()
 metrics_to_compare = {
     'Response Time (s)': 'rt',
     'Accuracy (%)': 'select_target',
-    'Towardness (Target) (dva)': 'target_towardness',
-    'Towardness (Distractor) (dva)': 'distractor_towardness'
+    'Towardness (Target) (%)': 'target_towardness',
+    'Towardness (Distractor) (%)': 'distractor_towardness'
 }
 
 # Prepare a list to store the results
@@ -1067,7 +1066,7 @@ analysis_df_classification['log_trial_idx'] = np.log(analysis_df_classification[
 # --- Create the Final Plot ---
 plt.figure(figsize=(12, 7))
 # Plot the mean suppression effect
-sns.lineplot(data=analysis_df_classification, x=analysis_df_classification["singleton_trial_idx"], y=analysis_df_classification["suppression_effect"])
+sns.lineplot(data=analysis_df_classification, x=analysis_df_classification["log_trial_idx"], y=analysis_df_classification["suppression_effect"])
 
 # Add a horizontal line at y=0 for reference
 plt.axhline(0, color='red', linestyle='--', linewidth=1.5, label='No Effect (Capture = Suppression)')
@@ -1081,7 +1080,7 @@ plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 sns.despine()
 
 # Limit the x-axis if there are very few subjects in the last trials, which can make the CI explode.
-trial_counts = analysis_df_classification['singleton_trial_idx'].value_counts()
+trial_counts = analysis_df_classification['log_trial_idx'].value_counts()
 last_reliable_trial = trial_counts[trial_counts >= 3].index.max()
 if pd.notna(last_reliable_trial):
     plt.xlim(0, last_reliable_trial)
@@ -1436,7 +1435,7 @@ print("\n--- Generating Poster Plot: Target Towardness vs. Control Projection --
 # We need to "melt" the dataframe to plot two different columns on the same y-axis.
 # This converts 'target_towardness' and 'proj_control_max' from wide to long format.
 
-analysis_df["target_towardness_contrast"] = analysis_df["target_towardness"] - control_proj
+analysis_df["target_towardness_contrast"] = analysis_df["proj_target"] - control_proj
 analysis_df_mean = analysis_df.groupby(["subject_id", "block", "Priming"])["target_towardness_contrast"].mean().reset_index()
 plot_data = analysis_df_mean.melt(
     id_vars=['subject_id', 'block', 'Priming'],
@@ -1447,7 +1446,7 @@ plot_data = analysis_df_mean.melt(
 
 # Improve the legend labels for clarity
 plot_data['Projection Type'] = plot_data['Projection Type'].map({
-    'target_towardness': 'Toward Target'
+    'target_towardness_contrast': 'Toward Target'
 })
 
 # do pairwise tests
@@ -1502,6 +1501,51 @@ plt.show()
 # --- Save and Show the Figure ---
 output_path = "G:\\Meine Ablage\\PhD\\Conferences\\ICON25\\Poster\\target_towardness_over_blocks.svg"
 plt.savefig(output_path, bbox_inches='tight')
+
+# capture --> suppression
+analysis_df_mean_capsup = analysis_df.groupby(["subject_id", "block"])["target_towardness_contrast"].mean().reset_index()
+plot_data_capsup = analysis_df_mean_capsup.melt(
+    id_vars=['subject_id', 'block'],
+    value_vars=['target_towardness_contrast'],
+    var_name='Projection Type',
+    value_name='Projection Score (dva)'
+)
+
+# --- Step 2: Create the pointplot ---
+plt.figure(figsize=(10, 7))
+
+ax = sns.lineplot(
+    data=plot_data_capsup,
+    x='block',
+    y='Projection Score (dva)',
+    color='darkblue',
+    errorbar=("se", 1),  # Show standard error (x2 for ~95% CI)
+    linewidth=3.5,  # Thicker line for better visibility from a distance
+    marker='o',  # Add markers to emphasize each block's data point
+    markersize=9,  # Make markers larger and clearer
+    legend=True,  # Explicitly disable the legend
+)
+
+# --- Step 3: Formatting for poster quality ---
+# Add a reference line at y=0
+ax.axhline(0, color='black', linestyle='--', linewidth=1.5, alpha=0.7)
+
+# Set clear titles and labels with appropriate font sizes
+ax.set_title('Trajectory Projection Toward Target vs. Control Items', fontsize=18, fontweight='bold', pad=20)
+ax.set_xlabel('Block Number', fontsize=14)
+ax.set_ylabel('Projection Score (dva)', fontsize=14)
+
+# Customize ticks and legend
+ax.tick_params(axis='both', which='major', labelsize=12)
+
+# Clean up the plot aesthetics
+sns.despine()
+plt.grid(True, which='major', axis='y', linestyle=':', linewidth=0.7)
+plt.tight_layout()
+
+# Show the final plot
+plt.show()
+
 
 from scipy.stats import page_trend_test
 
@@ -1559,68 +1603,3 @@ for priming_value, priming_name in priming_map.items():
             print("> We cannot conclude there is a monotonic trend across blocks for this condition.")
     except Exception as e:
         print(f"Could not run Page's trend test for '{priming_name}'. Error: {e}")
-
-# ===================================================================
-#       ANALYSIS: CORRELATION OF PRIMING EFFECT STRENGTHS
-# ===================================================================
-print("\n--- Correlating Positive vs. Negative Priming Effect Strengths ---")
-print("Objective: Test if subjects with a strong negative priming effect also show a strong positive priming effect.")
-
-# --- Step 1: Get subject-level mean towardness for each priming condition ---
-# We use 'target_towardness' as the metric for the priming effect.
-subject_means_df = analysis_df.groupby(["subject_id", "Priming"])["target_towardness"].mean().reset_index()
-
-# --- Step 2: Pivot the data to a wide format ---
-# This creates a DataFrame where each row is a subject and columns are the priming conditions.
-# This structure is essential for calculating the per-subject effect.
-priming_effects_df = subject_means_df.pivot(
-    index='subject_id',
-    columns='Priming',
-    values='target_towardness'
-).rename(columns={-1: 'negative', 0: 'no_priming', 1: 'positive'})
-
-# Drop any subjects who might be missing data for one of the conditions
-priming_effects_df.dropna(inplace=True)
-print(f"Analyzing priming effects for {len(priming_effects_df)} subjects with complete data.")
-
-# --- Step 3: Calculate the priming effect sizes for each subject ---
-# The "effect" is the change in performance relative to the 'no priming' baseline.
-# A positive value for both effects indicates the expected behavior.
-# Positive Effect: Performance gain from positive priming.
-# Negative Effect: Performance cost from negative priming (calculated as a positive value).
-priming_effects_df['positive_effect'] = priming_effects_df['positive'] - priming_effects_df['no_priming']
-priming_effects_df['negative_effect'] = priming_effects_df['negative'] - priming_effects_df['no_priming']
-
-# --- Step 4: Visualize the correlation and calculate statistics ---
-plt.figure(figsize=(10, 8))
-
-# Create the regression plot
-ax = sns.regplot(
-    data=priming_effects_df,
-    x='negative_effect',
-    y='positive_effect',
-    scatter_kws={'alpha': 0.6, 's': 50}, # Make points slightly transparent
-    line_kws={'color': 'red', 'linewidth': 2}
-)
-
-# Calculate Spearman's rank correlation, which is robust to outliers
-from scipy.stats import spearmanr
-rho, p_value = spearmanr(priming_effects_df['negative_effect'], priming_effects_df['positive_effect'])
-
-# Add annotations to the plot
-ax.set_title('Correlation Between Positive and Negative Priming Effects', fontsize=16, fontweight='bold')
-# Using newlines in the labels is still good practice
-ax.set_xlabel('Negative Priming Effect\n(Negative - No Priming)', fontsize=12)
-ax.set_ylabel('Positive Priming Effect\n(Positive - No Priming)', fontsize=12)
-sns.despine()
-
-# Add a text box with the correlation results
-stats_text = f"Spearman's ρ = {rho:.3f}\np-value = {p_value:.3f}"
-ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, fontsize=12,
-        verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-
-# FIX: Use the 'rect' parameter in tight_layout to manually reserve space for the
-# title and axis labels, preventing them from being "crushed" out of view.
-# The format is [left, bottom, right, top] in figure-normalized coordinates.
-plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-plt.show()

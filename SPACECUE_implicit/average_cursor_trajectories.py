@@ -10,10 +10,10 @@ from utils import resample_all_trajectories, calculate_trajectory_projections, g
 from stats import remove_outliers
 
 
-RESAMP_FREQ = 50
 TRAJECTORY_BOUNDARY_DVA = 999
 #OUTLIER_THRESH = 2
 DWELL_TIME_FILTER_RADIUS = 0.0
+SUBJECT_IDS = [1]
 
 # --- Data Loading Logic (from implicit_learning_effect.py) ---
 print("Loading data...")
@@ -22,7 +22,7 @@ experiment_folder = "pilot/distractor-switch"
 
 # Load all CSV files in the directory
 df = pd.concat([pd.read_csv(f"{data_path}{experiment_folder}/{file}") for file in os.listdir(f"{data_path}{experiment_folder}")], ignore_index=True)
-df = df[df["Subject ID"]==905.0]
+df = df[df["Subject ID"].isin(SUBJECT_IDS)]
 df = df[df["TargetLoc"] != "Front"]
 
 # Determine location column based on experiment design
@@ -68,20 +68,29 @@ df_mouse_list = []
 for subject_folder in subject_folders:
     mouse_file = glob.glob(f"{subject_folder}/beh/*mouse_data.csv")
     if mouse_file:
-        temp_df = pd.read_csv(mouse_file[0])
         sub_id_str = os.path.basename(subject_folder)
-        temp_df['subject_id'] = int(sub_id_str.split('-')[1])
+        try:
+            sub_id = int(sub_id_str.split('-')[1])
+        except (IndexError, ValueError):
+            continue
+
+        if sub_id not in SUBJECT_IDS:
+            continue
+
+        temp_df = pd.read_csv(mouse_file[0])
+        temp_df['subject_id'] = sub_id
+
+        # Calculate block to differentiate trials with same number across blocks
+        # 0 at start of file, or when trial_nr resets to 0 from non-zero
+        temp_df['block'] = ((temp_df['trial_nr'] == 0) & (temp_df['trial_nr'].shift(1).fillna(-1) != 0)).cumsum() - 1
         
         # Detect phases based on time jumps (0 -> negative) within each trial
         # 0: Stimulus, 1: Response, 2: ITI
-        temp_df['phase'] = temp_df.groupby('trial_nr')['time'].transform(lambda x: (x.diff() < -0.5).cumsum())
+        temp_df['phase'] = temp_df.groupby(['block', 'trial_nr'])['time'].transform(lambda x: (x.diff() < -0.5).cumsum())
         
         df_mouse_list.append(temp_df)
 
 df_mouse = pd.concat(df_mouse_list, ignore_index=True)
-# Corrected line:
-df_mouse['block'] = df_mouse.groupby('subject_id')['trial_nr'].transform(
-    lambda x: ((x == 0) & (x.shift(1) != 0)).cumsum() - 1)
 
 # resample data
 # df_mouse = resample_all_trajectories(df_mouse, RESAMP_FREQ, trial_cols=['subject_id', 'block', 'trial_nr', 'phase'])
@@ -257,24 +266,24 @@ def calculate_dva_heatmap(data, bounds, bin_size, sigma):
 
 def plot_average_aligned_trajectories_correctness(df, aligned_mouse_df):
     """
-    Plots the average aligned trajectories for Subject 905, separated by correctness.
+    Plots the average aligned trajectories, separated by correctness.
     """
-    # Filter for the specific subject
-    df_sub = df[df['subject_id'] == 905].copy()
+    # Use the provided dataframe directly
+    df_sub = df.copy()
     if df_sub.empty:
-        print("No data found for Subject 905 to plot average trajectories.")
+        print("No data found to plot average trajectories.")
         return
 
-    # Merge condition info (IsCorrect) into the aligned mouse data for this subject
+    # Merge condition info (IsCorrect) into the aligned mouse data
     plot_data = pd.merge(
-        aligned_mouse_df[aligned_mouse_df['subject_id'] == 905],
+        aligned_mouse_df,
         df_sub[['subject_id', 'block', 'trial_nr', 'IsCorrect']],
         on=['subject_id', 'block', 'trial_nr'],
         how='inner'
     )
 
     if plot_data.empty:
-        print("No trajectory data available for Subject 905 after merging.")
+        print("No trajectory data available after merging.")
         return
 
     # --- Filter for the response interval (Phase 1) ---
@@ -358,35 +367,35 @@ def plot_average_aligned_trajectories_correctness(df, aligned_mouse_df):
         ax_diff.plot(canonical_locs['distractor_x_aligned'], canonical_locs['distractor_y_aligned'], 'o', color='red', markersize=10, markeredgecolor='black')
         ax_diff.plot(canonical_locs['control_x_aligned'], canonical_locs['control_y_aligned'], 'o', color='grey', markersize=10, markeredgecolor='black')
 
-        plt.colorbar(im_diff, ax=ax_diff, fraction=0.046, pad=0.04, label='Density Difference')
+        #plt.colorbar(im_diff, ax=ax_diff, fraction=0.046, pad=0.04, label='Density Difference')
     else:
         ax_diff.set_title('Difference (Insufficient Data)')
         ax_diff.axis('off')
 
-    plt.suptitle('Average Aligned Trajectory Density by Correctness (Response Interval) for Subject 905')
+    #plt.suptitle('Average Aligned Trajectory Density by Correctness (Response Interval) for Subject 905')
     plt.tight_layout()
     plt.show()
 
 def plot_average_aligned_trajectories_phase(df, aligned_mouse_df):
     """
-    Plots the average aligned trajectories for Subject 905, separated by trial phase.
+    Plots the average aligned trajectories, separated by trial phase.
     """
-    # Filter for the specific subject
-    df_sub = df[df['subject_id'] == 905].copy()
+    # Use the provided dataframe directly
+    df_sub = df.copy()
     if df_sub.empty:
-        print("No data found for Subject 905 to plot average trajectories.")
+        print("No data found to plot average trajectories.")
         return
 
     # Merge to ensure we only use valid trials
     plot_data = pd.merge(
-        aligned_mouse_df[aligned_mouse_df['subject_id'] == 905],
+        aligned_mouse_df,
         df_sub[['subject_id', 'block', 'trial_nr']],
         on=['subject_id', 'block', 'trial_nr'],
         how='inner'
     )
 
     if plot_data.empty:
-        print("No trajectory data available for Subject 905 after merging.")
+        print("No trajectory data available after merging.")
         return
 
     # Define heatmap parameters
@@ -436,7 +445,7 @@ def plot_average_aligned_trajectories_phase(df, aligned_mouse_df):
         ax.plot(0, 0, '+', color='white', markersize=10)
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    plt.suptitle('Average Aligned Trajectory Density by Phase for Subject 905')
+    plt.suptitle('Average Aligned Trajectory Density by Phase')
     plt.tight_layout()
     plt.show()
 
@@ -467,7 +476,7 @@ def plot_towardness_over_trials(df):
 
     for col, (label, color) in metrics.items():
         # Plot raw data faintly
-        ax1.plot(df_sorted['cumulative_trial'], df_sorted[col], color=color, alpha=0.15, linewidth=0.5)
+        #ax1.plot(df_sorted['cumulative_trial'], df_sorted[col], color=color, alpha=0.15, linewidth=0.5)
 
         # Plot rolling mean
         rolling_mean = df_sorted[col].rolling(window=window_size, min_periods=1).mean()
@@ -479,23 +488,24 @@ def plot_towardness_over_trials(df):
     max_val = df_sorted[data_cols].max().max()
     min_val = df_sorted[data_cols].min().min()
     # Use a default if data is missing, otherwise calculate symmetric limit with padding
-    abs_limit = 100 if pd.isna(max_val) else max(abs(max_val), abs(min_val)) * 1.1
+    abs_limit = 100 * 1.5
+    abs_limit = max(105, abs_limit)  # Ensure the +/- 100 steps are visible
     ax1.set_ylim(-abs_limit, abs_limit)
 
     ax1.set_title('Trajectory Towardness Over Trials (Subject 905)')
     ax1.set_xlabel('Trial Number')
-    ax1.set_ylabel('Towardness Score (%)')
+    ax1.set_ylabel('Towardness (%)')
     ax1.axhline(0, color='black', linestyle='--', linewidth=0.8)
     ax1.grid(True, linestyle=':', alpha=0.6)
 
     # --- Add HP Distractor Location on a secondary y-axis ---
     ax2 = ax1.twinx()
-    hp_plot_vals = df_sorted['HP_Distractor_Loc'].map({'Left': -1, 'Right': 1})
+    hp_plot_vals = df_sorted['HP_Distractor_Loc'].map({'Left': -100, 'Right': 100})
     ax2.plot(df_sorted['cumulative_trial'], hp_plot_vals, color='black', linestyle='--', alpha=0.6, label='HP Distractor Loc')
     ax2.set_ylabel('High-Probability Distractor Location')
-    ax2.set_yticks([-1, 1])
+    ax2.set_yticks([-100, 100])
     ax2.set_yticklabels(['Left', 'Right'])
-    ax2.set_ylim(-1.5, 1.5)
+    ax2.set_ylim(-abs_limit, abs_limit)
 
     # Combine legends from both axes
     lines, labels = ax1.get_legend_handles_labels()
@@ -506,3 +516,100 @@ def plot_towardness_over_trials(df):
     plt.show()
 
 plot_towardness_over_trials(tt_df)
+
+# --- Cross-Correlation Analysis ---
+print("Analyzing cross-correlation...")
+
+def analyze_towardness_cross_correlation(df):
+    # Filter for HP blocks (Left/Right only) to match the analysis logic
+    df_corr = df[df['HP_Distractor_Loc'].isin(['Left', 'Right'])].copy()
+    
+    if df_corr.empty:
+        print("No data available for Left/Right HP blocks for cross-correlation.")
+        return
+
+    # Sort to ensure temporal order
+    df_corr = df_corr.sort_values(['subject_id', 'block', 'trial_nr'])
+    
+    # Define parameters
+    WINDOW = 45
+    lags = np.arange(-75, 75)
+    metrics = ['target_towardness', 'distractor_towardness', 'control_towardness']
+    colors = {'target_towardness': 'green', 'distractor_towardness': 'red', 'control_towardness': 'grey'}
+    titles = {'target_towardness': 'Target', 'distractor_towardness': 'Distractor', 'control_towardness': 'Control'}
+    
+    cc_results = {m: {} for m in metrics}
+
+    # Calculate rolling means and correlations per subject
+    for sub_id, sub_df in df_corr.groupby('subject_id'):
+        # HP Signal: Left=-1, Right=1
+        hp_numeric = sub_df['HP_Distractor_Loc'].map({'Left': -1, 'Right': 1})
+        
+        # Skip if constant (no switch) or empty
+        if hp_numeric.std() == 0 or len(sub_df) < WINDOW:
+            continue
+            
+        # HP signal
+        sig1 = hp_numeric
+
+        # Map distractor locations for this subject to ensure we can split by Left/Right
+        # loc_col is defined globally in the script (e.g. 'SingletonLoc')
+        # We expect numeric 1=Left, 3=Right based on experiment code
+        sub_df = sub_df.copy()
+        sub_df['DistLoc_Mapped'] = sub_df[loc_col].replace({1: 'Left', 2: 'Front', 3: 'Right'})
+
+        for m in metrics:
+            # Split metric by Distractor Location (Left vs Right)
+            # We only care about trials where the distractor was actually at these locations
+            m_left = sub_df[m].where(sub_df['DistLoc_Mapped'] == 'Left')
+            m_right = sub_df[m].where(sub_df['DistLoc_Mapped'] == 'Right')
+
+            # Calculate rolling means for each spatial condition
+            roll_left = m_left.rolling(window=WINDOW, center=True, min_periods=1).mean()
+            roll_right = m_right.rolling(window=WINDOW, center=True, min_periods=1).mean()
+            
+            # Calculate Difference (Left - Right)
+            # This represents the spatial bias in towardness
+            diff_sig = roll_left - roll_right
+
+            if diff_sig.isnull().all() or diff_sig.std() == 0:
+                continue
+
+            # Metric signal is the difference
+            sig2 = diff_sig
+            
+            # Compute Correlation
+            # shift(-lag): if lag > 0, we shift sig2 backward (future becomes present), 
+            # effectively looking for correlation where sig1 (HP) leads sig2 (Beh).
+            cc = [sig1.corr(sig2.shift(-lag)) for lag in lags]
+            cc_results[m][sub_id] = cc
+
+    # Plotting
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
+    
+    for i, m in enumerate(metrics):
+        ax = axes[i]
+        metric_res = cc_results[m]
+        
+        if not metric_res:
+            ax.set_title(f"{titles[m]} (No Data)")
+            continue
+        
+        cc_df = pd.DataFrame.from_dict(metric_res, orient='index', columns=lags)
+        cc_mean = cc_df.mean(axis=0)
+        cc_sem = cc_df.sem(axis=0) if len(metric_res) > 1 else pd.Series(0, index=lags)
+        
+        ax.plot(lags, cc_mean, color=colors[m], label='Mean Correlation')
+        ax.fill_between(lags, cc_mean - cc_sem, cc_mean + cc_sem, color=colors[m], alpha=0.3)
+        ax.axhline(0, color='k', linestyle='--')
+        ax.axvline(0, color='k', linestyle=':', alpha=0.5)
+        ax.set_title(f"Cross-Corr: HP Loc vs ({titles[m]} L-R)")
+        ax.set_xlabel("Lag (Trials)")
+        if i == 0:
+            ax.set_ylabel("Correlation Coefficient")
+            
+    plt.suptitle("Cross-Correlation: HP Distractor Location vs. Towardness")
+    plt.tight_layout()
+    plt.show()
+
+analyze_towardness_cross_correlation(tt_df)

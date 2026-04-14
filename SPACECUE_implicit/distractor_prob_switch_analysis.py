@@ -202,8 +202,8 @@ for sub_id, sub_df in df.groupby('subject_id'):
     hp_numeric = valid_data['HP_Distractor_Loc'].map({'Left': -1, 'Right': 1})
     
     if not valid_data.empty and hp_numeric.std() > 0 and valid_data['RT_Index'].std() > 0:
-        sig1 = (hp_numeric - hp_numeric.mean()) / hp_numeric.std()
-        sig2 = (valid_data['RT_Index'] - valid_data['RT_Index'].mean()) / valid_data['RT_Index'].std()
+        sig1 = hp_numeric
+        sig2 = valid_data['RT_Index']
         # Use shift(-lag) so that Positive Lag = Behavior follows Signal (Delay)
         cc = [sig1.corr(sig2.shift(-lag)) for lag in lags]
         cross_corr_dict[sub_id] = cc
@@ -240,8 +240,8 @@ for sub_id, sub_df in df_acc.groupby('subject_id'):
     hp_numeric = valid_data['HP_Distractor_Loc'].map({'Left': 1, 'Right': -1})
     
     if not valid_data.empty and hp_numeric.std() > 0 and valid_data['Acc_Index'].std() > 0:
-        sig1 = (hp_numeric - hp_numeric.mean()) / hp_numeric.std()
-        sig2 = (valid_data['Acc_Index'] - valid_data['Acc_Index'].mean()) / valid_data['Acc_Index'].std()
+        sig1 = hp_numeric
+        sig2 = valid_data['Acc_Index']
         cc = [sig1.corr(sig2.shift(-lag)) for lag in lags]
         cross_corr_dict_acc[sub_id] = cc
 

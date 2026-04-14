@@ -5,15 +5,15 @@ import pandas as pd
 import seaborn as sns
 import numpy as np
 from stats import remove_outliers, add_within_between_predictors  # Assuming this is your custom outlier removal function
-from scipy.stats import pearsonr
-
+from scipy.stats import pearsonr, spearmanr
+import pingouin as pg
+sns.set_theme(context="talk", style="ticks")
 plt.ion()
 
 # --- Script Configuration Parameters ---
 
 # --- 1. Data Loading & Preprocessing ---
 OUTLIER_RT_THRESHOLD = 2.0
-FILTER_PHASE = 2
 
 # --- 2. Column Names ---
 SUBJECT_ID_COL = 'subject_id'
@@ -63,8 +63,6 @@ sfreq = epochs.info["sfreq"]
 print(f"Original number of trials: {len(df)}")
 
 # --- Preprocessing Steps (largely unchanged) ---
-if PHASE_COL in df.columns and FILTER_PHASE is not None:
-    df = df[df[PHASE_COL] != FILTER_PHASE]
 if REACTION_TIME_COL in df.columns:
     df = remove_outliers(df, column_name=REACTION_TIME_COL, threshold=OUTLIER_RT_THRESHOLD)
 if SUBJECT_ID_COL in df.columns:
@@ -173,7 +171,12 @@ for subject_id in n2ac_analysis_df[SUBJECT_ID_COL].unique():
                 'jackknifed_acc': jackknifed_acc * -1,
                 'jackknifed_bis': jackknifed_bis * -1,
                 BLOCK_COL: trial_row[BLOCK_COL],
-                'trial_nr': trial_row["trial_nr"]
+                'trial_nr': trial_row["trial_nr"],
+                'SingletonPresent': trial_row['SingletonPresent'],
+                'TargetDigit': trial_row['TargetDigit'],
+                'SingletonDigit': trial_row['SingletonDigit'],
+                'Non-Singleton1Digit': trial_row['Non-Singleton1Digit'],
+                'Non-Singleton2Digit': trial_row['Non-Singleton2Digit']
             }
 
             # Jackknife ERP calculation for the specific pair
@@ -276,7 +279,12 @@ for subject_id in pd_analysis_df[SUBJECT_ID_COL].unique():
                 'jackknifed_acc': jackknifed_acc * -1,
                 'jackknifed_bis': jackknifed_bis * -1,
                 BLOCK_COL: trial_row[BLOCK_COL],
-                'trial_nr': trial_row["trial_nr"]
+                'trial_nr': trial_row["trial_nr"],
+                'SingletonPresent': trial_row['SingletonPresent'],
+                'TargetDigit': trial_row['TargetDigit'],
+                'SingletonDigit': trial_row['SingletonDigit'],
+                'Non-Singleton1Digit': trial_row['Non-Singleton1Digit'],
+                'Non-Singleton2Digit': trial_row['Non-Singleton2Digit']
             }
 
             # Jackknife ERP calculation for the specific pair
@@ -374,11 +382,12 @@ print_descriptive_stats(n2ac_final_df, "N2ac")
 print_descriptive_stats(pd_final_df, "Pd")
 
 # --- NEW: Split predictors into within- and between-subject components ---
-n2ac_final_df = add_within_between_predictors(n2ac_final_df, SUBJECT_ID_COL, PERCENTAGES_TO_TEST)
-pd_final_df = add_within_between_predictors(pd_final_df, SUBJECT_ID_COL, PERCENTAGES_TO_TEST)
+#n2ac_final_df = add_within_between_predictors(n2ac_final_df, SUBJECT_ID_COL, PERCENTAGES_TO_TEST)
+#pd_final_df = add_within_between_predictors(pd_final_df, SUBJECT_ID_COL, PERCENTAGES_TO_TEST)
 
 # load target towardness values
 target_towardness = SPACEPRIME.load_concatenated_csv("target_towardness.csv", index_col=0)
+target_towardness = target_towardness[['subject_id', 'block', 'trial_nr', 'target_towardness', 'distractor_towardness']]
 
 # Define the columns to merge on.
 # This assumes 'target_towardness' has columns: 'subject_id', 'block', 'trial_nr'
@@ -389,6 +398,24 @@ merge_cols = [SUBJECT_ID_COL, BLOCK_COL, 'trial_nr']
 target_towardness[SUBJECT_ID_COL] = target_towardness[SUBJECT_ID_COL].astype(int).astype(str)
 n2ac_final_df[SUBJECT_ID_COL] = n2ac_final_df[SUBJECT_ID_COL].astype(int).astype(str)
 pd_final_df[SUBJECT_ID_COL] = pd_final_df[SUBJECT_ID_COL].astype(int).astype(str)
+
+# Ensure block and trial_nr are integers in all dataframes to prevent merge mismatches
+target_towardness[BLOCK_COL] = target_towardness[BLOCK_COL].astype(int)
+target_towardness['trial_nr'] = target_towardness['trial_nr'].astype(int)
+n2ac_final_df[BLOCK_COL] = n2ac_final_df[BLOCK_COL].astype(int)
+n2ac_final_df['trial_nr'] = n2ac_final_df['trial_nr'].astype(int)
+pd_final_df[BLOCK_COL] = pd_final_df[BLOCK_COL].astype(int)
+pd_final_df['trial_nr'] = pd_final_df['trial_nr'].astype(int)
+n2ac_final_df["TargetDigit"] = n2ac_final_df["TargetDigit"].astype(int).astype(str)
+pd_final_df["TargetDigit"] = pd_final_df["TargetDigit"].astype(int).astype(str)
+n2ac_final_df["SingletonDigit"] = n2ac_final_df["SingletonDigit"].astype(int).astype(str)
+pd_final_df["SingletonDigit"] = pd_final_df["SingletonDigit"].astype(int).astype(str)
+n2ac_final_df["Non-Singleton1Digit"] = n2ac_final_df["Non-Singleton1Digit"].astype(int).astype(str)
+pd_final_df["Non-Singleton1Digit"] = pd_final_df["Non-Singleton1Digit"].astype(int).astype(str)
+n2ac_final_df["Non-Singleton2Digit"] = n2ac_final_df["Non-Singleton2Digit"].astype(int).astype(str)
+pd_final_df["Non-Singleton2Digit"] = pd_final_df["Non-Singleton2Digit"].astype(int).astype(str)
+n2ac_final_df["SingletonPresent"] = n2ac_final_df["SingletonPresent"].astype(int).astype(bool)
+
 
 # Perform a left merge to keep all ERP data and add towardness where it matches
 n2ac_final_df = pd.merge(
@@ -448,9 +475,14 @@ def calculate_and_save_subject_averages(df, component_name, paradigm_name):
         print(f"Skipping subject-average calculation for {component_name}: Missing one or more grouping columns.")
         return
 
+    # Select only numeric columns to avoid TypeError on non-numeric data
+    numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+    # Ensure grouping variables are included for the final output, even if they are not numeric
+    cols_to_process = list(set(grouping_vars + numeric_cols))
+
     # Group by subject, priming, and electrode, then calculate the mean of all other numeric columns.
     # as_index=False keeps the grouping variables as columns.
-    subject_avg_df = df.groupby(grouping_vars, as_index=False).mean()
+    subject_avg_df = df[cols_to_process].groupby(grouping_vars, as_index=False).mean()
 
     # Construct a descriptive output filename
     output_path = (f'{SPACEPRIME.get_data_path()}concatenated\\'
@@ -528,117 +560,3 @@ if n2ac_has_data or pd_has_data:
     plt.show()
 else:
     print("No data available for latency robustness plots.")
-
-# --- NEW: Correlate Metrics Between N2ac and Pd ---
-print("\n--- Correlating N2ac and Pd Metrics at the Subject Level ---")
-
-def plot_component_correlation(df1, df2, metric_col, ax, df1_name='N2ac', df2_name='Pd'):
-    """
-    Calculates subject-level averages for a given metric from two dataframes,
-    merges them, and creates a regression plot on a given axes object.
-
-    Args:
-        df1 (pd.DataFrame): DataFrame for the first component (e.g., n2ac_final_df).
-        df2 (pd.DataFrame): DataFrame for the second component (e.g., pd_final_df).
-        metric_col (str): The name of the column to correlate (e.g., 'st_latency_50').
-        ax (matplotlib.axes.Axes): The axes object to plot on.
-        df1_name (str): Name of the first component for plot labels.
-        df2_name (str): Name of the second component for plot labels.
-    """
-    if df1.empty or df2.empty or metric_col not in df1.columns or metric_col not in df2.columns:
-        print(f"Skipping correlation plot for '{metric_col}': Data or column is missing.")
-        ax.text(0.5, 0.5, "Data or column missing", ha='center', va='center', fontsize=12)
-        ax.set_title(f"Correlation for {metric_col}")
-        return
-
-    # 1. Calculate subject-level averages for the specified metric
-    avg1 = df1.groupby(SUBJECT_ID_COL)[metric_col].mean().rename(f"{df1_name}_{metric_col}")
-    avg2 = df2.groupby(SUBJECT_ID_COL)[metric_col].mean().rename(f"{df2_name}_{metric_col}")
-
-    # 2. Merge the two series into a single dataframe on subject_id.
-    merged_avg_df = pd.merge(avg1, avg2, on=SUBJECT_ID_COL, how='inner')
-
-    if merged_avg_df.empty:
-        print(f"Skipping correlation plot for '{metric_col}': No common subjects found after averaging.")
-        ax.text(0.5, 0.5, "No common subjects", ha='center', va='center', fontsize=12)
-        ax.set_title(f"Correlation for {metric_col}")
-        return
-
-    # 3. Calculate Pearson correlation and p-value
-    try:
-        clean_df = merged_avg_df.dropna(subset=[f"{df1_name}_{metric_col}", f"{df2_name}_{metric_col}"])
-        if len(clean_df) < 2:
-            raise ValueError("Not enough data points to compute correlation.")
-        r, p = pearsonr(clean_df[f"{df1_name}_{metric_col}"], clean_df[f"{df2_name}_{metric_col}"])
-        stat_text = f'r = {r:.2f}, p = {p:.3f}\nn = {len(clean_df)}'
-    except ValueError as e:
-        print(f"Could not compute correlation for {metric_col}: {e}")
-        stat_text = 'Cannot compute correlation'
-
-    # 4. Create the regression plot on the provided axes
-    sns.regplot(
-        data=merged_avg_df,
-        x=f"{df1_name}_{metric_col}",
-        y=f"{df2_name}_{metric_col}",
-        scatter_kws={'alpha': 0.6},
-        ax=ax
-    )
-
-    # Add the correlation stats to the plot
-    ax.text(0.05, 0.95, stat_text, transform=ax.transAxes, fontsize=12,
-            verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', fc='wheat', alpha=0.5))
-
-    # Add titles and labels
-    # Clean up metric name for display
-    metric_name_clean = (metric_col
-                         .replace('_', ' ')
-                         .replace('st', 'Single-Trial')
-                         .replace('jk', 'Jackknife')
-                         .replace(str(METRIC_PERCENTAGE), f'({METRIC_PERCENTAGE}%)')
-                         .title())
-    ax.set_title(f'{metric_name_clean}', fontsize=16)
-    ax.set_xlabel(f'Average {df1_name} {metric_name_clean}', fontsize=12)
-    ax.set_ylabel(f'Average {df2_name} {metric_name_clean}', fontsize=12)
-    sns.despine()
-
-# --- Example Usage ---
-# Define which latency/amplitude percentage to use for the correlation
-METRIC_PERCENTAGE = 50
-latency_metric = f'st_latency_{METRIC_PERCENTAGE}'
-amplitude_metric = f'st_mean_amp_{METRIC_PERCENTAGE}'
-
-# Create a figure with two subplots side-by-side
-fig, axes = plt.subplots(2, 1, figsize=(10, 16))
-fig.suptitle(f'Subject-Level Correlation: N2ac vs. Pd Metrics ({METRIC_PERCENTAGE}% Threshold)', fontsize=18)
-
-# Plot 1: Latency Correlation
-print(f"\nPlotting correlation for Single-Trial Latency ({METRIC_PERCENTAGE}%)...")
-plot_component_correlation(
-    df1=n2ac_final_df,
-    df2=pd_final_df,
-    metric_col=latency_metric,
-    ax=axes[0],  # Pass the first axes object
-    df1_name='N2ac',
-    df2_name='Pd'
-)
-
-# Plot 2: Amplitude Correlation
-print(f"\nPlotting correlation for Single-Trial Mean Amplitude ({METRIC_PERCENTAGE}%)...")
-plot_component_correlation(
-    df1=n2ac_final_df,
-    df2=pd_final_df,
-    metric_col=amplitude_metric,
-    ax=axes[1],  # Pass the second axes object
-    df1_name='N2ac',
-    df2_name='Pd'
-)
-
-# Adjust layout to prevent titles/labels from overlapping
-plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust for suptitle
-
-# Save the figure as an SVG file
-correlation_plot_path = f'n2ac_pd_correlation.svg'
-plt.savefig(correlation_plot_path, format='svg', bbox_inches='tight')
-print(f"Correlation plot saved to:\n{correlation_plot_path}")
-
-plt.show()

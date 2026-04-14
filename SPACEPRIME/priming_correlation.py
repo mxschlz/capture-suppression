@@ -63,10 +63,30 @@ print(stats)
 # Using newlines in the labels is still good practice
 ax.set_xlabel('Negative Priming Effect')
 ax.set_ylabel('Positive Priming Effect')
+
+# Filter ticks to show every other tick, but ensure at least 3 ticks remain
+xticks = ax.get_xticks()
+if len(xticks[::2]) >= 3:
+    ax.set_xticks(xticks[::2])
+
+yticks = ax.get_yticks()
+if len(yticks[::2]) >= 3:
+    ax.set_yticks(yticks[::2])
+
 sns.despine()
 
+# Determine significance asterisks
+if p_value < 0.001:
+    stars = '***'
+elif p_value < 0.01:
+    stars = '**'
+elif p_value < 0.05:
+    stars = '*'
+else:
+    stars = 'ns'
+
 # Add a text box with the correlation results
-stats_text = f"Spearman's ρ = {rho:.3f}\np-value = {p_value:.3f}\nBF10 = {bf10}"
+stats_text = f"ρ = {rho:.3f} {stars}"
 ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, fontsize=12,
         verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 

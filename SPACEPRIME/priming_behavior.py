@@ -54,14 +54,14 @@ def plot_priming_comparison(data, condition_pairs, axes):
         return y_start + h
 
     # Plot Reaction Time
-    sns.barplot(data=subset, x='PrimingCondition', y='rt', order=condition_pairs, ax=axes[0], errorbar=('ci', 95), alpha=1.0, palette=palette)
+    sns.barplot(data=subset, x='PrimingCondition', y='rt', order=condition_pairs, ax=axes[0], errorbar='se', alpha=1.0, palette=palette)
     #sns.stripplot(data=subset, x='PrimingCondition', y='rt', order=condition_pairs, ax=axes[0], color='black', alpha=0.2, jitter=True)
     axes[0].set_title(f'Reaction Time\n$d={rt_d:.2f}$')
     axes[0].set_ylabel('RT (s)')
     add_significance(axes[0], subset['rt'], rt_p)
 
     # Plot Accuracy (select_target)
-    sns.barplot(data=subset, x='PrimingCondition', y='select_target', order=condition_pairs, ax=axes[1], errorbar=('ci', 95), alpha=1.0, palette=palette)
+    sns.barplot(data=subset, x='PrimingCondition', y='select_target', order=condition_pairs, ax=axes[1], errorbar='se', alpha=1.0, palette=palette)
     #sns.stripplot(data=subset, x='PrimingCondition', y='select_target', order=condition_pairs, ax=axes[1], color='black', alpha=0.2, jitter=True)
     axes[1].set_title(f'Accuracy\n$d={acc_d:.2f}$')
     axes[1].set_ylabel('Proportion Correct')
@@ -70,7 +70,7 @@ def plot_priming_comparison(data, condition_pairs, axes):
     axes[1].set_ylim(0, max(1.1, top_y * 1.1))
 
     # Plot Target Towardness
-    sns.barplot(data=subset, x='PrimingCondition', y='target_towardness', order=condition_pairs, ax=axes[2], errorbar=('ci', 95), alpha=1.0, palette=palette)
+    sns.barplot(data=subset, x='PrimingCondition', y='target_towardness', order=condition_pairs, ax=axes[2], errorbar='se', alpha=1.0, palette=palette)
     axes[2].set_title(f'Target Towardness\n$d={tt_d:.2f}$')
     axes[2].set_ylabel('Target Towardness')
     add_significance(axes[2], subset['target_towardness'], tt_p)

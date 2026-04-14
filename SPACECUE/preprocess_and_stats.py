@@ -5,6 +5,7 @@ import SPACECUE
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pingouin as pg
+import numpy as np
 
 
 OUTLIER_THRESH = 2
@@ -127,6 +128,10 @@ plt.show()
 # You are correct! Mixed models are most powerful with single-trial data.
 # We will use the original 'df' DataFrame and add the 'age_group' to it.
 
+# --- Corrected & Robust Cohort Assignment ---
+subject_age_map = df.groupby('subject_id')['age'].mean()
+df['consistent_age'] = df['subject_id'].map(subject_age_map)
+df['cohort'] = np.where(df['consistent_age'] < 35, 'young', 'old')
 # 1. Merge the 'age_group' information into the single-trial dataframe.
 #    df_age was created earlier in the script.
 df_single_trials = df.copy()
@@ -144,7 +149,8 @@ df_single_trials['experimenter'] = pd.cut(df_single_trials['subject_id'],
 #    We'll include both the categorical 'delay' and the continuous 'cue_stim_delay_jitter'.
 columns_to_keep = [
     'subject_id', 'age_group', 'experimenter', 'CueInstruction',
-    'delay', 'cue_stim_delay_jitter', 'rt', 'select_target', 'absolute_trial_nr'
+    'delay', 'cue_stim_delay_jitter', 'rt', 'select_target', 'absolute_trial_nr', 'age', 'CueDesignStrategy', 'Priming',
+    'cohort'
 ]
 df_for_jamovi_single_trial = df_single_trials[columns_to_keep].copy()
 

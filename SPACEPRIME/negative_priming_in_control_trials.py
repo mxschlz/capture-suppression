@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import pingouin as pg
 plt.ion()
 
+sns.set_theme("talk", "ticks")
+
 
 df = SPACEPRIME.load_concatenated_csv("target_towardness_all_variables.csv")
 
@@ -61,18 +63,22 @@ comparison_pairs = [
     ("Control", "Negative"),
     ("Control", "No"),
     ("Control", "Positive"),
-    ("Negative", "No"),
-    ("Negative", "Positive"),
-    ("No", "Positive")
+    #("Negative", "No"),
+    #("Negative", "Positive"),
+    #("No", "Positive")
 ]
 
 # Define the desired order for the plot
-plot_order = ["Control", "Negative", "No", "Positive"]
+plot_order = ["Negative", "Control", "No", "Positive"]
+#plot_order = ["Negative", "Control"]
+
+# Switch to toggle significance visualization
+show_significance = True
 
 # Loop through each dependent variable and create a plot
 for var in dependent_vars:
     # Create a figure and axes for a single plot
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(6, 10))
 
     # Create the bar plot with error bars (95% CI by default across subjects)
     sns.barplot(
@@ -80,73 +86,82 @@ for var in dependent_vars:
         x='Priming',
         y=var,
         ax=ax,
-        order=plot_order  # Set the order of the bars
+        order=plot_order,  # Set the order of the bars,
     )
 
-    # --- Perform Pairwise T-tests with Multiple Comparison Correction ---
-    # First, calculate the mean for each subject and condition
-    subject_means = df.groupby(['subject_id', 'Priming'])[var].mean().reset_index()
-
-    # Now, run all pairwise tests with Bonferroni correction
-    pairwise_results = pg.pairwise_tests(
-        data=subject_means,
-        dv=var,
-        within='Priming',
-        subject='subject_id',
-        padjust='bonf',
-        effsize="cohen"
-    ).round(3) # Round results for cleaner display
-
-    # --- Annotation using the corrected results ---
-    # Get y-axis limits to position annotations
-    y_min, y_top = ax.get_ylim()
-
-    # Find the max height of the bars to place annotations above them
-    bar_heights = [p.get_height() for p in ax.patches if p.get_height() > 0]
-    plot_max = max(bar_heights) if bar_heights else y_top
-
-    # Define how much space to put between annotation lines
-    offset_increment = (y_top - y_min) * 0.08
-    current_offset = plot_max + offset_increment * 0.5
-
-    # Get the order of categories on the x-axis
-    category_order = [tick.get_text() for tick in ax.get_xticklabels()]
-
-    for group1_val, group2_val in comparison_pairs:
-        # Find the result for the current pair in the pairwise_results dataframe
-        res_row = pairwise_results[
-            ((pairwise_results['A'] == group1_val) & (pairwise_results['B'] == group2_val)) |
-            ((pairwise_results['A'] == group2_val) & (pairwise_results['B'] == group1_val))
-        ]
-
-        if res_row.empty:
-            continue
-
-        # Get the corrected p-value and effect size
-        p_corr = res_row['p-corr'].iloc[0]
-        cohen_d = res_row['cohen'].iloc[0]
-
-        # Format the text to display
-        p_str = f"p_corr={p_corr:.3f}" if p_corr >= 0.001 else "p_corr<.001"
-        d_str = f"d={cohen_d:.2f}"
-        annotation_text = f"{p_str}\n{d_str}"
-
-        # Find x-coordinates for the bars by finding the index in the category order
-        x1 = category_order.index(str(group1_val))
-        x2 = category_order.index(str(group2_val))
-
-        # Draw annotation lines and text
-        ax.plot([x1, x1, x2, x2], [current_offset, current_offset + offset_increment*0.2, current_offset + offset_increment*0.2, current_offset], lw=1.5, c='k')
-        ax.text((x1 + x2) * 0.5, current_offset + offset_increment*0.25, annotation_text, ha='center', va='bottom', color='k')
-
-        # Increase offset for the next annotation line
-        current_offset += offset_increment * 1.5
-
-    # Adjust y-limit to make space for annotations
-    ax.set_ylim(y_min, current_offset)
+    if show_significance:
+        # --- Perform Pairwise T-tests with Multiple Comparison Correction ---
+        # First, calculate the mean for each subject and condition
+        subject_means = df.groupby(['subject_id', 'Priming'])[var].mean().reset_index()
+    
+        # Now, run all pairwise tests with Bonferroni correction
+        pairwise_results = pg.pairwise_tests(
+            data=subject_means,
+            dv=var,
+            within='Priming',
+            subject='subject_id',
+            padjust='bonf',
+            effsize="cohen"
+        ).round(3) # Round results for cleaner display
+    
+        # --- Annotation using the corrected results ---
+        # Get y-axis limits to position annotations
+        y_min, y_top = ax.get_ylim()
+    
+        # Find the max height of the bars to place annotations above them
+        bar_heights = [p.get_height() for p in ax.patches if p.get_height() > 0]
+        plot_max = max(bar_heights) if bar_heights else y_top
+    
+        # Define how much space to put between annotation lines
+        offset_increment = (y_top - y_min) * 0.08
+        current_offset = plot_max + offset_increment * 0.5
+    
+        # Get the order of categories on the x-axis
+        category_order = [tick.get_text() for tick in ax.get_xticklabels()]
+    
+        for group1_val, group2_val in comparison_pairs:
+            # Find the result for the current pair in the pairwise_results dataframe
+            res_row = pairwise_results[
+                ((pairwise_results['A'] == group1_val) & (pairwise_results['B'] == group2_val)) |
+                ((pairwise_results['A'] == group2_val) & (pairwise_results['B'] == group1_val))
+            ]
+    
+            if res_row.empty:
+                continue
+    
+            # Get the corrected p-value and effect size
+            p_corr = res_row['p-corr'].iloc[0]
+            cohen_d = res_row['cohen'].iloc[0]
+    
+            # Format the text to display
+            if p_corr < 0.001:
+                p_str = "***"
+            elif p_corr < 0.01:
+                p_str = "**"
+            elif p_corr < 0.05:
+                p_str = "*"
+            else:
+                p_str = "n.s."
+            d_str = f"d={cohen_d:.2f}"
+            annotation_text = f"{p_str}\n{d_str}"
+    
+            # Find x-coordinates for the bars by finding the index in the category order
+            x1 = category_order.index(str(group1_val))
+            x2 = category_order.index(str(group2_val))
+    
+            # Draw annotation lines and text
+            ax.plot([x1, x1, x2, x2], [current_offset, current_offset + offset_increment*0.2, current_offset + offset_increment*0.2, current_offset], lw=1.5, c='k')
+            ax.text((x1 + x2) * 0.5, current_offset + offset_increment*0.25, annotation_text, ha='center', va='bottom', color='k')
+    
+            # Increase offset for the next annotation line
+            current_offset += offset_increment * 1.5
+    
+        # Adjust y-limit to make space for annotations
+        ax.set_ylim(y_min, current_offset)
 
     # Set plot titles and labels for clarity
     ax.set_xlabel("Priming Condition")
     ax.set_ylabel(f"Mean {var}")
     plt.tight_layout()
     sns.despine()
+    plt.savefig("plots/negative_priming_in_control_trials.svg")

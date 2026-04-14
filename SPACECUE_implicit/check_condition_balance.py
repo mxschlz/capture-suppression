@@ -52,21 +52,12 @@ df['DistractorProb'] = df.apply(get_probability, axis=1)
 
 # Remove outliers (to match analysis conditions)
 if "rt" in df.columns:
-    df = remove_outliers(df, threshold=OUTLIER_THRESH, column_name="rt", subject_id_column="subject_id")
+    df = remove_outliers(df, threshold=OUTLIER_THRESH, column_name="rt", subject_id_column="subject_id").reset_index(drop=True)
 
 # --- Analysis: Systematic Confound Check (Spatial x Condition) ---
 print("\nPlotting Systematic Spatial Confounds...")
 # 1. Determine High Probability Location per Subject
 df['HighProbLoc'] = df['subject_id'].apply(lambda x: 'Left' if x % 2 == 0 else 'Right')
-
-# 2. Determine Control Location
-def get_control_loc(row):
-    all_locs = {'Left', 'Front', 'Right'}
-    occupied = {row['TargetLoc'], row[loc_col]}
-    remaining = list(all_locs - occupied)
-    return remaining[0] if remaining else None
-
-df['ControlLoc'] = df.apply(get_control_loc, axis=1)
 
 # 3. Restructure Data (Melt) for Plotting
 # Target Data
@@ -75,11 +66,8 @@ df_t['SoundType'] = 'Target'
 # Distractor Data
 df_d = df[['subject_id', 'rt', 'IsCorrect', loc_col, 'HighProbLoc']].rename(columns={loc_col: 'Location'})
 df_d['SoundType'] = 'Distractor'
-# Control Data
-df_c = df[['subject_id', 'rt', 'IsCorrect', 'ControlLoc', 'HighProbLoc']].rename(columns={'ControlLoc': 'Location'})
-df_c['SoundType'] = 'Control'
 
-df_plot = pd.concat([df_t, df_d, df_c], ignore_index=True)
+df_plot = pd.concat([df_t, df_d], ignore_index=True)
 df_plot = df_plot[df_plot['Location'].isin(['Left', 'Front', 'Right'])]
 
 # 4. Define Conditions
@@ -88,12 +76,10 @@ def get_plot_condition(row):
     stype = row['SoundType']
     high_loc = row['HighProbLoc']
 
-    if stype == 'Control':
-        return "Control"
-    elif stype == 'Distractor':
-        return "Distractor Expected" if loc == high_loc else "Distractor Unexpected"
+    if stype == 'Distractor':
+        return "Distractor at expected distractor location" if loc == high_loc else "Distractor at unexpected distractor location"
     elif stype == 'Target':
-        return "Target Unexpected" if loc == high_loc else "Target Expected"
+        return "Target at expected distractor location" if loc == high_loc else "Target at unexpected distractor location"
     return "Other"
 
 df_plot['Condition'] = df_plot.apply(get_plot_condition, axis=1)
@@ -105,8 +91,8 @@ df_agg = df_plot.groupby(['subject_id', 'Location', 'Condition'])[['rt', 'IsCorr
 # 5. Plot
 plt.figure(figsize=(12, 7))
 order_cond = [
-    "Distractor Expected", "Distractor Unexpected",
-    "Target Expected", "Target Unexpected", "Control"
+    "Distractor at expected distractor location", "Distractor at unexpected distractor location",
+    "Target at expected distractor location", "Target at unexpected distractor location"
 ]
 # Filter order to existing conditions
 order_cond = [c for c in order_cond if c in df_plot['Condition'].unique()]
@@ -116,7 +102,6 @@ sns.barplot(
     order=["Left", "Front", "Right"], hue_order=order_cond,
     palette="tab10", errorbar=("se", 1)
 )
-plt.title("Performance by Spatial Location and Condition Context")
 plt.ylabel("Reaction Time (s)")
 plt.legend(bbox_to_anchor=(1.01, 1), loc='upper left', title="Condition")
 sns.despine()
@@ -130,7 +115,6 @@ if 'IsCorrect' in df_agg.columns:
         order=["Left", "Front", "Right"], hue_order=order_cond,
         palette="tab10", errorbar=("se", 1)
     )
-    plt.title("Accuracy by Spatial Location and Condition Context")
     plt.ylabel("Proportion Correct")
     plt.legend(bbox_to_anchor=(1.01, 1), loc='upper left', title="Condition")
     sns.despine()

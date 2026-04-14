@@ -41,11 +41,11 @@ EPOCH_TMIN, EPOCH_TMAX = -0.3, 0.7  # Seconds (should match sensor-level)
 # Statistical Test Type Switch
 # Set to 'one-sided' for directional hypotheses (e.g., N2ac < 0, Pd > 0)
 # Set to 'two-sided' for non-directional hypotheses (e.g., N2ac != 0)
-TEST_TYPE = 'two-sided' # <--- NEW PARAMETER
+TEST_TYPE = 'one-sided' # <--- NEW PARAMETER
 
 # Statistical Threshold for Plotting
 if TEST_TYPE == 'one-sided':
-    SIGNIFICANCE_Z_THRESHOLD = 1.645
+    SIGNIFICANCE_Z_THRESHOLD = 1.65
 elif TEST_TYPE == 'two-sided':
     SIGNIFICANCE_Z_THRESHOLD = 1.96
 else:
@@ -74,9 +74,10 @@ df = epochs.metadata.copy().reset_index(drop=True)
 
 # 2. Remove RT outliers
 if REACTION_TIME_COL in df.columns:
-    print(f"Removing RT outliers (threshold: {OUTLIER_RT_THRESHOLD} SD)...")
-    df = remove_outliers(df, column_name=REACTION_TIME_COL, threshold=OUTLIER_RT_THRESHOLD)
-    print(f"  Trials remaining after RT outlier removal: {len(df)}")
+    #print(f"Removing RT outliers (threshold: {OUTLIER_RT_THRESHOLD} SD)...")
+    #df = remove_outliers(df, column_name=REACTION_TIME_COL, threshold=OUTLIER_RT_THRESHOLD)
+    #print(f"  Trials remaining after RT outlier removal: {len(df)}")
+    pass
 
 # 3. Apply the filter back to the epochs object
 epochs = epochs[df.index]
@@ -257,31 +258,14 @@ def compute_t_test_stc(contra_stcs, ipsi_stcs, component_name, test_type, time_r
     X_contra = np.stack(X_contra_list, axis=0)
     X_ipsi = np.stack(X_ipsi_list, axis=0)
 
-    # --- Determine the 'alternative' for ttest_rel based on component and test_type ---
-    if test_type == 'one-sided':
-        if component_name == 'Pd': # Pd: contra > ipsi (positive effect)
-            alternative_ttest = 'greater'
-        elif component_name == 'N2ac': # N2ac: contra < ipsi (negative effect)
-            alternative_ttest = 'less'
-        else:
-            raise ValueError(f"Unknown component_name '{component_name}' for one-sided test.")
-    elif test_type == 'two-sided':
-        alternative_ttest = 'two-sided'
-    else:
-        raise ValueError("test_type must be 'one-sided' or 'two-sided'")
-
-    print(f"  Performing {test_type} t-test for {component_name} with alternative='{alternative_ttest}'...")
+    print(f"  Performing t-test for {component_name}...")
 
     # Perform paired t-test for each vertex and time point
-    t_values, p_values = ttest_rel(X_contra, X_ipsi, axis=0, nan_policy='omit', alternative=alternative_ttest)
+    t_values, p_values = ttest_rel(X_contra, X_ipsi, axis=0, nan_policy='omit')
 
     # Convert p-values to z-scores
-    if test_type == 'one-sided':
-        z_scores = norm.isf(p_values) # p_values are already one-sided
-    elif test_type == 'two-sided':
-        z_scores = norm.isf(p_values / 2) # Convert two-sided p to one-sided for norm.isf
-    else:
-        raise ValueError("test_type must be 'one-sided' or 'two-sided'")
+    # We always map from the two-sided p-value to retain accurate Z-score magnitudes for the whole brain map
+    z_scores = norm.isf(p_values / 2)
     z_scores[np.isinf(z_scores)] = 0 # Handle cases where p=0 -> z=inf
     z_scores *= np.sign(t_values) # Re-apply the original sign of the effect
 

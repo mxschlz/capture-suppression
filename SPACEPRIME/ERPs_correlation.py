@@ -1,11 +1,14 @@
 import pandas as pd
+import matplotlib
+matplotlib.use("TkAgg")
+import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib.pyplot as plt
 import SPACEPRIME
 import pingouin as pg
 sns.set_theme("talk", "ticks")
 
-
+plt.ion()
 SUBJECT_ID_COL = 'subject_id'
 
 # --- NEW: Correlate Metrics Between N2ac and Pd ---
@@ -80,6 +83,16 @@ def plot_component_correlation(df1, df2, metric_col, ax, df1_name='N2ac', df2_na
         label_suffix = metric_col.replace('_', ' ')  # Fallback
     ax.set_xlabel(f'{df1_name} {label_suffix}')
     ax.set_ylabel(f'{df2_name} {label_suffix}')
+
+    # Filter ticks to show every other tick, but ensure at least 3 ticks remain
+    xticks = ax.get_xticks()
+    if len(xticks[::2]) >= 3:
+        ax.set_xticks(xticks[::2])
+
+    yticks = ax.get_yticks()
+    if len(yticks[::2]) >= 3:
+        ax.set_yticks(yticks[::2])
+        
     sns.despine()
 
 # --- Example Usage ---

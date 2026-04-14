@@ -12,7 +12,6 @@ from scipy.stats import sem
 
 # 1. Data Loading & Preprocessing
 OUTLIER_RT_THRESHOLD = 2.0
-FILTER_PHASE = 2
 
 # 2. Column Names
 SUBJECT_ID_COL = 'subject_id'
@@ -90,8 +89,6 @@ epochs = SPACEPRIME.load_concatenated_epochs("spaceprime").crop(COMPONENT_TIME_W
 df = epochs.metadata.copy()
 
 # Preprocessing
-if FILTER_PHASE:
-    df = df[df[PHASE_COL] != FILTER_PHASE]
 df = remove_outliers(df, column_name=REACTION_TIME_COL, threshold=OUTLIER_RT_THRESHOLD)
 df[ACCURACY_INT_COL] = df[ACCURACY_COL].astype(int)
 df[TARGET_COL] = pd.to_numeric(df[TARGET_COL], errors='coerce').map({1: "left", 2: "mid", 3: "right"})

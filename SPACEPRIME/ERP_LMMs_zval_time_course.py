@@ -10,7 +10,6 @@ plt.ion()
 
 # --- Script Configuration Parameters ---
 OUTLIER_RT_THRESHOLD = 2.0
-FILTER_PHASE = 2
 
 WINDOW_DURATION_S = 0.100  # Duration of the running average window in seconds (e.g., 100ms)
 
@@ -70,10 +69,6 @@ print("Epochs loaded and cropped.")
 df = epochs.metadata.copy()
 
 # --- Metadata Preprocessing (largely unchanged) ---
-if PHASE_COL in df.columns and FILTER_PHASE is not None:
-    df = df[df[PHASE_COL] != FILTER_PHASE]
-elif FILTER_PHASE is not None:
-    print(f"Warning: Column '{PHASE_COL}' not found for filtering.")
 
 if REACTION_TIME_COL in df.columns:
     df = remove_outliers(df, column_name=REACTION_TIME_COL, threshold=OUTLIER_RT_THRESHOLD)

@@ -13,7 +13,6 @@ plt.ion()
 
 # --- 1. Preprocessing Parameters (adopted from ERPs_lateral_stimuli.py) ---
 OUTLIER_RT_THRESHOLD = 2.0
-FILTER_PHASE = 2
 REACTION_TIME_COL = 'rt'
 PHASE_COL = 'phase'
 
@@ -65,12 +64,6 @@ print(f"Original number of trials: {len(epochs)}")
 
 # Get metadata for preprocessing
 df_meta = epochs.metadata.copy().reset_index(drop=True)
-
-# 1. Filter by phase
-if PHASE_COL in df_meta.columns and FILTER_PHASE is not None:
-    print(f"Filtering out trials from phase {FILTER_PHASE}...")
-    df_meta = df_meta[df_meta[PHASE_COL] != FILTER_PHASE]
-    print(f"  Trials remaining after phase filter: {len(df_meta)}")
 
 # 2. Remove RT outliers
 if REACTION_TIME_COL in df_meta.columns:

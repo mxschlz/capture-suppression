@@ -18,7 +18,7 @@ OUTLIER_THRESH = 2
 PALETTE = {"High": "green", "Low": "red", "Absent": "gray"}
 TRAJECTORY_BOUNDARY_DVA = 2
 RESAMP_FREQ = 50
-ROLLING_WINDOW = 40
+ROLLING_WINDOW = 60
 
 # Define the locations of the stimuli in degrees of visual angle (dva)
 # This is crucial for calculating trajectory projections.
@@ -95,16 +95,6 @@ print("Generating plots for Response Time and Accuracy per subject...")
 
 # Create dataframe for distractor analysis (removing Front targets)
 df_distractor = df[(df["TargetLoc"] != "Front")].copy()
-
-# --- Sanity Check: Target Location Distribution ---
-print("Generating Target Location distribution histograms...")
-plt.figure(figsize=(8, 5))
-sns.countplot(data=df_distractor, x="TargetLoc", hue="DistractorProb",
-              order=["Left", "Front", "Right"], hue_order=["High", "Low", "Absent"],
-              palette=PALETTE)
-plt.title("Target Location Distribution per Condition")
-sns.despine()
-plt.show()
 
 def plot_perf(data, x, y, **kwargs):
     order = ["Absent", "Left", "Right"]
@@ -260,6 +250,7 @@ for sub_id, sub_df in df_distractor.groupby('subject_id'):
     diff_data.append(tmp.reset_index())
 
 diff_df = pd.concat(diff_data).reset_index()
+diff_df = diff_df[diff_df['abs_trial'] <= 500]
 
 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
