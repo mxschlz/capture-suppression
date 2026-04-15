@@ -47,7 +47,7 @@ montage = mne.channels.make_standard_montage("easycap-M1")
 raw.set_montage(montage, on_missing='ignore')
 
 # Wähle einige Kanäle aus, einschließlich frontaler Kanäle, auf denen Blinzeln gut sichtbar ist.
-picks = ['AF8', 'Cz', 'Pz', 'Oz', "TP10"]
+picks = ['Fp1', 'Cz', 'Pz', 'Oz', "TP10"]
 available_picks = [p for p in picks if p in raw.ch_names]
 
 # Erzwinge das Matplotlib-Backend, um leere Plots beim Speichern zu vermeiden
