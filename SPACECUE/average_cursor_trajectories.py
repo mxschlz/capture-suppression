@@ -6,13 +6,13 @@ import glob
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
-from utils import calculate_trajectory_projections, get_vector_length
+from utils import calculate_trajectory_projections
 
 
 TRAJECTORY_BOUNDARY_DVA = 999
 #OUTLIER_THRESH = 2
 DWELL_TIME_FILTER_RADIUS = 0.0
-SUBJECT_IDS = [1, 2, 3, 4]
+SUBJECT_IDS = [1]
 
 # --- Data Loading Logic (from implicit_learning_effect.py) ---
 print("Loading data...")
@@ -237,14 +237,14 @@ def get_trial_towardness(row):
     scores = calculate_trajectory_projections(row_copy, locations_map=locations_map)
 
     # Calculate towardness as percentage of distance to item
-    target_vec_length = get_vector_length(1, locations_map)
-    scores['target_towardness'] = (scores['proj_target'] / (target_vec_length ** 2)) * 100
+    #target_vec_length = get_vector_length(1, locations_map)
+    scores['target_towardness'] = scores['proj_target']
 
-    distractor_vec_length = get_vector_length(2, locations_map)
-    scores['distractor_towardness'] = (scores['proj_distractor'] / (distractor_vec_length ** 2)) * 100
+    #distractor_vec_length = get_vector_length(2, locations_map)
+    scores['distractor_towardness'] = scores['proj_distractor']
 
-    control_vec_length = get_vector_length(3, locations_map)
-    scores['control_towardness'] = (scores['proj_control_avg'] / (control_vec_length ** 2)) * 100
+    #control_vec_length = get_vector_length(3, locations_map)
+    scores['control_towardness'] = scores['proj_control_avg']
 
     return scores
 
@@ -253,7 +253,7 @@ tt_df = pd.concat([df, towardness_scores], axis=1)
 
 # Display the average target towardness in a heatmap
 plt.figure(figsize=(10, 8))
-sns.barplot(data=tt_df, x='Probability', y='target_towardness', errorbar=("se", 1))
+sns.barplot(data=tt_df, x='Probability', y='target_towardness', errorbar=None)
 
 # --- Plot Average Aligned Trajectories ---
 def calculate_dva_heatmap(data, bounds, bin_size, sigma):
@@ -492,7 +492,7 @@ def plot_towardness_over_trials(df):
 
     for col, (label, color) in metrics.items():
         # Plot raw data faintly
-        #ax1.plot(df_sorted['cumulative_trial'], df_sorted[col], color=color, alpha=0.15, linewidth=0.5)
+        ax1.plot(df_sorted['cumulative_trial'], df_sorted[col], color=color, alpha=0.15, linewidth=0.5)
 
         # Plot rolling mean
         rolling_mean = df_sorted[col].rolling(window=window_size, min_periods=1).mean()
@@ -590,9 +590,9 @@ def analyze_towardness_cross_correlation(df):
             roll_left = m_left.rolling(window=WINDOW, center=True, min_periods=1).mean()
             roll_right = m_right.rolling(window=WINDOW, center=True, min_periods=1).mean()
             
-            # Calculate Difference (Left - Right)
-            # This represents the spatial bias in towardness
-            diff_sig = roll_left - roll_right
+            # Calculate Robust Spatial Bias Index: (Left - Right) / (|Left| + |Right|)
+            # This bounds the metric between -1 and 1 and handles negative values correctly
+            diff_sig = (roll_left - roll_right) / (roll_left.abs() + roll_right.abs() + 1e-8)
 
             if diff_sig.isnull().all() or diff_sig.std() == 0:
                 continue
