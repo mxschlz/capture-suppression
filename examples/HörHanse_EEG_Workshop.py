@@ -12,7 +12,7 @@ import mne
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from SPACECUE_implicit import get_data_path
+from SPACECUE import get_data_path
 import seaborn as sns
 
 sns.set_theme(context="talk", style="ticks")
@@ -56,11 +56,11 @@ mne.viz.set_browser_backend('matplotlib')
 # Erstelle den Plot für einen 10-Sekunden-Ausschnitt.
 # Wir beginnen bei 60 Sekunden, um einen Bereich mit wahrscheinlichen Artefakten zu finden.
 fig = raw.plot(
-	start=1320,
+	start=4880,
 	duration=10,
 	picks=available_picks,
 	n_channels=len(available_picks),
-	scalings=dict(eeg=150e-6),  # Skalierung anpassen, um Artefakte hervorzuheben (150 µV)
+	scalings=dict(eeg=150e-6),  # Skalierung auf 250 µV erhöhen, damit sich große Blinzler weniger überlappen
 	show=False,  # Plot nicht interaktiv anzeigen
 	title=f'Proband {SUBJECT_ID}: Roh-EEG mit Augenartefakten',
 	show_scrollbars=False  # UI-Scrollbars für eine saubere Präsentationsfolie ausblenden
@@ -132,7 +132,7 @@ else:
 	brain_idx = 1 if 1 not in exclude_idx else 2
 
 # Zeitfenster aus Slide 1 definieren (Ausschnitt mit den massiven Blinzlern)
-tmin, tmax = 1320, 1330
+tmin, tmax = 4875, 4885
 start_idx, stop_idx = raw.time_as_index([tmin, tmax])
 times = raw.times[start_idx:stop_idx]
 
@@ -155,58 +155,51 @@ data_clean = raw_clean.get_data(picks=picks_eeg, start=start_idx, stop=stop_idx)
 # Erstelle die Abbildung mit 3 Unter-Plots
 fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True, constrained_layout=True)
 
-# --- Plot 1: Rohdaten (mit zwei Y-Achsen für unterschiedliche Skalierung) ---
-color1, color2 = 'C0', 'C1'
+# Semantische Farbkodierung für den Workshop definieren
+color_raw = 'gray'
+color_art = 'crimson'
+color_brain = 'royalblue'
+color_clean = 'black'
+
+# Feste Offsets für die Darstellung (um Überlappungen wie bei twinx zu vermeiden)
+offset_eeg_uv = 400.0  # 400 µV Abstand für EEG-Kanäle
+offset_ica = 8.0       # Abstand für ICA-Komponenten
+
+# --- Plot 1: Rohdaten ---
 axes[0].set_title('1. Gemessenes Roh-EEG an den Elektroden')
+for i, ch_data in enumerate(data_raw * 1e6):
+	ch_data_centered = ch_data - np.mean(ch_data)
+	y_pos = (len(picks_eeg) - 1 - i) * offset_eeg_uv
+	axes[0].plot(times, ch_data_centered + y_pos, color=color_raw, linewidth=1.5)
 
-# Plot für den ersten Kanal (z.B. Fp1) auf der linken Y-Achse
-p1, = axes[0].plot(times, data_raw[0] * 1e6, color=color1, label=f'{picks_eeg[0]} (Gemischt)')
-axes[0].set_ylabel(f'Amplitude {picks_eeg[0]}', color=color1)
-axes[0].set_yticks([])
+axes[0].set_yticks([(len(picks_eeg) - 1 - i) * offset_eeg_uv for i in range(len(picks_eeg))])
+axes[0].set_yticklabels(picks_eeg)
+axes[0].set_ylabel('Amplitude (µV)')
 
-# Zweite Y-Achse für den zweiten Kanal erstellen
-ax0_twin = axes[0].twinx()
-p2, = ax0_twin.plot(times, data_raw[1] * 1e6, color=color2, label=f'{picks_eeg[1]} (Gemischt)')
-ax0_twin.set_ylabel(f'Amplitude {picks_eeg[1]}', color=color2)
-ax0_twin.set_yticks([])
-
-# Kombinierte Legende für beide Kanäle
-axes[0].legend(handles=[p1, p2], loc='upper left', bbox_to_anchor=(1.08, 1))
-
-# --- Plot 2: ICA Komponenten (mit zwei Y-Achsen) ---
+# --- Plot 2: ICA Komponenten ---
 axes[1].set_title('2. Isolierte Ursprungssignale (Die "Instrumente")')
+ica_art_centered = data_ica[0] - np.mean(data_ica[0])
+axes[1].plot(times, ica_art_centered + offset_ica, color=color_art, linewidth=1.5, label='Artefakt (Blinzeln)')
 
-# Plot für die Artefakt-Komponente auf der linken Y-Achse
-p_ica1, = axes[1].plot(times, data_ica[0], label=f'ICA Komp. {artifact_idx} (Isoliertes Blinzel-Artefakt)', color='red')
-axes[1].set_ylabel('Aktivität Artefakt', color='red')
-axes[1].set_yticks([])
+ica_brain_centered = data_ica[1] - np.mean(data_ica[1])
+axes[1].plot(times, ica_brain_centered + 0, color=color_brain, linewidth=1.5, label='Gehirnaktivität')
 
-# Zweite Y-Achse für die Gehirn-Komponente
-ax1_twin = axes[1].twinx()
-p_ica2, = ax1_twin.plot(times, data_ica[1], label=f'ICA Komp. {brain_idx} (z.B. Gehirn-Aktivität)', color='blue', alpha=0.7)
-ax1_twin.set_ylabel('Aktivität Gehirn', color='blue')
-ax1_twin.set_yticks([])
+axes[1].set_yticks([offset_ica, 0])
+axes[1].set_yticklabels([f'ICA {artifact_idx}', f'ICA {brain_idx}'])
+axes[1].set_ylabel('Aktivität (a.u.)')
+axes[1].legend(loc='center left', bbox_to_anchor=(1.02, 0.5))
 
-# Kombinierte Legende
-axes[1].legend(handles=[p_ica1, p_ica2], loc='upper left', bbox_to_anchor=(1.08, 1))
+# --- Plot 3: Bereinigtes EEG ---
+axes[2].set_title('3. Rekonstruierte Signale (Bereinigtes EEG)')
+for i, ch_data in enumerate(data_clean * 1e6):
+	ch_data_centered = ch_data - np.mean(ch_data)
+	y_pos = (len(picks_eeg) - 1 - i) * offset_eeg_uv
+	axes[2].plot(times, ch_data_centered + y_pos, color=color_clean, linewidth=1.5)
 
-# --- Plot 3: Bereinigtes EEG (ebenfalls mit zwei Y-Achsen) ---
-axes[2].set_title('3. Rekonstruierte Signale')
-
-# Plot für den ersten Kanal auf der linken Y-Achse
-p3, = axes[2].plot(times, data_clean[0] * 1e6, color=color1, label=f'{picks_eeg[0]} (Bereinigt)')
-axes[2].set_ylabel(f'Amplitude {picks_eeg[0]}', color=color1)
-axes[2].set_yticks([])
+axes[2].set_yticks([(len(picks_eeg) - 1 - i) * offset_eeg_uv for i in range(len(picks_eeg))])
+axes[2].set_yticklabels(picks_eeg)
+axes[2].set_ylabel('Amplitude (µV)')
 axes[2].set_xlabel('Zeit (s)')
-
-# Zweite Y-Achse für den zweiten Kanal
-ax2_twin = axes[2].twinx()
-p4, = ax2_twin.plot(times, data_clean[1] * 1e6, color=color2, label=f'{picks_eeg[1]} (Bereinigt)')
-ax2_twin.set_ylabel(f'Amplitude {picks_eeg[1]}', color=color2)
-ax2_twin.set_yticks([])
-
-# Kombinierte Legende
-axes[2].legend(handles=[p3, p4], loc='upper left', bbox_to_anchor=(1.08, 1))
 
 sns.despine()
 plt.tight_layout()
@@ -239,11 +232,11 @@ picks_eeg_complex = ['Fp1', 'Cz', 'Pz', 'Oz'] # Eine repräsentative Verteilung
 picks_eeg_complex = [ch for ch in picks_eeg_complex if ch in raw.ch_names]
 data_eeg_complex = raw.get_data(picks=picks_eeg_complex, start=start_idx, stop=stop_idx)
 
-offset_eeg = 200e-6  # 200 µV optischer Abstand zwischen den Linien
+offset_eeg = 400e-6  # Auf 400 µV erhöht, damit massive Blinzler nicht überlappen
 for i, ch_data in enumerate(data_eeg_complex):
 	ch_data_centered = ch_data - np.mean(ch_data)
 	y_pos = (len(picks_eeg_complex) - 1 - i) * offset_eeg
-	ax1.plot(times, ch_data_centered + y_pos, color='black', linewidth=1)
+	ax1.plot(times, ch_data_centered + y_pos, color='darkslategray', linewidth=1.2)
 
 ax1.set_yticks([(len(picks_eeg_complex) - 1 - i) * offset_eeg for i in range(len(picks_eeg_complex))])
 ax1.set_yticklabels(picks_eeg_complex)
@@ -256,12 +249,12 @@ ax1.spines['right'].set_visible(False)
 ax2 = fig.add_subplot(gs[1, :], sharex=ax1)
 data_ica_complex = ica_sources.get_data(picks=components, start=start_idx, stop=stop_idx)
 
-offset_ica = 5.0  # Abstand für ICA-Komponenten
+offset_ica = 15.0  # Abstand weiter erhöht (auf 15.0), um Überlappungen bei den ICA-Komponenten zu verhindern
 colors = plt.cm.tab10(np.linspace(0, 1, 10))
 for i, ch_data in enumerate(data_ica_complex):
 	ch_data_centered = ch_data - np.mean(ch_data)
 	y_pos = (len(components) - 1 - i) * offset_ica
-	ax2.plot(times, ch_data_centered + y_pos, color=colors[i], linewidth=1.5)
+	ax2.plot(times, ch_data_centered + y_pos, color=colors[i], linewidth=1.8)
 
 ax2.set_yticks([(len(components) - 1 - i) * offset_ica for i in range(len(components))])
 ax2.set_yticklabels([f'ICA {c}' for c in components])
