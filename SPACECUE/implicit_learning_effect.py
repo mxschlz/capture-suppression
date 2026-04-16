@@ -1,7 +1,7 @@
 import pandas as pd
 from stats import remove_outliers
 import os
-import SPACECUE_implicit
+import SPACECUE
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pingouin as pg
@@ -27,7 +27,7 @@ def p_to_asterisks(p):
     if p < 0.05: return '*'
     return 'ns'
 
-data_path = SPACECUE_implicit.get_data_path()
+data_path = SPACECUE.get_data_path()
 df = pd.concat([pd.read_csv(f"{data_path}pilot/distractor/{file}") for file in os.listdir(f"{data_path}pilot/distractor")])
 
 #df = df.query('SingletonLoc != 1.0')
@@ -51,7 +51,7 @@ df['trial_nr'] = df['Trial Nr'].astype(int, errors='ignore')
 print("Loading and processing raw trajectory data for towardness analysis...")
 
 # Find all subject folders for raw mouse data
-raw_data_base_path = os.path.join(SPACECUE_implicit.get_data_path(), 'sourcedata', 'raw')
+raw_data_base_path = os.path.join(SPACECUE.get_data_path(), 'sourcedata', 'raw')
 subject_folders = glob.glob(f"{raw_data_base_path}/sci-*")
 
 df_mouse_list = []

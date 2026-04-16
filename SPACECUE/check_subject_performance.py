@@ -1,7 +1,7 @@
 import pandas as pd
 from stats import remove_outliers
 import os
-import SPACECUE_implicit
+import SPACECUE
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pingouin as pg
@@ -30,7 +30,7 @@ locations_map = {
 
 # --- Data Loading Logic (from implicit_learning_effect.py) ---
 print("Loading data...")
-data_path = SPACECUE_implicit.get_data_path()
+data_path = SPACECUE.get_data_path()
 experiment_folder = "pilot/distractor"
 
 # Load all CSV files in the directory
@@ -349,7 +349,7 @@ plt.show()
 print("Loading and processing raw trajectory data for towardness analysis...")
 
 # Find all subject folders for raw mouse data
-raw_data_base_path = os.path.join(SPACECUE_implicit.get_data_path(), 'sourcedata', 'raw')
+raw_data_base_path = os.path.join(SPACECUE.get_data_path(), 'sourcedata', 'raw')
 subject_folders = glob.glob(f"{raw_data_base_path}/sci-*")
 
 df_mouse_list = []

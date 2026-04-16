@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
-import SPACECUE_implicit
+import SPACECUE
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -14,7 +14,7 @@ def run_shuffled_check():
 
     # --- Data Loading ---
     print("Loading data for shuffled check...")
-    data_path = SPACECUE_implicit.get_data_path()
+    data_path = SPACECUE.get_data_path()
     full_path = os.path.join(data_path, experiment_folder)
 
     files = [f for f in os.listdir(full_path) if f.endswith('.csv')]

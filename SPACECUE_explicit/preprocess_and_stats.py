@@ -1,7 +1,7 @@
 import pandas as pd
 from stats import remove_outliers
 import os
-import SPACECUE
+import SPACECUE_explicit
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pingouin as pg
@@ -10,8 +10,8 @@ import numpy as np
 
 OUTLIER_THRESH = 2
 
-subjects = sorted(os.listdir(f"{SPACECUE.get_data_path()}derivatives\\preprocessing")[1:])
-df = pd.concat([pd.read_csv(f"{SPACECUE.get_data_path()}derivatives\\preprocessing\\{subject}\\beh\\{subject}_clean.csv") for subject in subjects])
+subjects = sorted(os.listdir(f"{SPACECUE_explicit.get_data_path()}derivatives\\preprocessing")[1:])
+df = pd.concat([pd.read_csv(f"{SPACECUE_explicit.get_data_path()}derivatives\\preprocessing\\{subject}\\beh\\{subject}_clean.csv") for subject in subjects])
 
 df = remove_outliers(df, threshold=OUTLIER_THRESH, column_name="rt")
 
@@ -159,7 +159,7 @@ df_for_jamovi_single_trial["subject_id"] = df_for_jamovi_single_trial["subject_i
 
 # 5. Define a clear output path and a more descriptive filename.
 #    Saving to the 'derivatives' folder for consistency.
-output_path = os.path.join(SPACECUE.get_data_path(), 'concatenated')
+output_path = os.path.join(SPACECUE_explicit.get_data_path(), 'concatenated')
 output_filename = 'data_for_jamovi_single_trials.csv'
 full_output_path = os.path.join(output_path, output_filename)
 

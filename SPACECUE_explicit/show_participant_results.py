@@ -2,7 +2,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import glob
-# from SPACECUE import get_data_path
+# from SPACECUE_explicit import get_data_path
 from stats import remove_outliers
 from SPACEPRIME.plotting import plot_individual_lines
 plt.ion()

@@ -5,7 +5,7 @@ from statannotations.Annotator import Annotator
 from scipy.stats import pearsonr
 import pingouin as pg
 import statsmodels.formula.api as smf
-import SPACECUE
+import SPACECUE_explicit
 plt.ion()
 
 
@@ -21,7 +21,7 @@ YLIM_RT_EFFECT = (-0.2, 0.2)          # y-axis limits for RT effect plots
 YLIM_ACC_EFFECT = (-0.1, 0.1)         # y-axis limits for accuracy effect plots
 # ============================================================
 
-df = pd.read_csv(f"{SPACECUE.get_data_path()}\\concatenated\\data_for_jamovi_single_trials.csv")
+df = pd.read_csv(f"{SPACECUE_explicit.get_data_path()}\\concatenated\\data_for_jamovi_single_trials.csv")
 
 df_mean = df.groupby(["subject_id", "CueInstruction", "CueDesignStrategy", "cohort", 'age'])[["select_target", "rt"]].mean().reset_index()
 df_mean["select_target"] = df_mean["select_target"].astype(float)

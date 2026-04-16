@@ -1,27 +1,42 @@
 import seaborn as sns
 import pandas as pd
 import os
-import SPACECUE_implicit
+import SPACECUE
 import glob
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
-from utils import resample_all_trajectories, calculate_trajectory_projections, get_vector_length
-from stats import remove_outliers
+from utils import calculate_trajectory_projections, get_vector_length
 
 
 TRAJECTORY_BOUNDARY_DVA = 999
 #OUTLIER_THRESH = 2
 DWELL_TIME_FILTER_RADIUS = 0.0
-SUBJECT_IDS = [1]
+SUBJECT_IDS = [1, 2, 3, 4]
 
 # --- Data Loading Logic (from implicit_learning_effect.py) ---
 print("Loading data...")
-data_path = SPACECUE_implicit.get_data_path()
-experiment_folder = "pilot/distractor-switch"
+data_path = SPACECUE.get_data_path()
+experiment_folder = "/derivatives/preprocessing"
 
-# Load all CSV files in the directory
-df = pd.concat([pd.read_csv(f"{data_path}{experiment_folder}/{file}") for file in os.listdir(f"{data_path}{experiment_folder}")], ignore_index=True)
+# Load behavioral data for single subjects according to BIDS format
+beh_data_base_path = f"{data_path}{experiment_folder}"
+subject_folders = glob.glob(f"{beh_data_base_path}/sci-*")
+
+df_list = []
+for subject_folder in subject_folders:
+    sub_id_str = os.path.basename(subject_folder)
+    try:
+        sub_id = int(sub_id_str.split('-')[1])
+    except (IndexError, ValueError):
+        continue
+        
+    if sub_id in SUBJECT_IDS:
+        beh_files = glob.glob(f"{subject_folder}/beh/*.csv")
+        for file in beh_files:
+            df_list.append(pd.read_csv(file))
+
+df = pd.concat(df_list, ignore_index=True) if df_list else pd.DataFrame()
 df = df[df["Subject ID"].isin(SUBJECT_IDS)]
 df = df[df["TargetLoc"] != "Front"]
 
@@ -41,6 +56,7 @@ df['Block'] = df['Block'].astype(int, errors="ignore")
 df['Trial Nr'] = df['Trial Nr'].astype(int, errors="ignore")
 df["IsCorrect"] = df["IsCorrect"].astype(float, errors="ignore")
 df['HP_Distractor_Loc'] = df['HP_Distractor_Loc'].replace({1: 'Left', 2: 'Front', 3: 'Right'})
+df['HP_Distractor_Prob'] = df.get('HP_Distractor_Prob', 1.0).astype(float, errors="ignore")
 
 # Create snake_case columns for consistency
 df['subject_id'] = df['Subject ID'].astype(int, errors='ignore')
@@ -61,7 +77,7 @@ df['DistractorProb'] = df['Probability']
 print("Loading and processing raw trajectory data for towardness analysis...")
 
 # Find all subject folders for raw mouse data
-raw_data_base_path = os.path.join(SPACECUE_implicit.get_data_path(), 'sourcedata', 'raw')
+raw_data_base_path = os.path.join(SPACECUE.get_data_path(), 'sourcedata', 'raw')
 subject_folders = glob.glob(f"{raw_data_base_path}/sci-*")
 
 df_mouse_list = []
@@ -237,7 +253,7 @@ tt_df = pd.concat([df, towardness_scores], axis=1)
 
 # Display the average target towardness in a heatmap
 plt.figure(figsize=(10, 8))
-sns.barplot(data=tt_df, x='Probability', y='target_towardness', ci=None)
+sns.barplot(data=tt_df, x='Probability', y='target_towardness', errorbar=("se", 1))
 
 # --- Plot Average Aligned Trajectories ---
 def calculate_dva_heatmap(data, bounds, bin_size, sigma):
@@ -472,7 +488,7 @@ def plot_towardness_over_trials(df):
     }
 
     # Plot rolling average for better visibility of trends
-    window_size = 45
+    window_size = 23
 
     for col, (label, color) in metrics.items():
         # Plot raw data faintly
@@ -500,11 +516,12 @@ def plot_towardness_over_trials(df):
 
     # --- Add HP Distractor Location on a secondary y-axis ---
     ax2 = ax1.twinx()
-    hp_plot_vals = df_sorted['HP_Distractor_Loc'].map({'Left': -100, 'Right': 100})
-    ax2.plot(df_sorted['cumulative_trial'], hp_plot_vals, color='black', linestyle='--', alpha=0.6, label='HP Distractor Loc')
-    ax2.set_ylabel('High-Probability Distractor Location')
-    ax2.set_yticks([-100, 100])
-    ax2.set_yticklabels(['Left', 'Right'])
+    direction = df_sorted['HP_Distractor_Loc'].map({'Left': -1, 'Right': 1})
+    hp_plot_vals = direction * df_sorted['HP_Distractor_Prob'] * 100
+    ax2.plot(df_sorted['cumulative_trial'], hp_plot_vals, color='black', linestyle='--', alpha=0.6, label='HP Distractor')
+    ax2.set_ylabel('HP Distractor Location & Probability')
+    ax2.set_yticks([-80, -60, 60, 80])
+    ax2.set_yticklabels(['Left (0.8)', 'Left (0.6)', 'Right (0.6)', 'Right (0.8)'])
     ax2.set_ylim(-abs_limit, abs_limit)
 
     # Combine legends from both axes
@@ -532,25 +549,30 @@ def analyze_towardness_cross_correlation(df):
     df_corr = df_corr.sort_values(['subject_id', 'block', 'trial_nr'])
     
     # Define parameters
-    WINDOW = 45
-    lags = np.arange(-75, 75)
+    WINDOW = 23
+    lags = np.arange(-45, 45)
     metrics = ['target_towardness', 'distractor_towardness', 'control_towardness']
     colors = {'target_towardness': 'green', 'distractor_towardness': 'red', 'control_towardness': 'grey'}
     titles = {'target_towardness': 'Target', 'distractor_towardness': 'Distractor', 'control_towardness': 'Control'}
     
-    cc_results = {m: {} for m in metrics}
+    cc_results = {m: {0.8: [], 0.6: []} for m in metrics}
 
-    # Calculate rolling means and correlations per subject
-    for sub_id, sub_df in df_corr.groupby('subject_id'):
-        # HP Signal: Left=-1, Right=1
-        hp_numeric = sub_df['HP_Distractor_Loc'].map({'Left': -1, 'Right': 1})
+    # Calculate rolling means and correlations per subject AND probability condition
+    for (sub_id, prob), sub_df in df_corr.groupby(['subject_id', 'HP_Distractor_Prob']):
+        if prob not in [0.6, 0.8]:
+            continue
+            
+        sub_df = sub_df.sort_values(['block', 'trial_nr'])
+        
+        # HP Signal: Incorporate both location and probability
+        direction = sub_df['HP_Distractor_Loc'].map({'Left': -1, 'Right': 1})
+        hp_numeric = direction * prob
         
         # Skip if constant (no switch) or empty
         if hp_numeric.std() == 0 or len(sub_df) < WINDOW:
             continue
             
-        # HP signal
-        sig1 = hp_numeric
+        sig1 = hp_numeric.reset_index(drop=True)
 
         # Map distractor locations for this subject to ensure we can split by Left/Right
         # loc_col is defined globally in the script (e.g. 'SingletonLoc')
@@ -575,40 +597,54 @@ def analyze_towardness_cross_correlation(df):
             if diff_sig.isnull().all() or diff_sig.std() == 0:
                 continue
 
-            # Metric signal is the difference
-            sig2 = diff_sig
+            sig2 = diff_sig.reset_index(drop=True)
             
             # Compute Correlation
             # shift(-lag): if lag > 0, we shift sig2 backward (future becomes present), 
             # effectively looking for correlation where sig1 (HP) leads sig2 (Beh).
             cc = [sig1.corr(sig2.shift(-lag)) for lag in lags]
-            cc_results[m][sub_id] = cc
+            cc_results[m][prob].append(cc)
 
     # Plotting
     fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
     
+    styles = {
+        0.8: {'ls': '-', 'alpha': 0.8, 'label': 'Prob 0.8'},
+        0.6: {'ls': '--', 'alpha': 0.8, 'label': 'Prob 0.6'}
+    }
+    
     for i, m in enumerate(metrics):
         ax = axes[i]
-        metric_res = cc_results[m]
+        has_data = False
         
-        if not metric_res:
+        for prob in [0.8, 0.6]:
+            metric_res = cc_results[m][prob]
+            
+            if not metric_res:
+                continue
+            
+            has_data = True
+            cc_df = pd.DataFrame(metric_res, columns=lags)
+            cc_mean = cc_df.mean(axis=0)
+            cc_sem = cc_df.sem(axis=0) if len(metric_res) > 1 else pd.Series(0, index=lags)
+            
+            ax.plot(lags, cc_mean, color=colors[m], linestyle=styles[prob]['ls'], 
+                    alpha=styles[prob]['alpha'], label=f"Mean CC {styles[prob]['label']}")
+            ax.fill_between(lags, cc_mean - cc_sem, cc_mean + cc_sem, color=colors[m], alpha=0.15)
+            
+        if not has_data:
             ax.set_title(f"{titles[m]} (No Data)")
             continue
-        
-        cc_df = pd.DataFrame.from_dict(metric_res, orient='index', columns=lags)
-        cc_mean = cc_df.mean(axis=0)
-        cc_sem = cc_df.sem(axis=0) if len(metric_res) > 1 else pd.Series(0, index=lags)
-        
-        ax.plot(lags, cc_mean, color=colors[m], label='Mean Correlation')
-        ax.fill_between(lags, cc_mean - cc_sem, cc_mean + cc_sem, color=colors[m], alpha=0.3)
+
         ax.axhline(0, color='k', linestyle='--')
         ax.axvline(0, color='k', linestyle=':', alpha=0.5)
         ax.set_title(f"Cross-Corr: HP Loc vs ({titles[m]} L-R)")
         ax.set_xlabel("Lag (Trials)")
         if i == 0:
             ax.set_ylabel("Correlation Coefficient")
+        ax.legend(loc='upper right')
             
-    plt.suptitle("Cross-Correlation: HP Distractor Location vs. Towardness")
+    plt.suptitle("Cross-Correlation: HP Distractor Location vs. Towardness (0.8 vs 0.6)")
     plt.tight_layout()
     plt.show()
 
