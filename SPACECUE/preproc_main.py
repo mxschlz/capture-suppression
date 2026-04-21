@@ -2,6 +2,7 @@ import mne
 import mne_icalabel
 import autoreject
 import os
+import re
 import pandas as pd
 from SPACECUE.encoding import *
 from SPACECUE import get_data_path
@@ -29,13 +30,21 @@ for subject_id in subject_ids:
     raw_orig = mne.io.read_raw_fif(data_path + f"sci-{subject_id}_task-spacecue_raw.fif", preload=True)
     # Downsample because the computer crashes if sampled with 1000 Hz :-(
     raw = raw_orig.copy().resample(params['resampling_freq'])
-    # get events from annotations
-    events, event_id = mne.events_from_annotations(raw)
+    
+    # Extract integer trigger values from annotation descriptions (e.g. '121' or 'S 121' -> 121)
+    trigger_mapping = {}
+    for desc in set(raw.annotations.description):
+        match = re.search(r'\d+', desc)
+        if match:
+            trigger_mapping[desc] = int(match.group())
+            
+    # get events from annotations, using the mapping to get the correct integer trigger values
+    events, _ = mne.events_from_annotations(raw, event_id=trigger_mapping)
+    # add reference channel back after setting the montage
+    raw.add_reference_channels([params["add_ref_channel"]])
     # Add a montage to the data
     montage = mne.channels.make_standard_montage("easycap-M1")
     raw.set_montage(montage)
-    # add reference channel back after setting the montage
-    raw.add_reference_channels([params["add_ref_channel"]])
     # interpolate bad channels
     bads = bad_chs[subject_id]
     if bads:
@@ -72,8 +81,13 @@ for subject_id in subject_ids:
     with open(f"{get_data_path()}derivatives/preprocessing/sci-{subject_id}/eeg/sci-{subject_id}_task-spacecue_ica_labels.txt", "w") as file:
         for item in exclude_idx:
             file.write(f"{item}\n")
+            
+    # Filter EEG_TRIGGER_MAP to only include events actually present in this recording
+    present_triggers = set(events[:, 2])
+    subject_event_id = {k: v for k, v in EEG_TRIGGER_MAP.items() if v in present_triggers}
+
     # cut epochs
-    epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=EEG_TRIGGER_MAP, preload=True, tmin=params["epoch_tmin"]+0.3, tmax=params["epoch_tmax"]+0.3,
+    epochs = mne.Epochs(reconst_raw_filt, events=events, event_id=subject_event_id, preload=True, tmin=params["epoch_tmin"], tmax=params["epoch_tmax"],
                         baseline=None)
     del reconst_raw_filt
     beh = pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/sci-{subject_id}/beh/sci-{subject_id}_clean*.csv")[0])
