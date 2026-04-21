@@ -1,14 +1,4 @@
-EEG_TRIGGER_MAP = {
-    "test_trigger": 1,
-    "camera_calibration_onset": 2,
-    "camera_calibration_offset": 3,
-    "block_onset": 4,
-    "block_offset": 5,
-    "experiment_onset": 6,
-    "experiment_offset": 7,
-    "trial_onset": 8,
-    "trial_offset": 9
-}
+EEG_TRIGGER_MAP = {}
 
 target_positions = {"Target-1-": 0, "Target-2-": 100, "Target-3-": 200}
 distractor_positions = {"Singleton-1-": 10, "Singleton-2-": 20, "Singleton-3-": 30}
@@ -17,7 +7,7 @@ transition_probabilities = {"HP-Distractor-Loc-1-0.8": 1, "HP-Distractor-Loc-1-0
 
 for t_pos, t_val in target_positions.items():
     for d_pos, d_val in distractor_positions.items():
-        if t_pos != d_pos:
+        if t_pos.split('-')[1] != d_pos.split('-')[1]:
             for prob_id, prob_val in transition_probabilities.items():
                 trigger_val = t_val + d_val + prob_val
                 combination_key = f"{t_pos}{d_pos}{prob_id}"
