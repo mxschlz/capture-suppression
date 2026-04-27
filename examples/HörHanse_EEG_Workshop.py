@@ -19,7 +19,7 @@ sns.set_theme(context="talk", style="ticks")
 
 # --- Konfiguration ---
 # ID des Probanden, für den die Abbildungen erstellt werden sollen.
-SUBJECT_ID = '4'
+SUBJECT_ID = '2'
 
 # Pfad, in dem die generierten Abbildungen gespeichert werden.
 OUTPUT_PATH = './workshop_abbildungen'
@@ -56,7 +56,7 @@ mne.viz.set_browser_backend('matplotlib')
 # Erstelle den Plot für einen 10-Sekunden-Ausschnitt.
 # Wir beginnen bei 60 Sekunden, um einen Bereich mit wahrscheinlichen Artefakten zu finden.
 fig = raw.plot(
-	start=2330,
+	start=4880,
 	duration=10,
 	picks=available_picks,
 	n_channels=len(available_picks),
