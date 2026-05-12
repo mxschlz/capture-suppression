@@ -4,6 +4,7 @@ from mne.decoding import SlidingEstimator, LinearModel, get_coef
 import mne
 from mne.stats import permutation_cluster_1samp_test
 import scipy.stats
+from pathlib import Path
 
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -22,6 +23,9 @@ n_subjects = len(subjects)
 times = np.linspace(-0.1, 0.6, 176)  # Assumes the same epoch times (-100 to +600 ms)
 peak_window = (0.05, 0.3)  # Time window for spatial patterns (50ms to 300ms)
 
+# Get the base data directory and convert it to a Path object
+base_data_path = Path(get_data_path())
+
 # Initialize arrays to store the decoding accuracy for each subject
 # Shape: (n_subjects, n_timepoints)
 all_subject_scores_target = np.zeros((n_subjects, len(times)))
@@ -32,7 +36,7 @@ n_classes = 9
 
 # Set up the decoders
 clf = make_pipeline(StandardScaler(), SVC(kernel='linear', decision_function_shape='ovo'))
-time_decoder_target = SlidingEstimator(clf, n_jobs=5, scoring='accuracy')
+time_decoder_target = SlidingEstimator(clf, n_jobs=-1, scoring='accuracy')
 
 print(f"Starting cross-task decoding for {n_subjects} subjects...")
 
@@ -43,7 +47,8 @@ for i, sub in enumerate(subjects):
     print(f"Processing Subject: {sub} ({i + 1}/{n_subjects})")
 
     # --- A. Load Training Data (Passive Listening) ---
-    epochs_train = mne.read_epochs(f"{get_data_path()}\\derivatives\\epoching\\sub-{sub}\\eeg\\sub-{sub}_task-passive-epo.fif", preload=True)
+    train_file_path = base_data_path / "derivatives" / "epoching" / f"sub-{sub}" / "eeg" / f"sub-{sub}_task-passive-epo.fif"
+    epochs_train = mne.read_epochs(train_file_path, preload=True)
     
     X_train_full = epochs_train.get_data()
     y_train_original = epochs_train.events[:, 2]
@@ -61,8 +66,8 @@ for i, sub in enumerate(subjects):
     y_train = y_train[valid_train]
 
     # --- B. Load Testing Data (Active/Selective Listening) ---
-    # Note: Adjust the file path/name if your selective listening epochs have a different name
-    epochs_test = mne.read_epochs(f"{get_data_path()}\\derivatives\\epoching\\sub-{sub}\\eeg\\sub-{sub}_task-spaceprime-epo.fif", preload=True)
+    test_file_path = base_data_path / "derivatives" / "epoching" / f"sub-{sub}" / "eeg" / f"sub-{sub}_task-spaceprime-epo.fif"
+    epochs_test = mne.read_epochs(test_file_path, preload=True)
     
     # Crop the test epochs to perfectly match the training epochs' time window
     epochs_test.crop(tmin=epochs_train.times[0], tmax=epochs_train.times[-1])
@@ -81,33 +86,28 @@ for i, sub in enumerate(subjects):
         print(f"Warning: 'SingletonDigit' column not found in metadata for subject {sub}.")
         y_test_distractor = np.zeros(len(epochs_test))
 
-    # --- Target Decoding ---
-    valid_test_target = (y_test_target >= 1) & (y_test_target <= 9)
-    X_test_target = epochs_test.get_data()[valid_test_target]
-    y_test_target_valid = y_test_target[valid_test_target]
+    # --- Shared Test Data Mask ---
+    # Ensure we only test on trials where BOTH a target and a distractor are present
+    valid_test_shared = (y_test_target >= 1) & (y_test_target <= 9) & \
+                        (y_test_distractor >= 1) & (y_test_distractor <= 9)
     
-    # --- Distractor Decoding ---
-    valid_test_distractor = (y_test_distractor >= 1) & (y_test_distractor <= 9)
-    X_test_distractor = epochs_test.get_data()[valid_test_distractor]
-    y_test_distractor_valid = y_test_distractor[valid_test_distractor]
+    X_test_shared = epochs_test.get_data()[valid_test_shared]
+    y_test_target_valid = y_test_target[valid_test_shared]
+    y_test_distractor_valid = y_test_distractor[valid_test_shared]
 
     # --- C. Time-resolved Decoding ---
     print(f"  Training on {len(y_train)} passive trials...")
     time_decoder_target.fit(X_train, y_train) 
     
     if len(y_test_target_valid) > 0:
-        print(f"  Testing on {len(y_test_target_valid)} active targets...")
-        sub_scores_target = time_decoder_target.score(X_test_target, y_test_target_valid)
+        print(f"  Testing on {len(y_test_target_valid)} simultaneous active trials...")
+        sub_scores_target = time_decoder_target.score(X_test_shared, y_test_target_valid)
         all_subject_scores_target[i, :] = sub_scores_target
-    else:
-        print("  No valid target trials found for testing.")
         
-    if len(y_test_distractor_valid) > 0:
-        print(f"  Testing on {len(y_test_distractor_valid)} active distractors...")
-        sub_scores_distractor = time_decoder_target.score(X_test_distractor, y_test_distractor_valid)
+        sub_scores_distractor = time_decoder_target.score(X_test_shared, y_test_distractor_valid)
         all_subject_scores_distractor[i, :] = sub_scores_distractor
     else:
-        print("  No valid distractor trials found for testing.")
+        print("  No valid simultaneous testing trials found.")
 
     # --- D. Extract Spatial Patterns (Training Set) ---
     t_idx = epochs_train.time_as_index(peak_window)

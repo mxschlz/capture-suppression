@@ -4,6 +4,7 @@ from mne.decoding import SlidingEstimator, cross_val_multiscore, LinearModel, ge
 import mne
 from mne.stats import permutation_cluster_1samp_test
 import scipy.stats
+from pathlib import Path
 
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -22,6 +23,9 @@ sns.set_theme(context="talk", style="ticks")
 n_subjects = len(subjects)
 times = np.linspace(-0.2, 0.8, 251)
 peak_window = (0.05, 0.3)  # Time window for spatial patterns (50ms to 300ms)
+
+# Get the base data directory and convert it to a Path object
+base_data_path = Path(get_data_path())
 
 # Initialize arrays to store the decoding accuracy for each subject
 all_subject_scores_target = np.zeros((n_subjects, len(times)))
@@ -47,7 +51,10 @@ for i, sub in enumerate(subjects):
     print(f"Processing Subject: {sub} ({i + 1}/{n_subjects})")
 
     # --- Load Data (Active/Selective Listening) ---
-    epochs = mne.read_epochs(f"{get_data_path()}\\derivatives\\epoching\\sub-{sub}\\eeg\\sub-{sub}_task-spaceprime-epo.fif", preload=True)
+    # Construct the file path using pathlib for cross-platform compatibility
+    file_path = base_data_path / "derivatives" / "epoching" / f"sub-{sub}" / "eeg" / f"sub-{sub}_task-spaceprime-epo.fif"
+    
+    epochs = mne.read_epochs(file_path, preload=True)
     epochs.crop(times[0], times[-1])
     
     # Target digits
@@ -64,58 +71,51 @@ for i, sub in enumerate(subjects):
         print(f"Warning: 'SingletonDigit' column not found in metadata for subject {sub}.")
         y_distractor = np.zeros(len(epochs))
 
-    # --- Target Decoding ---
-    valid_target = (y_target >= 1) & (y_target <= 9)
-    X_target = epochs.get_data()[valid_target]
-    y_target_valid = y_target[valid_target]
+    # --- Joint Mask for Simultaneous Trials ---
+    # Only keep trials where BOTH a target and distractor digit (1-9) were presented
+    valid_trials = (y_target >= 1) & (y_target <= 9) & (y_distractor >= 1) & (y_distractor <= 9)
+    X_shared = epochs.get_data()[valid_trials]
+    y_target_valid = y_target[valid_trials]
+    y_distractor_valid = y_distractor[valid_trials]
     
-    # Diagnostic: Check if target digits 1-9 are evenly distributed
-    unique_t, counts_t = np.unique(y_target_valid, return_counts=True)
-    print(f"    Target distributions: {dict(zip(unique_t, counts_t))}")
-
     if len(y_target_valid) > 0:
-        print(f"  Training and testing on {len(y_target_valid)} targets...")
-        sub_scores_target = cross_val_multiscore(time_decoder, X_target, y_target_valid, cv=cv, n_jobs=-1)
+        print(f"  Training and testing on {len(y_target_valid)} simultaneous trials...")
+        
+        # Diagnostic: Check distributions
+        unique_t, counts_t = np.unique(y_target_valid, return_counts=True)
+        unique_d, counts_d = np.unique(y_distractor_valid, return_counts=True)
+        print(f"    Target distributions: {dict(zip(unique_t, counts_t))}")
+        print(f"    Distractor distributions: {dict(zip(unique_d, counts_d))}")
+
+        # --- Target Decoding ---
+        sub_scores_target = cross_val_multiscore(time_decoder, X_shared, y_target_valid, cv=cv, n_jobs=-1)
         all_subject_scores_target[i, :] = np.mean(sub_scores_target, axis=0)
 
         # Extract Spatial Patterns for Targets
         t_idx = epochs.time_as_index(peak_window)
-        X_target_windowed = X_target[:, :, t_idx[0]:t_idx[1]].mean(axis=2)
+        X_shared_windowed = X_shared[:, :, t_idx[0]:t_idx[1]].mean(axis=2)
 
         pattern_clf = make_pipeline(StandardScaler(), LinearModel(SVC(kernel='linear', decision_function_shape='ovo')))
-        pattern_clf.fit(X_target_windowed, y_target_valid)
-        patterns = get_coef(pattern_clf, 'patterns_', inverse_transform=True)
-        mean_pattern = np.mean(np.abs(patterns), axis=0)
-        all_subject_patterns_target.append(mean_pattern)
-    else:
-        print("  No valid target trials found.")
-        all_subject_patterns_target.append(np.zeros(epochs.info['nchan']))
-        
-    # --- Distractor Decoding ---
-    valid_distractor = (y_distractor >= 1) & (y_distractor <= 9)
-    X_distractor = epochs.get_data()[valid_distractor]
-    y_distractor_valid = y_distractor[valid_distractor]
+        pattern_clf.fit(X_shared_windowed, y_target_valid)
+        patterns_t = get_coef(pattern_clf, 'patterns_', inverse_transform=True)
+        mean_pattern_t = np.mean(np.abs(patterns_t), axis=0)
+        all_subject_patterns_target.append(mean_pattern_t)
 
-    # Diagnostic: Check if distractor digits 1-9 are evenly distributed
-    unique_d, counts_d = np.unique(y_distractor_valid, return_counts=True)
-    print(f"    Distractor distributions: {dict(zip(unique_d, counts_d))}")
-
-    if len(y_distractor_valid) > 0:
-        print(f"  Training and testing on {len(y_distractor_valid)} distractors...")
-        sub_scores_distractor = cross_val_multiscore(time_decoder, X_distractor, y_distractor_valid, cv=cv, n_jobs=-1)
+        # --- Distractor Decoding ---
+        # Notice we reuse X_shared, but map it to y_distractor_valid
+        sub_scores_distractor = cross_val_multiscore(time_decoder, X_shared, y_distractor_valid, cv=cv, n_jobs=-1)
         all_subject_scores_distractor[i, :] = np.mean(sub_scores_distractor, axis=0)
 
         # Extract Spatial Patterns for Distractors
-        t_idx = epochs.time_as_index(peak_window)
-        X_distractor_windowed = X_distractor[:, :, t_idx[0]:t_idx[1]].mean(axis=2)
-
-        pattern_clf = make_pipeline(StandardScaler(), LinearModel(SVC(kernel='linear', decision_function_shape='ovo')))
-        pattern_clf.fit(X_distractor_windowed, y_distractor_valid)
-        patterns = get_coef(pattern_clf, 'patterns_', inverse_transform=True)
-        mean_pattern = np.mean(np.abs(patterns), axis=0)
-        all_subject_patterns_distractor.append(mean_pattern)
+        # Re-use X_shared_windowed
+        pattern_clf.fit(X_shared_windowed, y_distractor_valid)
+        patterns_d = get_coef(pattern_clf, 'patterns_', inverse_transform=True)
+        mean_pattern_d = np.mean(np.abs(patterns_d), axis=0)
+        all_subject_patterns_distractor.append(mean_pattern_d)
+        
     else:
-        print("  No valid distractor trials found.")
+        print("  No valid simultaneous trials found.")
+        all_subject_patterns_target.append(np.zeros(epochs.info['nchan']))
         all_subject_patterns_distractor.append(np.zeros(epochs.info['nchan']))
 
     epochs_info = epochs.info  # Keep for plotting

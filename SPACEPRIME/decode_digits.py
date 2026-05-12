@@ -4,6 +4,7 @@ from mne.decoding import SlidingEstimator, GeneralizingEstimator, cross_val_mult
 import mne
 from mne.stats import permutation_cluster_1samp_test
 import scipy.stats
+from pathlib import Path
 
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -30,6 +31,9 @@ RUN_TEMPORAL_GENERALIZATION = False  # Set to True to run the temporal generaliz
 
 n_subjects = len(subjects)
 times = np.linspace(-0.1, 0.6, 176)
+
+# Get the base data directory and convert it to a Path object
+base_data_path = Path(get_data_path())
 
 # Initialize an array to store the decoding accuracy for each subject
 # Shape: (n_subjects, n_timepoints)
@@ -59,7 +63,8 @@ for i, sub in enumerate(subjects):
     print(f"Processing Subject: {sub} ({i + 1}/{n_subjects})")
 
     # Isolate this subject's data
-    sub_epochs = mne.read_epochs(f"{get_data_path()}\\derivatives\\epoching\\sub-{sub}\\eeg\\sub-{sub}_task-passive-epo.fif", preload=True)
+    file_path = base_data_path / "derivatives" / "epoching" / f"sub-{sub}" / "eeg" / f"sub-{sub}_task-passive-epo.fif"
+    sub_epochs = mne.read_epochs(file_path, preload=True)
 
     X_sub_full = sub_epochs.get_data()
     y_sub_original = sub_epochs.events[:, 2]  # The original trigger codes
