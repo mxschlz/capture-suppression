@@ -54,7 +54,7 @@ clf = make_pipeline(StandardScaler(), SVC(kernel='linear', decision_function_sha
 time_decoder = SlidingEstimator(clf, n_jobs=5, scoring='accuracy')  # n_jobs=1 inside loop
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)  # Using 5 splits for robust estimation
 if RUN_TEMPORAL_GENERALIZATION:
-    tg_decoder = GeneralizingEstimator(clf, n_jobs=5, scoring='accuracy')
+    tg_decoder = GeneralizingEstimator(clf, n_jobs=-1, scoring='accuracy')
 
 print(f"Starting within-subject decoding for {n_subjects} subjects...")
 

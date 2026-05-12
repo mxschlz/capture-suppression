@@ -39,7 +39,7 @@ n_classes = 9
 
 # Set up the decoders (using 5-fold cross-validation)
 clf = make_pipeline(StandardScaler(), SVC(kernel='linear', decision_function_shape='ovo'))
-time_decoder = SlidingEstimator(clf, n_jobs=5, scoring='accuracy')
+time_decoder = SlidingEstimator(clf, n_jobs=-1, scoring='accuracy')
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
 print(f"Starting within-task decoding (Selective Listening) for {n_subjects} subjects...")
