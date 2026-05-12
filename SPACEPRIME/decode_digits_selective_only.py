@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from mne.decoding import SlidingEstimator, cross_val_multiscore, LinearModel, get_coef
+from mne.decoding import SlidingEstimator, GeneralizingEstimator, cross_val_multiscore, LinearModel, get_coef
 import mne
 from mne.stats import permutation_cluster_1samp_test
 import scipy.stats
@@ -21,8 +21,11 @@ sns.set_theme(context="talk", style="ticks")
 # 1. SETUP AND INITIALIZATION
 # ==========================================
 n_subjects = len(subjects)
-times = np.linspace(-0.2, 0.8, 251)
+times = np.linspace(-0.2, 1.0, 251)
 peak_window = (0.05, 0.3)  # Time window for spatial patterns (50ms to 300ms)
+
+# Toggle switch for Temporal Generalization Analysis
+run_temporal_generalization = True
 
 # Get the base data directory and convert it to a Path object
 base_data_path = Path(get_data_path())
@@ -35,12 +38,18 @@ all_subject_scores_distractor = np.zeros((n_subjects, len(times)))
 all_subject_patterns_target = []
 all_subject_patterns_distractor = []
 
-n_classes = 9
-
 # Set up the decoders (using 5-fold cross-validation)
 clf = make_pipeline(StandardScaler(), SVC(kernel='linear', decision_function_shape='ovo'))
 time_decoder = SlidingEstimator(clf, n_jobs=-1, scoring='accuracy')
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+# Initialize arrays for temporal generalization if toggled
+if run_temporal_generalization:
+    all_subject_tg_scores_target = np.zeros((n_subjects, len(times), len(times)))
+    all_subject_tg_scores_distractor = np.zeros((n_subjects, len(times), len(times)))
+    tg_decoder = GeneralizingEstimator(clf, n_jobs=-1, scoring='accuracy')
+
+n_classes = 9
 
 print(f"Starting within-task decoding (Selective Listening) for {n_subjects} subjects...")
 
@@ -91,6 +100,11 @@ for i, sub in enumerate(subjects):
         sub_scores_target = cross_val_multiscore(time_decoder, X_shared, y_target_valid, cv=cv, n_jobs=-1)
         all_subject_scores_target[i, :] = np.mean(sub_scores_target, axis=0)
 
+        # Target Temporal Generalization
+        if run_temporal_generalization:
+            tg_scores_target = cross_val_multiscore(tg_decoder, X_shared, y_target_valid, cv=cv, n_jobs=-1)
+            all_subject_tg_scores_target[i, :, :] = np.mean(tg_scores_target, axis=0)
+
         # Extract Spatial Patterns for Targets
         t_idx = epochs.time_as_index(peak_window)
         X_shared_windowed = X_shared[:, :, t_idx[0]:t_idx[1]].mean(axis=2)
@@ -105,6 +119,11 @@ for i, sub in enumerate(subjects):
         # Notice we reuse X_shared, but map it to y_distractor_valid
         sub_scores_distractor = cross_val_multiscore(time_decoder, X_shared, y_distractor_valid, cv=cv, n_jobs=-1)
         all_subject_scores_distractor[i, :] = np.mean(sub_scores_distractor, axis=0)
+
+        # Distractor Temporal Generalization
+        if run_temporal_generalization:
+            tg_scores_distractor = cross_val_multiscore(tg_decoder, X_shared, y_distractor_valid, cv=cv, n_jobs=-1)
+            all_subject_tg_scores_distractor[i, :, :] = np.mean(tg_scores_distractor, axis=0)
 
         # Extract Spatial Patterns for Distractors
         # Re-use X_shared_windowed
@@ -181,6 +200,55 @@ plot_results(axes[1], mean_distractor, se_distractor, cl_distractor, p_distracto
 
 plt.tight_layout()
 plt.show()
+
+# ==========================================
+# 6. PLOT TEMPORAL GENERALIZATION
+# ==========================================
+if run_temporal_generalization:
+    print("Computing group-level 2D cluster statistics for Temporal Generalization...")
+    
+    def compute_tg_stats(tg_scores):
+        mean_tg = np.mean(tg_scores, axis=0)
+        X_test_stats_tg = tg_scores - chance_level
+        sig_mask_tg = np.zeros(mean_tg.shape, dtype=bool)
+        
+        if np.any(X_test_stats_tg):
+            T_obs_tg, clusters_tg, cluster_p_values_tg, H0_tg = permutation_cluster_1samp_test(
+                X_test_stats_tg, n_permutations=1000, threshold=t_thresh, tail=0, out_type='mask', n_jobs=-1)
+            for c, p_val in zip(clusters_tg, cluster_p_values_tg):
+                if p_val <= 0.05:
+                    sig_mask_tg |= c
+        return mean_tg, sig_mask_tg
+        
+    mean_tg_target, sig_mask_tg_target = compute_tg_stats(all_subject_tg_scores_target)
+    mean_tg_distractor, sig_mask_tg_distractor = compute_tg_stats(all_subject_tg_scores_distractor)
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
+
+    # Create symmetric colorbar around chance level
+    max_dev_t = np.max(np.abs(mean_tg_target - chance_level))
+    max_dev_d = np.max(np.abs(mean_tg_distractor - chance_level))
+    limit = max(max_dev_t, max_dev_d)
+    vmin, vmax = chance_level - limit, chance_level + limit
+
+    def plot_tg(ax, mean_tg, sig_mask, title):
+        im = ax.imshow(mean_tg, interpolation='lanczos', origin='lower', cmap='RdBu_r',
+                       extent=[times[0], times[-1], times[0], times[-1]], vmin=vmin, vmax=vmax)
+        if sig_mask.any():
+            ax.contour(times, times, sig_mask, levels=[0.5], colors='black', linewidths=1.5, linestyles='-')
+        ax.plot([times[0], times[-1]], [times[0], times[-1]], 'k--', label='Diagonal', alpha=0.5)
+        ax.axvline(0, color='k', linestyle=':', alpha=0.5)
+        ax.axhline(0, color='k', linestyle=':', alpha=0.5)
+        ax.set_xlabel('Testing Time (s)')
+        ax.set_title(title)
+        return im
+
+    im1 = plot_tg(axes[0], mean_tg_target, sig_mask_tg_target, f'TG: Targets\n(Selective, N={n_subjects})')
+    axes[0].set_ylabel('Training Time (s)')
+    im2 = plot_tg(axes[1], mean_tg_distractor, sig_mask_tg_distractor, f'TG: Distractors\n(Selective, N={n_subjects})')
+    
+    fig.colorbar(im1, ax=axes.ravel().tolist(), label='Accuracy')
+    plt.show()
 
 # ==========================================
 # 5. PLOT GROUP-LEVEL SPATIAL PATTERNS
