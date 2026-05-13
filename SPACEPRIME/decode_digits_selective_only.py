@@ -21,7 +21,11 @@ sns.set_theme(context="talk", style="ticks")
 # 1. SETUP AND INITIALIZATION
 # ==========================================
 n_subjects = len(subjects)
-times = np.linspace(-0.2, 1.0, 251)
+tmin = -0.2
+tmax = 1.0
+sf = 250
+samples = int((tmin.__abs__() + tmax) * 250 + 1)
+times = np.linspace(-0.2, 1.0, samples)
 peak_window = (0.05, 0.3)  # Time window for spatial patterns (50ms to 300ms)
 
 # Toggle switch for Temporal Generalization Analysis
@@ -156,7 +160,7 @@ def compute_stats(scores):
     else:
         clusters = []
         cluster_p_values = []
-        
+
     return mean_scores, std_error, clusters, cluster_p_values
 
 mean_target, se_target, cl_target, p_target = compute_stats(all_subject_scores_target)
