@@ -37,10 +37,12 @@ base_data_path = Path(get_data_path())
 # Initialize arrays to store the decoding accuracy for each subject
 all_subject_scores_target = np.zeros((n_subjects, len(times)))
 all_subject_scores_distractor = np.zeros((n_subjects, len(times)))
+all_subject_scores_control = np.zeros((n_subjects, len(times)))
 
 # Initialize lists to store spatial patterns for each subject
 all_subject_patterns_target = []
 all_subject_patterns_distractor = []
+all_subject_patterns_control = []
 
 # Set up the decoders (using 5-fold cross-validation)
 # Using Multinomial Logistic Regression natively for 9-class decoding
@@ -52,6 +54,7 @@ cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 if run_temporal_generalization:
     all_subject_tg_scores_target = np.zeros((n_subjects, len(times), len(times)))
     all_subject_tg_scores_distractor = np.zeros((n_subjects, len(times), len(times)))
+    all_subject_tg_scores_control = np.zeros((n_subjects, len(times), len(times)))
     tg_decoder = GeneralizingEstimator(clf, n_jobs=-1, scoring='accuracy')
 
 n_classes = 9
@@ -84,13 +87,21 @@ for i, sub in enumerate(subjects):
     except KeyError:
         print(f"Warning: 'SingletonDigit' column not found in metadata for subject {sub}.")
         y_distractor = np.zeros(len(epochs))
+        
+    # Control digits
+    try:
+        y_control = epochs.metadata['Non-Singleton2Digit'].values
+    except KeyError:
+        print(f"Warning: 'Non-Singleton2Digit' column not found in metadata for subject {sub}.")
+        y_control = np.zeros(len(epochs))
 
     # --- Joint Mask for Simultaneous Trials ---
-    # Only keep trials where BOTH a target and distractor digit (1-9) were presented
-    valid_trials = (y_target >= 1) & (y_target <= 9) & (y_distractor >= 1) & (y_distractor <= 9)
+    # Only keep trials where target, distractor, and control digits (1-9) were presented
+    valid_trials = (y_target >= 1) & (y_target <= 9) & (y_distractor >= 1) & (y_distractor <= 9) & (y_control >= 1) & (y_control <= 9)
     X_shared = epochs.get_data()[valid_trials]
     y_target_valid = y_target[valid_trials]
     y_distractor_valid = y_distractor[valid_trials]
+    y_control_valid = y_control[valid_trials]
     
     if len(y_target_valid) > 0:
         print(f"  Training and testing on {len(y_target_valid)} simultaneous trials...")
@@ -98,8 +109,10 @@ for i, sub in enumerate(subjects):
         # Diagnostic: Check distributions
         unique_t, counts_t = np.unique(y_target_valid, return_counts=True)
         unique_d, counts_d = np.unique(y_distractor_valid, return_counts=True)
+        unique_c, counts_c = np.unique(y_control_valid, return_counts=True)
         print(f"    Target distributions: {dict(zip(unique_t, counts_t))}")
         print(f"    Distractor distributions: {dict(zip(unique_d, counts_d))}")
+        print(f"    Control distributions: {dict(zip(unique_c, counts_c))}")
 
         # --- Target Decoding ---
         sub_scores_target = cross_val_multiscore(time_decoder, X_shared, y_target_valid, cv=cv, n_jobs=-1)
@@ -137,10 +150,26 @@ for i, sub in enumerate(subjects):
         mean_pattern_d = np.mean(np.abs(patterns_d), axis=0)
         all_subject_patterns_distractor.append(mean_pattern_d)
         
+        # --- Control Decoding ---
+        sub_scores_control = cross_val_multiscore(time_decoder, X_shared, y_control_valid, cv=cv, n_jobs=-1)
+        all_subject_scores_control[i, :] = np.mean(sub_scores_control, axis=0)
+
+        # Control Temporal Generalization
+        if run_temporal_generalization:
+            tg_scores_control = cross_val_multiscore(tg_decoder, X_shared, y_control_valid, cv=cv, n_jobs=-1)
+            all_subject_tg_scores_control[i, :, :] = np.mean(tg_scores_control, axis=0)
+
+        # Extract Spatial Patterns for Control
+        pattern_clf.fit(X_shared_windowed, y_control_valid)
+        patterns_c = get_coef(pattern_clf, 'patterns_', inverse_transform=True)
+        mean_pattern_c = np.mean(np.abs(patterns_c), axis=0)
+        all_subject_patterns_control.append(mean_pattern_c)
+        
     else:
         print("  No valid simultaneous trials found.")
         all_subject_patterns_target.append(np.zeros(epochs.info['nchan']))
         all_subject_patterns_distractor.append(np.zeros(epochs.info['nchan']))
+        all_subject_patterns_control.append(np.zeros(epochs.info['nchan']))
 
     epochs_info = epochs.info  # Keep for plotting
 
@@ -166,11 +195,12 @@ def compute_stats(scores):
 
 mean_target, se_target, cl_target, p_target = compute_stats(all_subject_scores_target)
 mean_distractor, se_distractor, cl_distractor, p_distractor = compute_stats(all_subject_scores_distractor)
+mean_control, se_control, cl_control, p_control = compute_stats(all_subject_scores_control)
 
 # ==========================================
 # 4. PLOTTING TIME-RESOLVED DECODING
 # ==========================================
-fig, axes = plt.subplots(1, 2, figsize=(16, 5), sharey=True)
+fig, axes = plt.subplots(1, 3, figsize=(20, 5), sharey=True)
 
 def plot_results(ax, mean_scores, std_error, clusters, cluster_p_values, title, color):
     ax.plot(times, mean_scores, label='Group Mean Accuracy', color=color, linewidth=2)
@@ -196,12 +226,16 @@ def plot_results(ax, mean_scores, std_error, clusters, cluster_p_values, title, 
 
 # Plot Targets
 plot_results(axes[0], mean_target, se_target, cl_target, p_target, 
-             f'Decoding Targets (Within Selective, N={n_subjects})', 'blue')
+             f'Decoding Targets (N={n_subjects})', 'blue')
 axes[0].set_ylabel('Accuracy')
 
 # Plot Distractors
 plot_results(axes[1], mean_distractor, se_distractor, cl_distractor, p_distractor, 
-             f'Decoding Distractors (Within Selective, N={n_subjects})', 'green')
+             f'Decoding Distractors (N={n_subjects})', 'green')
+
+# Plot Control
+plot_results(axes[2], mean_control, se_control, cl_control, p_control, 
+             f'Decoding Control (N={n_subjects})', 'orange')
 
 plt.tight_layout()
 plt.show()
@@ -211,20 +245,26 @@ plt.show()
 # ==========================================
 group_pattern_target = np.mean(all_subject_patterns_target, axis=0)
 group_pattern_distractor = np.mean(all_subject_patterns_distractor, axis=0)
+group_pattern_control = np.mean(all_subject_patterns_control, axis=0)
 
-fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
 # Plot Targets Pattern
 im1, _ = mne.viz.plot_topomap(group_pattern_target, epochs_info, axes=axes[0], show=False, cmap='Reds', contours=4, vlim=(0, np.max(group_pattern_target)))
-axes[0].set_title(f'Spatial Patterns: Targets\n(Peak Window: {peak_window[0]*1000:.0f}-{peak_window[1]*1000:.0f} ms)')
+axes[0].set_title(f'Spatial Patterns: Targets\n({peak_window[0]*1000:.0f}-{peak_window[1]*1000:.0f} ms)')
 
 # Plot Distractors Pattern
 im2, _ = mne.viz.plot_topomap(group_pattern_distractor, epochs_info, axes=axes[1], show=False, cmap='Greens', contours=4, vlim=(0, np.max(group_pattern_distractor)))
-axes[1].set_title(f'Spatial Patterns: Distractors\n(Peak Window: {peak_window[0]*1000:.0f}-{peak_window[1]*1000:.0f} ms)')
+axes[1].set_title(f'Spatial Patterns: Distractors\n({peak_window[0]*1000:.0f}-{peak_window[1]*1000:.0f} ms)')
+
+# Plot Control Pattern
+im3, _ = mne.viz.plot_topomap(group_pattern_control, epochs_info, axes=axes[2], show=False, cmap='Oranges', contours=4, vlim=(0, np.max(group_pattern_control)))
+axes[2].set_title(f'Spatial Patterns: Control\n({peak_window[0]*1000:.0f}-{peak_window[1]*1000:.0f} ms)')
 
 # Add colorbars
 plt.colorbar(im1, ax=axes[0], label='Pattern Activation (A.U.)')
 plt.colorbar(im2, ax=axes[1], label='Pattern Activation (A.U.)')
+plt.colorbar(im3, ax=axes[2], label='Pattern Activation (A.U.)')
 
 plt.tight_layout()
 plt.show()
@@ -251,13 +291,15 @@ if run_temporal_generalization:
         
     mean_tg_target, sig_mask_tg_target = compute_tg_stats(all_subject_tg_scores_target)
     mean_tg_distractor, sig_mask_tg_distractor = compute_tg_stats(all_subject_tg_scores_distractor)
+    mean_tg_control, sig_mask_tg_control = compute_tg_stats(all_subject_tg_scores_control)
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(20, 6), sharey=True)
 
     # Create symmetric colorbar around chance level
     max_dev_t = np.max(np.abs(mean_tg_target - chance_level))
     max_dev_d = np.max(np.abs(mean_tg_distractor - chance_level))
-    limit = max(max_dev_t, max_dev_d)
+    max_dev_c = np.max(np.abs(mean_tg_control - chance_level))
+    limit = max(max_dev_t, max_dev_d, max_dev_c)
     vmin, vmax = chance_level - limit, chance_level + limit
 
     def plot_tg(ax, mean_tg, sig_mask, title):
@@ -275,6 +317,7 @@ if run_temporal_generalization:
     im1 = plot_tg(axes[0], mean_tg_target, sig_mask_tg_target, f'TG: Targets\n(Selective, N={n_subjects})')
     axes[0].set_ylabel('Training Time (s)')
     im2 = plot_tg(axes[1], mean_tg_distractor, sig_mask_tg_distractor, f'TG: Distractors\n(Selective, N={n_subjects})')
+    im3 = plot_tg(axes[2], mean_tg_control, sig_mask_tg_control, f'TG: Control\n(Selective, N={n_subjects})')
     
     fig.colorbar(im1, ax=axes.ravel().tolist(), label='Accuracy')
     plt.show()
