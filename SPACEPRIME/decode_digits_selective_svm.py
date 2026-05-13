@@ -29,7 +29,7 @@ times = np.linspace(-0.2, 1.0, samples)
 peak_window = (0.05, 0.3)  # Time window for spatial patterns (50ms to 300ms)
 
 # Toggle switch for Temporal Generalization Analysis
-run_temporal_generalization = True
+run_temporal_generalization = False
 
 # Get the base data directory and convert it to a Path object
 base_data_path = Path(get_data_path())
@@ -206,6 +206,30 @@ plt.tight_layout()
 plt.show()
 
 # ==========================================
+# 5. PLOT GROUP-LEVEL SPATIAL PATTERNS
+# ==========================================
+group_pattern_target = np.mean(all_subject_patterns_target, axis=0)
+group_pattern_distractor = np.mean(all_subject_patterns_distractor, axis=0)
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+# Plot Targets Pattern
+im1, _ = mne.viz.plot_topomap(group_pattern_target, epochs_info, axes=axes[0], show=False, cmap='Reds', contours=4, vlim=(0, np.max(group_pattern_target)))
+axes[0].set_title(f'Spatial Patterns: Targets\n(Peak Window: {peak_window[0]*1000:.0f}-{peak_window[1]*1000:.0f} ms)')
+
+# Plot Distractors Pattern
+im2, _ = mne.viz.plot_topomap(group_pattern_distractor, epochs_info, axes=axes[1], show=False, cmap='Greens', contours=4, vlim=(0, np.max(group_pattern_distractor)))
+axes[1].set_title(f'Spatial Patterns: Distractors\n(Peak Window: {peak_window[0]*1000:.0f}-{peak_window[1]*1000:.0f} ms)')
+
+# Add colorbars
+plt.colorbar(im1, ax=axes[0], label='Pattern Activation (A.U.)')
+plt.colorbar(im2, ax=axes[1], label='Pattern Activation (A.U.)')
+
+plt.tight_layout()
+plt.show()
+
+
+# ==========================================
 # 6. PLOT TEMPORAL GENERALIZATION
 # ==========================================
 if run_temporal_generalization:
@@ -255,24 +279,39 @@ if run_temporal_generalization:
     plt.show()
 
 # ==========================================
-# 5. PLOT GROUP-LEVEL SPATIAL PATTERNS
+# 7. COMPARE TARGET AND DISTRACTOR DECODING
 # ==========================================
-group_pattern_target = np.mean(all_subject_patterns_target, axis=0)
-group_pattern_distractor = np.mean(all_subject_patterns_distractor, axis=0)
+print("\nComparing Target vs Distractor decoding...")
 
-fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+# Contrast: Targets - Distractors
+diff_scores = all_subject_scores_target - all_subject_scores_distractor
+mean_diff = np.mean(diff_scores, axis=0)
+se_diff = np.std(diff_scores, axis=0) / np.sqrt(n_subjects)
 
-# Plot Targets Pattern
-im1, _ = mne.viz.plot_topomap(group_pattern_target, epochs_info, axes=axes[0], show=False, cmap='Reds', contours=4, vlim=(0, np.max(group_pattern_target)))
-axes[0].set_title(f'Spatial Patterns: Targets\n(Peak Window: {peak_window[0]*1000:.0f}-{peak_window[1]*1000:.0f} ms)')
+# Run permutation test on the difference (testing against a mean of 0)
+diff_T_obs, diff_clusters, diff_cluster_p_values, diff_H0 = permutation_cluster_1samp_test(
+    diff_scores, n_permutations=1000, threshold=t_thresh, tail=0, out_type='mask', n_jobs=-1)
 
-# Plot Distractors Pattern
-im2, _ = mne.viz.plot_topomap(group_pattern_distractor, epochs_info, axes=axes[1], show=False, cmap='Greens', contours=4, vlim=(0, np.max(group_pattern_distractor)))
-axes[1].set_title(f'Spatial Patterns: Distractors\n(Peak Window: {peak_window[0]*1000:.0f}-{peak_window[1]*1000:.0f} ms)')
+plt.figure(figsize=(10, 5))
+plt.plot(times, mean_diff, label='Target - Distractor', color='purple', linewidth=2)
+plt.fill_between(times, mean_diff - se_diff, mean_diff + se_diff, color='purple', alpha=0.2, label='SEM')
+plt.axhline(0, color='k', linestyle='--', label='No Difference')
+plt.axvline(0, color='k', linestyle='-')
 
-# Add colorbars
-plt.colorbar(im1, ax=axes[0], label='Pattern Activation (A.U.)')
-plt.colorbar(im2, ax=axes[1], label='Pattern Activation (A.U.)')
+# Mark significant clusters for the difference
+label_added = False
+for c, p_val in zip(diff_clusters, diff_cluster_p_values):
+    if p_val <= 0.05:
+        sig_times = times[c]
+        if len(sig_times) > 0:
+            label = 'p < 0.05 (Cluster)' if not label_added else ""
+            plt.axvspan(sig_times[0], sig_times[-1], color='red', alpha=0.3, label=label)
+            label_added = True
 
+plt.title(f'Difference in Decoding Accuracy: Target vs Distractor\n(Group Level, N={n_subjects})')
+plt.xlabel('Time (s)')
+plt.ylabel('Accuracy Difference (Target - Distractor)')
+plt.legend(loc='upper right')
+plt.grid(True, alpha=0.3)
 plt.tight_layout()
 plt.show()
