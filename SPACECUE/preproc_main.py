@@ -23,13 +23,12 @@ params = dict(
     epoch_tmax=1.0
 )
 # get subject id and settings path
-subject_ids = subject_ids[-1:]
 for subject_id in subject_ids:
     data_path = f"{get_data_path()}sourcedata/raw/sci-{subject_id}/eeg/"
     # read raw fif
-    raw_orig = mne.io.read_raw_fif(data_path + f"sci-{subject_id}_task-spacecue_raw.fif", preload=True)
+    raw = mne.io.read_raw_fif(data_path + f"sci-{subject_id}_task-spacecue_raw.fif", preload=True)
     # Downsample because the computer crashes if sampled with 1000 Hz :-(
-    raw = raw_orig.copy().resample(params['resampling_freq'])
+    raw.resample(params['resampling_freq'])
     
     # Extract integer trigger values from annotation descriptions (e.g. '121' or 'S 121' -> 121)
     trigger_mapping = {}
@@ -52,31 +51,32 @@ for subject_id in subject_ids:
         raw.interpolate_bads()
     # average reference
     raw.set_eeg_reference(ref_channels="average")
-    # Filter the data. These values are needed for the CNN to label the ICs effectively
-    raw_filt = raw.copy().filter(1, 100)
+    
+    # 1. Prepare data strictly for ICA fitting & ICLabel (Must be 1 - 100 Hz)
+    raw_ica = raw.copy().filter(l_freq=1.0, h_freq=100.0)
     # apply ICA
     ica = mne.preprocessing.ICA(method="infomax", fit_params=dict(extended=True), random_state=42)
-    ica.fit(raw_filt)
-    ic_labels = mne_icalabel.label_components(raw_filt, ica, method="iclabel")
+    ica.fit(raw_ica)
+    ic_labels = mne_icalabel.label_components(raw_ica, ica, method="iclabel")
     exclude_idx = [idx for idx, (label, prob) in enumerate(zip(ic_labels["labels"], ic_labels["y_pred_proba"])) if label not in ["brain", "other"] and prob > params["ica_reject_threshold"]]
     print(f"Excluding these ICA components: {exclude_idx}")
+    del raw_ica  # Free memory
     # ica.plot_properties(raw_filt, picks=exclude_idx)  # inspect the identified IC
-    # ica.apply() changes the Raw object in-place, so let's make a copy first:
-    reconst_raw = raw.copy()
-    ica.apply(reconst_raw, exclude=exclude_idx)
-    # band pass filter
-    reconst_raw_filt = reconst_raw.copy().filter(params["highpass"], params["lowpass"])
-    try:
-        os.makedirs(f"{get_data_path()}derivatives/preprocessing/sci-{subject_id}/eeg/")
-    except FileExistsError:
-        print("EEG derivatives preprocessing directory already exists")
+
+    # 2. Filter the MAIN data for your actual analysis BEFORE applying ICA
+    raw.filter(l_freq=params["highpass"], h_freq=params["lowpass"])
+    
+    # 3. Apply the ICA weights to your correctly filtered analysis data
+    reconst_raw_filt = raw.copy()
+    ica.apply(reconst_raw_filt, exclude=exclude_idx)
+    os.makedirs(f"{get_data_path()}derivatives/preprocessing/sci-{subject_id}/eeg/", exist_ok=True)
     # save the preprocessed raw file
     reconst_raw_filt.save(f"{get_data_path()}derivatives/preprocessing/sci-{subject_id}/eeg/sci-{subject_id}_task-spacecue_raw.fif",
                           overwrite=True)
     # save the ica fit
     ica.save(f"{get_data_path()}derivatives/preprocessing/sci-{subject_id}/eeg/sci-{subject_id}_task-spacecue_ica.fif",
              overwrite=True)
-    del ica, raw, raw_orig, reconst_raw, raw_filt  # delete as an interim step prior to autoreject (that is quite RAM intensive)
+    del ica, raw  # delete as an interim step prior to autoreject (that is quite RAM intensive)
     # save the indices that were excluded
     with open(f"{get_data_path()}derivatives/preprocessing/sci-{subject_id}/eeg/sci-{subject_id}_task-spacecue_ica_labels.txt", "w") as file:
         for item in exclude_idx:
@@ -93,17 +93,19 @@ for subject_id in subject_ids:
     beh = pd.read_csv(glob.glob(f"{get_data_path()}derivatives/preprocessing/sci-{subject_id}/beh/sci-{subject_id}_clean*.csv")[0])
     # append metadata to epochs
     epochs.metadata = beh
+    
+    # apply RANSAC for channel interpolation
+    ransac = autoreject.Ransac(n_jobs=n_jobs)
+    epochs_clean = ransac.fit_transform(epochs)
+
     # run AutoReject
     ar = autoreject.AutoReject(n_jobs=n_jobs, random_state=42)
-    epochs_ar, log = ar.fit_transform(epochs, return_log=True)
+    epochs_ar, log = ar.fit_transform(epochs_clean, return_log=True)
     # save epochs
-    try:
-        os.makedirs(f"{get_data_path()}derivatives/epoching/sci-{subject_id}/eeg/")
-    except FileExistsError:
-        print("EEG derivatives epoching directory already exists")
+    os.makedirs(f"{get_data_path()}derivatives/epoching/sci-{subject_id}/eeg/", exist_ok=True)
     epochs_ar.save(f"{get_data_path()}derivatives/epoching/sci-{subject_id}/eeg/sci-{subject_id}_task-spacecue-epo.fif",
                 overwrite=True)
     # save the drop log
     log.save(f"{get_data_path()}derivatives/epoching/sci-{subject_id}/eeg/sci-{subject_id}_task-spacecue-epo_log.npz",
              overwrite=True)
-    del epochs, epochs_ar, log, beh, ar
+    del epochs, epochs_clean, epochs_ar, log, beh, ar, ransac
