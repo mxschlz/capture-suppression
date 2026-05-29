@@ -23,7 +23,7 @@ params = dict(
     epoch_tmax=1.0
 )
 # get subject id and settings path
-for subject_id in subject_ids:
+for subject_id in subject_ids[-1:]:
     data_path = f"{get_data_path()}sourcedata/raw/sci-{subject_id}/eeg/"
     # read raw fif
     raw = mne.io.read_raw_fif(data_path + f"sci-{subject_id}_task-spacecue_raw.fif", preload=True)

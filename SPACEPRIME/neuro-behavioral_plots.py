@@ -150,3 +150,185 @@ sns.despine(fig=fig)
 plt.tight_layout() # Adjust layout to make room for suptitle
 
 plt.savefig("neuro-behavioral_plots.svg")
+
+
+def plot_target_towardness_schematic():
+    """
+    Generates a schematic layout of the digital response box and cursor trajectories
+    illustrating the concepts of high and low target towardness, using real cursor
+    trajectory data when available, and falling back to simulated paths otherwise.
+    """
+    import numpy as np
+    import glob
+    import os
+
+    # Define grid locations (same as in the experiment)
+    numpad_locations_dva = {
+        7: (-0.6, -0.6), 8: (0, -0.6), 9: (0.6, -0.6),
+        4: (-0.6, 0), 5: (0, 0), 6: (0.6, 0),
+        1: (-0.6, 0.6), 2: (0, 0.6), 3: (0.6, 0.6),
+    }
+
+    target_digit = 2
+    distractor_digit = 4
+
+    high_x, high_y = None, None
+    low_x, low_y = None, None
+
+    try:
+        # Load the concatenated variables to select trials
+        all_vars_df = SPACEPRIME.load_concatenated_csv("target_towardness_all_variables.csv")
+        
+        # Filter for correct trials where Target is 2 and Distractor is 4
+        match_df = all_vars_df[(all_vars_df['TargetDigit'] == 2) & 
+                              (all_vars_df['SingletonDigit'] == 4) & 
+                              (all_vars_df['response'] == 2)]
+        
+        if not match_df.empty:
+            # Sort by towardness to pick the best trials
+            match_sorted = match_df.sort_values(by='target_towardness')
+            
+            # Low towardness: pick the candidate with the lowest towardness (captured by distractor)
+            low_info = match_sorted.iloc[0]
+            # High towardness: pick the candidate with the highest towardness (direct path)
+            high_info = match_sorted.iloc[-1]
+            
+            # Helper function to load raw mouse data for a specific trial
+            def load_real_trajectory(sub, blk, trn):
+                data_path = SPACEPRIME.get_data_path()
+                sub_folder = f"sub-{int(sub)}"
+                pattern = os.path.join(data_path, "sourcedata", "raw", sub_folder, "beh", f"{sub_folder}*mouse_data.csv")
+                files = glob.glob(pattern)
+                if not files:
+                    return None
+                
+                raw_df = pd.read_csv(files[0])
+                raw_df['subject_id'] = int(sub)
+                
+                # Reconstruct block numbers based on trial_nr resets
+                raw_df['block'] = ((raw_df['trial_nr'] == 0) & (raw_df['trial_nr'].shift(1) != 0)).cumsum() - 1
+                
+                # Query specific trial up to the click (time <= 0)
+                trial_df = raw_df[(raw_df['block'] == int(blk)) & 
+                                  (raw_df['trial_nr'] == int(trn)) & 
+                                  (raw_df['time'] <= 0)].copy()
+                if trial_df.empty:
+                    return None
+                
+                # Resample trajectory to 50 Hz
+                from utils import resample_trial_trajectory
+                resampled = resample_trial_trajectory(trial_df, target_hz=50)
+                return resampled['x'].values, resampled['y'].values
+
+            # Try to load the trajectories
+            real_high = load_real_trajectory(high_info['subject_id'], high_info['block'], high_info['trial_nr'])
+            if real_high is not None:
+                high_x, high_y = real_high
+                print(f"Loaded real high towardness trajectory from sub-{int(high_info['subject_id'])}, block-{int(high_info['block'])}, trial-{int(high_info['trial_nr'])}")
+            
+            real_low = load_real_trajectory(low_info['subject_id'], low_info['block'], low_info['trial_nr'])
+            if real_low is not None:
+                low_x, low_y = real_low
+                print(f"Loaded real low towardness trajectory from sub-{int(low_info['subject_id'])}, block-{int(low_info['block'])}, trial-{int(low_info['trial_nr'])}")
+    except Exception as e:
+        print(f"Warning: Failed to load real trajectories: {e}. Using simulated paths as fallback.")
+
+    # Create figure
+    fig_schematic, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6.5))
+
+    def draw_schematic(ax, title, towardness_type, x_traj, y_traj):
+        ax.set_aspect('equal', adjustable='box')
+        ax.set_xlim(-0.8, 0.8)
+        ax.set_ylim(-0.8, 0.8)
+        
+        # Draw response box buttons with premium styling
+        for digit, (x, y) in numpad_locations_dva.items():
+            if digit == target_digit:
+                circle = plt.Circle((x, y), radius=0.09, facecolor='#E8F5E9', edgecolor='#2E7D32', linewidth=2, zorder=2)
+                ax.add_patch(circle)
+                ax.text(x, y + 0.02, str(digit), color='#2E7D32', ha='center', va='center', fontweight='bold', fontsize=14, zorder=3)
+                ax.text(x, y - 0.035, "Target", color='#2E7D32', ha='center', va='center', fontweight='bold', fontsize=8, zorder=3)
+            elif digit == distractor_digit:
+                circle = plt.Circle((x, y), radius=0.09, facecolor='#FFEBEE', edgecolor='#C62828', linewidth=2, zorder=2)
+                ax.add_patch(circle)
+                ax.text(x, y + 0.02, str(digit), color='#C62828', ha='center', va='center', fontweight='bold', fontsize=14, zorder=3)
+                ax.text(x, y - 0.035, "Dist.", color='#C62828', ha='center', va='center', fontweight='bold', fontsize=8, zorder=3)
+            elif digit == 5:
+                circle = plt.Circle((x, y), radius=0.09, facecolor='#ECEFF1', edgecolor='#37474F', linewidth=2, zorder=2)
+                ax.add_patch(circle)
+                ax.text(x, y + 0.02, "5", color='#37474F', ha='center', va='center', fontweight='bold', fontsize=14, zorder=3)
+                ax.text(x, y - 0.035, "Start", color='#37474F', ha='center', va='center', fontweight='bold', fontsize=8, zorder=3)
+            else:
+                circle = plt.Circle((x, y), radius=0.09, facecolor='#FAFAFA', edgecolor='#ECEFF1', linewidth=1, zorder=2)
+                ax.add_patch(circle)
+                ax.text(x, y, str(digit), color='#90A4AE', ha='center', va='center', fontweight='bold', fontsize=14, zorder=3)
+
+        # Define condition-specific colors (High: Vermilion, Low: Blue)
+        cond_color = '#D55E00' if towardness_type == 'high' else '#0072B2'
+
+        # Plot cursor trajectory
+        ax.plot(x_traj, y_traj, color=cond_color, linewidth=2.5, zorder=4, label='Cursor Path')
+        ax.plot(x_traj[0], y_traj[0], 'o', color='#4CAF50', markersize=9, zorder=5, label='Start Point')
+        ax.plot(x_traj[-1], y_traj[-1], 'X', color='#212121', markersize=9, zorder=5, label='Click Point')
+        
+        # Calculate vectors
+        avg_x = np.mean(x_traj)
+        avg_y = np.mean(y_traj)
+        
+        # Ideal target vector
+        ax.arrow(0, 0, 0, 0.6, color='#2E7D32', width=0.012, head_width=0.04, length_includes_head=True, zorder=6, label='Ideal Target Vector')
+        
+        # Ideal distractor vector
+        ax.arrow(0, 0, -0.6, 0, color='#D32F2F', width=0.012, head_width=0.04, length_includes_head=True, zorder=6, label='Ideal Distractor Vector')
+        
+        # Average trajectory vector
+        ax.arrow(0, 0, avg_x, avg_y, color='#7B1FA2', width=0.012, head_width=0.04, length_includes_head=True, zorder=7, label='Avg. Trajectory Vector')
+        
+        # Target towardness (projection) vector
+        proj_y = avg_y
+        ax.arrow(0, 0, 0, proj_y, color=cond_color, width=0.02, head_width=0.06, length_includes_head=True, zorder=8, label='Target Towardness (Proj.)')
+        
+        # Dashed projection helper line
+        ax.plot([avg_x, 0], [avg_y, proj_y], color='#78909C', linestyle='--', linewidth=1.5, zorder=9)
+        
+        # Remove ticks and add a subtle border
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_color('#CFD8DC')
+            spine.set_linewidth(1.5)
+            
+        ax.set_title(title, fontsize=16, fontweight='bold', pad=15)
+
+    # Use real trajectory if loaded, otherwise fall back to simulated coordinates
+    if high_x is not None and high_y is not None:
+        draw_schematic(ax1, "High Target Towardness\n(Direct Real Path)", 'high', high_x, high_y)
+    else:
+        t = np.linspace(0, 1, 100)
+        # Deflected path to the right (opposite the distractor) to visually separate the average and projection vectors
+        x_sim = 0.8 * t * (1 - t)
+        y_sim = 0.6 * t
+        draw_schematic(ax1, "High Target Towardness\n(Direct Path)", 'high', x_sim, y_sim)
+
+    if low_x is not None and low_y is not None:
+        draw_schematic(ax2, "Low Target Towardness\n(Deflected Real Path)", 'low', low_x, low_y)
+    else:
+        t = np.linspace(0, 1, 100)
+        # Extremely deflected path bending close to the distractor at (-0.6, 0)
+        x_sim = -2.4 * t * (1 - t)
+        y_sim = -0.4 * t * (1 - t) + 0.6 * t**2
+        draw_schematic(ax2, "Low Target Towardness\n(Deflected Path)", 'low', x_sim, y_sim)
+
+    # Add legend to the figure
+    handles, labels = ax1.get_legend_handles_labels()
+    # Filter unique labels for legend
+    by_label = dict(zip(labels, handles))
+    fig_schematic.legend(by_label.values(), by_label.keys(), loc='lower center', ncol=4, fontsize=11, frameon=True, bbox_to_anchor=(0.5, -0.08))
+
+    plt.tight_layout()
+    plt.savefig("target_towardness_schematic.svg", bbox_inches='tight')
+    print("Successfully saved target_towardness_schematic.svg")
+
+
+plot_target_towardness_schematic()
+
