@@ -13,6 +13,8 @@ OUTLIER_THRESH = 2
 subjects = sorted(os.listdir(f"{SPACECUE_explicit.get_data_path()}derivatives\\preprocessing")[1:])
 df = pd.concat([pd.read_csv(f"{SPACECUE_explicit.get_data_path()}derivatives\\preprocessing\\{subject}\\beh\\{subject}_clean.csv") for subject in subjects])
 
+df = df.query("subject_id != 25")  # below chance accuracy in all conditions
+
 df = remove_outliers(df, threshold=OUTLIER_THRESH, column_name="rt")
 
 # further preprocessing
@@ -150,7 +152,7 @@ df_single_trials['experimenter'] = pd.cut(df_single_trials['subject_id'],
 columns_to_keep = [
     'subject_id', 'age_group', 'experimenter', 'CueInstruction',
     'delay', 'cue_stim_delay_jitter', 'rt', 'select_target', 'absolute_trial_nr', 'age', 'CueDesignStrategy', 'Priming',
-    'cohort'
+    'cohort', "SingletonLoc"
 ]
 df_for_jamovi_single_trial = df_single_trials[columns_to_keep].copy()
 
