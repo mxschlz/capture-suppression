@@ -451,6 +451,24 @@ pd_final_df.to_csv(pd_output_path, index=False)
 print(f"Pd-specific long-format data saved to:\n{pd_output_path}")
 
 
+# --- NEW: Create and Save Control CSVs ---
+print("\n--- Creating Control CSVs (Negative N2ac, Positive Pd) ---")
+
+# Filter N2ac for negative-going single-trial amplitudes (using 50% threshold)
+n2ac_control_df = n2ac_final_df[n2ac_final_df['st_mean_amp_50'] < 0].copy()
+n2ac_control_output_path = f'{SPACEPRIME.get_data_path()}concatenated\\{paradigm}_n2ac_control_erp_behavioral_data.csv'
+n2ac_control_df.to_csv(n2ac_control_output_path, index=False)
+print(f"N2ac control data (st_mean_amp_50 < 0) saved to:\n{n2ac_control_output_path}")
+print(f"Retained {len(n2ac_control_df)} N2ac trials in the control dataset.")
+
+# Filter Pd for positive-going single-trial amplitudes (using 50% threshold)
+pd_control_df = pd_final_df[pd_final_df['st_mean_amp_50'] > 0].copy()
+pd_control_output_path = f'{SPACEPRIME.get_data_path()}concatenated\\{paradigm}_pd_control_erp_behavioral_data.csv'
+pd_control_df.to_csv(pd_control_output_path, index=False)
+print(f"Pd control data (st_mean_amp_50 > 0) saved to:\n{pd_control_output_path}")
+print(f"Retained {len(pd_control_df)} Pd trials in the control dataset.")
+
+
 # --- NEW: Calculate and Save Subject Averages for Correlation Analysis ---
 print("\n--- Calculating and Saving Subject-Averaged Data ---")
 
