@@ -40,9 +40,12 @@ all_subject_scores = np.zeros((n_subjects, len(times)))
 
 # Initialize for confusion matrix analysis
 n_classes = 9
-peak_window = (0.05, 0.3)  # Time window for confusion matrix (100ms to 400ms)
+peak_window = (0.05, 0.3)  # Time window for confusion matrix (50ms to 300ms)
 all_subject_conf_mx = np.zeros((n_subjects, n_classes, n_classes))
-all_subject_patterns = []  # List to store spatial patterns for each subject
+
+# Initialize for spatial patterns over time
+time_bins = [(-0.1, 0.0), (0.0, 0.1), (0.1, 0.2), (0.2, 0.3), (0.3, 0.4), (0.4, 0.5), (0.5, 0.6)]
+all_subject_patterns = {i: [] for i in range(len(time_bins))}
 
 # Initialize for temporal generalization
 if RUN_TEMPORAL_GENERALIZATION:
@@ -50,8 +53,8 @@ if RUN_TEMPORAL_GENERALIZATION:
 
 # Set up the decoder using Multinomial Logistic Regression
 clf = make_pipeline(StandardScaler(), LogisticRegression(multi_class='multinomial', solver='lbfgs', max_iter=1000))
-time_decoder = SlidingEstimator(clf, n_jobs=5, scoring='accuracy')  # n_jobs=1 inside loop
-cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)  # Using 5 splits for robust estimation
+time_decoder = SlidingEstimator(clf, n_jobs=-1, scoring='accuracy')  # n_jobs=1 inside loop
+cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)  # Using 3 splits for robust estimation
 if RUN_TEMPORAL_GENERALIZATION:
     tg_decoder = GeneralizingEstimator(clf, n_jobs=-1, scoring='accuracy')
 
@@ -64,7 +67,7 @@ for i, sub in enumerate(subjects):
     # Isolate this subject's data
     file_path = base_data_path / "derivatives" / "epoching" / f"sub-{sub}" / "eeg" / f"sub-{sub}_task-passive-epo.fif"
     sub_epochs = mne.read_epochs(file_path, preload=True)
-
+    sub_epochs.set_montage("easycap-M1")
     X_sub_full = sub_epochs.get_data()
     y_sub_original = sub_epochs.events[:, 2]  # The original trigger codes
 
@@ -88,7 +91,7 @@ for i, sub in enumerate(subjects):
     # Use n_jobs=-1 here to use all CPU cores for this subject's timepoints
     sub_scores = cross_val_multiscore(time_decoder, X_sub, y_sub, cv=cv, n_jobs=-1)
 
-    # Average across the 5 folds for this subject and store
+    # Average across the 3 folds for this subject and store
     all_subject_scores[i, :] = np.mean(sub_scores, axis=0)
 
     # --- 2. Confusion matrix at peak decoding time ---
@@ -104,17 +107,24 @@ for i, sub in enumerate(subjects):
     conf_mx = confusion_matrix(y_sub, y_pred, labels=labels)
     all_subject_conf_mx[i, :, :] = conf_mx
 
-    # --- 3. Extract Spatial Patterns at Peak Window ---
-    # We use LinearModel to automatically compute Haufe et al. (2014) patterns
-    pattern_clf = make_pipeline(StandardScaler(), LinearModel(LogisticRegression(multi_class='multinomial', solver='lbfgs', max_iter=1000)))
-    pattern_clf.fit(X_sub_windowed, y_sub)
-    
-    # Extract the spatial patterns
-    patterns = get_coef(pattern_clf, 'patterns_', inverse_transform=True)
-    
-    # Take the absolute mean across all classes to get an overall "importance map"
-    mean_pattern = np.mean(np.abs(patterns), axis=0)
-    all_subject_patterns.append(mean_pattern)
+    # --- 3. Extract Spatial Patterns for Time Bins ---
+    for bin_idx, t_bin in enumerate(time_bins):
+        t_idx_bin = sub_epochs.time_as_index(t_bin)
+        X_sub_bin = X_sub[:, :, t_idx_bin[0]:t_idx_bin[1]].mean(axis=2)
+
+        # We use LinearModel to automatically compute Haufe et al. (2014) patterns
+        pattern_clf = make_pipeline(StandardScaler(),
+                                    LinearModel(LogisticRegression(multi_class='multinomial',
+                                                                   solver='lbfgs', max_iter=1000)))
+        pattern_clf.fit(X_sub_bin, y_sub)
+        
+        # Extract the spatial patterns
+        patterns = get_coef(pattern_clf, 'patterns_', inverse_transform=True)
+        
+        # Take the absolute mean across all classes to get an overall "importance map"
+        mean_pattern = np.mean(np.abs(patterns), axis=0)
+        all_subject_patterns[bin_idx].append(mean_pattern)
+
     epochs_info = sub_epochs.info  # Save the info object for plotting the topomap later
 
     # --- 4. Temporal Generalization ---
@@ -186,14 +196,25 @@ plt.show()
 # ==========================================
 # PLOT GROUP-LEVEL SPATIAL PATTERNS
 # ==========================================
-group_pattern = np.mean(all_subject_patterns, axis=0)
+n_bins = len(time_bins)
+group_patterns = [np.mean(all_subject_patterns[i], axis=0) for i in range(n_bins)]
+vmax = max(np.max(p) for p in group_patterns)
 
-fig, ax = plt.subplots(figsize=(6, 5))
-im, _ = mne.viz.plot_topomap(group_pattern, epochs_info, axes=ax, show=False, cmap='Reds', contours=4, vlim=(0, np.max(group_pattern)))
+fig, axes = plt.subplots(1, n_bins, figsize=(2.5 * n_bins, 3.5))
+if n_bins == 1:
+    axes = [axes]
 
-plt.colorbar(im, ax=ax, label='Pattern Activation (A.U.)')
-ax.set_title(f'Group-Level Spatial Patterns\n(Peak Window: {peak_window[0]*1000:.0f}-{peak_window[1]*1000:.0f} ms)')
-plt.tight_layout()
+for bin_idx, (t_bin, group_pattern) in enumerate(zip(time_bins, group_patterns)):
+    ax = axes[bin_idx]
+    im, _ = mne.viz.plot_topomap(group_pattern, epochs_info, axes=ax, show=False,
+                                 cmap='Reds', contours=4, vlim=(0, vmax))
+    ax.set_title(f'{t_bin[0]*1000:.0f} to\n{t_bin[1]*1000:.0f} ms', fontsize=12)
+
+cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+fig.colorbar(im, cax=cbar_ax, label='Pattern Activation (A.U.)')
+fig.suptitle('Group-Level Spatial Patterns over Time', y=1.05)
+# Adjust layout to make room for colorbar
+plt.subplots_adjust(top=0.8, right=0.9, wspace=0.1)
 plt.show()
 
 # ==========================================
