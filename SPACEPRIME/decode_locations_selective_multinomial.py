@@ -29,7 +29,7 @@ samples = int((tmin.__abs__() + tmax) * 250 + 1)
 times = np.linspace(-0.2, 1.0, samples)
 
 # Toggle switch for Temporal Generalization Analysis
-run_temporal_generalization = False
+run_temporal_generalization = True
 
 # Get the base data directory and convert it to a Path object
 base_data_path = Path(get_data_path())
@@ -71,7 +71,7 @@ all_subject_patterns_control = {i: [] for i in range(len(time_bins))}
 
 
 # Set up the decoders (using 5-fold cross-validation)
-# Using Multinomial Logistic Regression natively for 9-class decoding
+# Using Multinomial Logistic Regression natively for 3-class decoding
 clf = make_pipeline(StandardScaler(), LogisticRegression(multi_class='multinomial', solver='lbfgs', max_iter=1000))
 time_decoder = SlidingEstimator(clf, n_jobs=-1, scoring='accuracy')
 cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
@@ -83,9 +83,9 @@ if run_temporal_generalization:
     all_subject_tg_scores_control = np.zeros((n_subjects, len(times), len(times)))
     tg_decoder = GeneralizingEstimator(clf, n_jobs=-1, scoring='accuracy')
 
-n_classes = 9
+n_classes = 3
 
-print(f"Starting within-task decoding (Selective Listening - Multinomial) for {n_subjects} subjects...")
+print(f"Starting within-task decoding for LOCATIONS (Selective Listening - Multinomial) for {n_subjects} subjects...")
 
 
 def get_cv_scores(X, y, is_corr, priming, cv, estimator):
@@ -149,25 +149,25 @@ for i, sub in enumerate(subjects):
     epochs.set_montage("easycap-M1")
     epochs.crop(times[0], times[-1])
     
-    # Target digits
+    # Target locations
     try:
-        y_target = epochs.metadata['TargetDigit'].values
+        y_target = epochs.metadata['TargetLoc'].values
     except KeyError:
-        print(f"Warning: 'TargetDigit' column not found in metadata for subject {sub}.")
+        print(f"Warning: 'TargetLoc' column not found in metadata for subject {sub}.")
         y_target = np.zeros(len(epochs))
     
-    # Distractor digits
+    # Distractor locations
     try:
-        y_distractor = epochs.metadata['SingletonDigit'].values
+        y_distractor = epochs.metadata['SingletonLoc'].values
     except KeyError:
-        print(f"Warning: 'SingletonDigit' column not found in metadata for subject {sub}.")
+        print(f"Warning: 'SingletonLoc' column not found in metadata for subject {sub}.")
         y_distractor = np.zeros(len(epochs))
         
-    # Control digits
+    # Control locations
     try:
-        y_control = epochs.metadata['Non-Singleton2Digit'].values
+        y_control = epochs.metadata['Non-Singleton2Loc'].values
     except KeyError:
-        print(f"Warning: 'Non-Singleton2Digit' column not found in metadata for subject {sub}.")
+        print(f"Warning: 'Non-Singleton2Loc' column not found in metadata for subject {sub}.")
         y_control = np.zeros(len(epochs))
 
     # Correct / Incorrect
@@ -185,8 +185,8 @@ for i, sub in enumerate(subjects):
         priming = np.full(len(epochs), np.nan)
 
     # --- Joint Mask for Simultaneous Trials ---
-    # Only keep trials where target, distractor, and control digits (1-9) were presented
-    valid_trials = (y_target >= 1) & (y_target <= 9) & (y_distractor >= 1) & (y_distractor <= 9) & (y_control >= 1) & (y_control <= 9)
+    # Only keep trials where target, distractor, and control locations were presented
+    valid_trials = (y_target > 0) & (y_distractor > 0) & (y_control > 0)
     X_shared = epochs.get_data()[valid_trials]
     y_target_valid = y_target[valid_trials]
     y_distractor_valid = y_distractor[valid_trials]
@@ -341,16 +341,16 @@ def plot_results(ax, mean_scores, std_error, clusters, cluster_p_values, title, 
 
 # Plot Targets
 plot_results(axes[0], mean_target, se_target, cl_target, p_target, 
-             f'Decoding Targets (N={n_subjects})', 'green')
+             f'Decoding Target Locations (N={n_subjects})', 'green')
 axes[0].set_ylabel('Accuracy')
 
 # Plot Distractors
 plot_results(axes[1], mean_distractor, se_distractor, cl_distractor, p_distractor, 
-             f'Decoding Distractors (N={n_subjects})', 'red')
+             f'Decoding Distractor Locations (N={n_subjects})', 'red')
 
 # Plot Control
 plot_results(axes[2], mean_control, se_control, cl_control, p_control, 
-             f'Decoding Control (N={n_subjects})', 'grey')
+             f'Decoding Control Locations (N={n_subjects})', 'grey')
 
 plt.tight_layout()
 plt.show()
@@ -473,10 +473,10 @@ if run_temporal_generalization:
         ax.set_title(title)
         return im
 
-    im1 = plot_tg(axes[0], mean_tg_target, sig_mask_tg_target, f'TG: Targets\n(Selective, N={n_subjects})')
+    im1 = plot_tg(axes[0], mean_tg_target, sig_mask_tg_target, f'TG: Target Locations\n(Selective, N={n_subjects})')
     axes[0].set_ylabel('Training Time (s)')
-    im2 = plot_tg(axes[1], mean_tg_distractor, sig_mask_tg_distractor, f'TG: Distractors\n(Selective, N={n_subjects})')
-    im3 = plot_tg(axes[2], mean_tg_control, sig_mask_tg_control, f'TG: Control\n(Selective, N={n_subjects})')
+    im2 = plot_tg(axes[1], mean_tg_distractor, sig_mask_tg_distractor, f'TG: Distractor Locations\n(Selective, N={n_subjects})')
+    im3 = plot_tg(axes[2], mean_tg_control, sig_mask_tg_control, f'TG: Control Locations\n(Selective, N={n_subjects})')
     
     fig.colorbar(im1, ax=axes.ravel().tolist(), label='Accuracy')
     plt.show()
@@ -511,7 +511,7 @@ for c, p_val in zip(diff_clusters, diff_cluster_p_values):
             plt.axvspan(sig_times[0], sig_times[-1], color='blue', alpha=0.3, label=label)
             label_added = True
 
-plt.title(f'Difference in Decoding Accuracy: Distractor vs Control\n(Group Level, N={n_subjects})')
+plt.title(f'Difference in Decoding Accuracy: Distractor vs Control Locations\n(Group Level, N={n_subjects})')
 plt.xlabel('Time (s)')
 plt.ylabel('Accuracy Difference (Distractor - Control)')
 plt.legend(loc='upper right')
@@ -544,7 +544,7 @@ for c, p_val in zip(diff_clusters_tc, diff_cluster_p_values_tc):
             plt.axvspan(sig_times[0], sig_times[-1], color='blue', alpha=0.3, label=label)
             label_added = True
 
-plt.title(f'Difference in Decoding Accuracy: Target vs Control\n(Group Level, N={n_subjects})')
+plt.title(f'Difference in Decoding Accuracy: Target vs Control Locations\n(Group Level, N={n_subjects})')
 plt.xlabel('Time (s)')
 plt.ylabel('Accuracy Difference (Target - Control)')
 plt.legend(loc='upper right')
@@ -639,7 +639,7 @@ for c, p_val in zip(cl_diff_t, p_diff_t):
             axes[0].axvspan(sig_times[0], sig_times[-1], color='blue', alpha=0.3, label=label)
             label_added = True
 
-axes[0].set_title('Target Decoding (Correct vs Incorrect)')
+axes[0].set_title('Target Location Decoding (Correct vs Incorrect)')
 axes[0].set_xlabel('Time (s)')
 axes[0].set_ylabel('Accuracy')
 axes[0].legend()
@@ -667,7 +667,7 @@ for c, p_val in zip(cl_diff_d, p_diff_d):
             axes[1].axvspan(sig_times[0], sig_times[-1], color='blue', alpha=0.3, label=label)
             label_added = True
 
-axes[1].set_title('Distractor Decoding (Correct vs Incorrect)')
+axes[1].set_title('Distractor Location Decoding (Correct vs Incorrect)')
 axes[1].set_xlabel('Time (s)')
 axes[1].legend()
 axes[1].grid(True, alpha=0.3)
@@ -694,7 +694,7 @@ for c, p_val in zip(cl_diff_c, p_diff_c):
             axes[2].axvspan(sig_times[0], sig_times[-1], color='blue', alpha=0.3, label=label)
             label_added = True
 
-axes[2].set_title('Control Decoding (Correct vs Incorrect)')
+axes[2].set_title('Control Location Decoding (Correct vs Incorrect)')
 axes[2].set_xlabel('Time (s)')
 axes[2].legend()
 axes[2].grid(True, alpha=0.3)
@@ -724,7 +724,7 @@ axes[0].fill_between(times, mean_t_pos - se_t_pos, mean_t_pos + se_t_pos, color=
 
 axes[0].axhline(chance_level, color='k', linestyle='--', label=f'Chance ({chance_level*100:.1f}%)')
 axes[0].axvline(0, color='k', linestyle='-')
-axes[0].set_title('Target Decoding (by Priming)')
+axes[0].set_title('Target Location Decoding (by Priming)')
 axes[0].set_xlabel('Time (s)')
 axes[0].set_ylabel('Accuracy')
 axes[0].legend()
@@ -744,7 +744,7 @@ axes[1].fill_between(times, mean_d_pos - se_d_pos, mean_d_pos + se_d_pos, color=
 
 axes[1].axhline(chance_level, color='k', linestyle='--')
 axes[1].axvline(0, color='k', linestyle='-')
-axes[1].set_title('Distractor Decoding (by Priming)')
+axes[1].set_title('Distractor Location Decoding (by Priming)')
 axes[1].set_xlabel('Time (s)')
 axes[1].legend()
 axes[1].grid(True, alpha=0.3)
@@ -763,7 +763,7 @@ axes[2].fill_between(times, mean_c_pos - se_c_pos, mean_c_pos + se_c_pos, color=
 
 axes[2].axhline(chance_level, color='k', linestyle='--')
 axes[2].axvline(0, color='k', linestyle='-')
-axes[2].set_title('Control Decoding (by Priming)')
+axes[2].set_title('Control Location Decoding (by Priming)')
 axes[2].set_xlabel('Time (s)')
 axes[2].legend()
 axes[2].grid(True, alpha=0.3)

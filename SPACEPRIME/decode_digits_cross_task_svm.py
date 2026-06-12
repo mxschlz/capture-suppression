@@ -49,6 +49,7 @@ for i, sub in enumerate(subjects):
     # --- A. Load Training Data (Passive Listening) ---
     train_file_path = base_data_path / "derivatives" / "epoching" / f"sub-{sub}" / "eeg" / f"sub-{sub}_task-passive-epo.fif"
     epochs_train = mne.read_epochs(train_file_path, preload=True)
+    epochs_train.set_montage("easycap-M1")
     
     X_train_full = epochs_train.get_data()
     y_train_original = epochs_train.events[:, 2]
@@ -68,6 +69,7 @@ for i, sub in enumerate(subjects):
     # --- B. Load Testing Data (Active/Selective Listening) ---
     test_file_path = base_data_path / "derivatives" / "epoching" / f"sub-{sub}" / "eeg" / f"sub-{sub}_task-spaceprime-epo.fif"
     epochs_test = mne.read_epochs(test_file_path, preload=True)
+    epochs_test.set_montage("easycap-M1")
     
     # Crop the test epochs to perfectly match the training epochs' time window
     epochs_test.crop(tmin=epochs_train.times[0], tmax=epochs_train.times[-1])
