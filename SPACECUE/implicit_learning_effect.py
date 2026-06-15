@@ -7,6 +7,7 @@ import seaborn as sns
 import pingouin as pg
 import glob
 from utils import calculate_trajectory_projections, get_vector_length # Assuming utils is importable
+import utils
 sns.set_theme(context="talk", style="ticks")
 
 
@@ -50,23 +51,9 @@ df['trial_nr'] = df['Trial Nr'].astype(int, errors='ignore')
 # --- Load and process raw trajectory data for towardness analysis ---
 print("Loading and processing raw trajectory data for towardness analysis...")
 
-# Find all subject folders for raw mouse data
-raw_data_base_path = os.path.join(SPACECUE.get_data_path(), 'sourcedata', 'raw')
-subject_folders = glob.glob(f"{raw_data_base_path}/sci-*")
-
-df_mouse_list = []
-for subject_folder in subject_folders:
-    mouse_file = glob.glob(f"{subject_folder}/beh/*mouse_data.csv")
-    if mouse_file:
-        temp_df = pd.read_csv(mouse_file[0])
-        sub_id_str = os.path.basename(subject_folder)
-        temp_df['subject_id'] = int(sub_id_str.split('-')[1])
-        df_mouse_list.append(temp_df)
-
-df_mouse = pd.concat(df_mouse_list, ignore_index=True)
-# Corrected line:
-df_mouse['block'] = df_mouse.groupby('subject_id')['trial_nr'].transform(
-    lambda x: ((x == 0) & (x.shift(1) != 0)).cumsum() - 1)
+# Load all subjects in sourcedata/raw
+all_subject_ids = [int(os.path.basename(d).split('-')[1]) for d in glob.glob(f"{raw_data_base_path}/sci-*")]
+df_mouse = utils.load_raw_mouse_trajectories(all_subject_ids, SPACECUE.get_data_path(), calculate_phase=False)
 
 # --- Filter out noisy trajectories ---
 print(f"Filtering out noisy trajectories beyond {TRAJECTORY_BOUNDARY_DVA} dva...")
