@@ -6,13 +6,14 @@ import glob
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
+import utils
 from utils import calculate_trajectory_projections
 import pingouin as pg
 sns.set_theme(context="talk", style="ticks")
 plt.ion()
 
 
-SUBJECT_IDS = [1,2,3,4,6,7,8,9,10,11]
+SUBJECT_IDS = [9]
 
 # --- Analysis & Plotting Parameters ---
 EXPERIMENT_FOLDER = "/derivatives/preprocessing"
@@ -21,7 +22,7 @@ EXPERIMENT_FOLDER = "/derivatives/preprocessing"
 HEATMAP_BOUNDS = (-4, 4)  # DVA range
 HEATMAP_BIN_SIZE = 0.1    # DVA per bin
 HEATMAP_SIGMA = 1.0       # Smoothing factor
-EXCLUDE_FRONTAL_TARGETS = True
+EXCLUDE_FRONTAL_TARGETS = False
 
 # Cross-Correlation Parameters
 CC_LAGS = np.arange(-45, 45)
@@ -102,92 +103,12 @@ if 'Age' in df.columns:
 # --- Load and process raw trajectory data for towardness analysis ---
 print("Loading and processing raw trajectory data for towardness analysis...")
 
-# Find all subject folders for raw mouse data
-raw_data_base_path = os.path.join(SPACECUE.get_data_path(), 'sourcedata', 'raw')
-subject_folders = glob.glob(f"{raw_data_base_path}/sci-*")
-
-df_mouse_list = []
-for subject_folder in subject_folders:
-    mouse_file = glob.glob(f"{subject_folder}/beh/*mouse_data.csv")
-    if mouse_file:
-        sub_id_str = os.path.basename(subject_folder)
-        try:
-            sub_id = int(sub_id_str.split('-')[1])
-        except (IndexError, ValueError):
-            continue
-
-        if sub_id not in SUBJECT_IDS:
-            continue
-
-        temp_df = pd.read_csv(mouse_file[0])
-        temp_df['subject_id'] = sub_id
-
-        # Calculate block to differentiate trials with same number across blocks
-        # 0 at start of file, or when trial_nr resets to 0 from non-zero
-        temp_df['block'] = ((temp_df['trial_nr'] == 0) & (temp_df['trial_nr'].shift(1).fillna(-1) != 0)).cumsum() - 1
-        
-        # Detect phases based on time jumps (0 -> negative) within each trial
-        # 0: Stimulus, 1: Response, 2: ITI
-        temp_df['phase'] = temp_df.groupby(['block', 'trial_nr'])['time'].transform(lambda x: (x.diff() < -0.5).cumsum())
-        
-        df_mouse_list.append(temp_df)
-
-df_mouse = pd.concat(df_mouse_list, ignore_index=True)
+# --- Load and process raw trajectory data ---
+print("Loading raw mouse trajectory data...")
+df_mouse = utils.load_raw_mouse_trajectories(SUBJECT_IDS, SPACECUE.get_data_path(), calculate_phase=True)
 
 print("Aligning trajectories to a canonical reference frame...")
-# Merge location data from the main dataframe into the mouse data
-location_cols = ['subject_id', 'block', 'trial_nr', 'Target_pos_x', 'Target_pos_y', 'Distractor_pos_x', 'Distractor_pos_y', 'Control2_pos_x', 'Control2_pos_y']
-df_mouse_with_locs = pd.merge(df_mouse, df[location_cols], on=['subject_id', 'block', 'trial_nr'], how='left')
-df_mouse_with_locs.dropna(subset=['Target_pos_x'], inplace=True)
-
-aligned_trials = []
-# Rotates and flips a single trial's trajectory and its item locations.
-for (sub_id, block, trial_nr), group in df_mouse_with_locs.groupby(['subject_id', 'block', 'trial_nr']):
-    trial_group = group.copy()
-    
-    # Get locations for this trial (they are constant within the group)
-    try:
-        target_pos = np.array([trial_group['Target_pos_x'].iloc[0], trial_group['Target_pos_y'].iloc[0]])
-        distractor_pos = np.array([trial_group['Distractor_pos_x'].iloc[0], trial_group['Distractor_pos_y'].iloc[0]])
-        control_pos = np.array([trial_group['Control2_pos_x'].iloc[0], trial_group['Control2_pos_y'].iloc[0]])
-    except IndexError:
-        continue # Should not happen if data is clean
-
-    # Get trajectory points for this trial
-    traj_points = trial_group[['x', 'y']].values
-
-    # --- 1. Rotation: Align target vector with positive y-axis (90 degrees) ---
-    target_angle = np.arctan2(target_pos[1], target_pos[0])
-    rotation_angle = np.pi / 2 - target_angle
-
-    cos_rot = np.cos(rotation_angle)
-    sin_rot = np.sin(rotation_angle)
-    rot_matrix = np.array([[cos_rot, -sin_rot], [sin_rot, cos_rot]])
-
-    # Rotate all coordinates for the trial
-    traj_rotated = np.dot(traj_points, rot_matrix.T)
-    target_rotated = np.dot(rot_matrix, target_pos)
-    distractor_rotated = np.dot(rot_matrix, distractor_pos)
-    control_rotated = np.dot(rot_matrix, control_pos)
-
-    # --- 2. Reflection: Ensure distractor is on the left (negative x-coordinate) ---
-    flip_factor = -1.0 if distractor_rotated[0] > 0 else 1.0
-
-    # Apply flip to the x-coordinates
-    trial_group['x_aligned'] = traj_rotated[:, 0] * flip_factor
-    trial_group['y_aligned'] = traj_rotated[:, 1]
-
-    # Store the fully aligned locations for this trial
-    trial_group['target_x_aligned'] = target_rotated[0] * flip_factor
-    trial_group['target_y_aligned'] = target_rotated[1]
-    trial_group['distractor_x_aligned'] = distractor_rotated[0] * flip_factor
-    trial_group['distractor_y_aligned'] = distractor_rotated[1]
-    trial_group['control_x_aligned'] = control_rotated[0] * flip_factor
-    trial_group['control_y_aligned'] = control_rotated[1]
-
-    aligned_trials.append(trial_group)
-
-df_mouse_aligned = pd.concat(aligned_trials, ignore_index=True) if aligned_trials else pd.DataFrame()
+df_mouse_aligned = utils.align_raw_mouse_trajectories(df_mouse, df)
 
 # Calculate the average trajectory vector for each trial using ALIGNED coordinates
 agg_dict = {
