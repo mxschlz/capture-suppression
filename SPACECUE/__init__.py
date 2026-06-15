@@ -213,7 +213,7 @@ def concatenate_eeg_and_save(paradigm, create_epochs_if_missing=True, create_tfr
                 f"WARNING: Cannot create TFRs for paradigm '{paradigm}' because its concatenated epochs file is missing or failed to create. Skipping TFR creation.")
             tfr_available_after = False # Ensure TFR is marked unavailable
         else:
-            #tfr_available_after = _create_and_save_concatenated_tfr(tfr_fpath, epochs_fpath)
+            tfr_available_after = _create_and_save_concatenated_tfr(tfr_fpath, epochs_fpath)
             if not tfr_available_after:
                  print(f"ERROR: Concatenated TFR creation for paradigm '{paradigm}' failed.")
 
