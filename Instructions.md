@@ -20,6 +20,7 @@ This document outlines the conventions, standards, and best practices for develo
 - Avoid default, high-saturation primary colors (pure red `#FF0000`, pure green `#00FF00`, etc.) in final plots.
 - Keep grid lines subtle: use light grey, thin lines, or dashed styles (`grid(True, linestyle='--', alpha=0.5)`).
 - When plotting averages (e.g., ERPs, gaze trajectories), **always show variance/uncertainty** using semi-transparent shaded error bands representing the Standard Error of the Mean (SEM) or Standard Deviation (SD) rather than just single lines.
+- Despine plots when logically applicable
 
 ## 3. Signal Processing & Analysis Rigor
 
@@ -33,3 +34,9 @@ This document outlines the conventions, standards, and best practices for develo
 
 - **Report Details**: When running statistical tests (e.g., clustering, t-tests, ANOVA), output the test statistics, degrees of freedom, $p$-values, and effect sizes (e.g., Cohen's $d$, Eta-squared).
 - **Assumptions**: Verify and report whether assumptions (such as normality or sphericity) were tested.
+- If applicable, use permutation tests for time series data
+
+## 5. General Considerations
+- Write code in a way so that it can preferably be executed line by line in a console. This should enable efficient manual debugging by the programmer. Use interactive backends but close figures regularly so that scripts do not get stuck upon execution.
+- Where applicable, use plt.ion() for immediate visualizations.
+- Be honest with the data results. Do not try to sell something half-baked that ultimately holds not true. Report null-results where it is the case.
