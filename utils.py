@@ -885,7 +885,10 @@ def calculate_trajectory_projections(row, locations_map, verbose=False):
     def get_projection(digit, avg_vec, locations_map):
         if pd.isna(digit): return np.nan
         dir_vec = np.array(locations_map.get(int(digit), (0, 0)))
-        return np.dot(avg_vec, dir_vec)
+        denom = np.dot(dir_vec, dir_vec)
+        if denom < 1e-9:
+            return 0.0
+        return (np.dot(avg_vec, dir_vec) / denom) * 100
 
     # --- 3. Identify all digits ---
     target_digit = row.get('TargetDigit')
@@ -1333,3 +1336,104 @@ def calculate_fractional_area_latency(erp_wave, times, percentage=0.5, plot=Fals
         plt.show(block=True)
 
     return latency
+
+
+def load_raw_mouse_trajectories(subject_ids, data_path, calculate_phase=False):
+    """
+    Loads all raw mouse trajectory files for specified subject IDs, sorts them,
+    extracts correct event-aligned block numbers, optionally calculates the
+    trial phase, and returns a single concatenated DataFrame.
+    """
+    import os
+    raw_data_base_path = os.path.join(data_path, 'sourcedata', 'raw')
+    df_mouse_list = []
+    
+    for sub_id in subject_ids:
+        subject_folder = os.path.join(raw_data_base_path, f"sci-{sub_id}")
+        mouse_files = sorted(glob.glob(f"{subject_folder}/beh/*mouse_data.csv"))
+        for m_file in mouse_files:
+            events_file = m_file.replace("mouse_data.csv", "events.csv")
+            if not os.path.exists(events_file):
+                print(f"  Warning: Events file {events_file} not found for {m_file}. Skipping.")
+                continue
+            
+            # Read events to find the starting block number
+            events_df = pd.read_csv(events_file)
+            events_block_min = events_df['block'].min()
+            
+            temp_df = pd.read_csv(m_file)
+            temp_df['subject_id'] = sub_id
+            
+            # Estimate block resets within this file and shift by starting block
+            estimated_block = ((temp_df['trial_nr'] == 0) & (temp_df['trial_nr'].shift(1).fillna(-1) != 0)).cumsum() - 1
+            temp_df['block'] = estimated_block + events_block_min
+            
+            if calculate_phase:
+                temp_df['phase'] = temp_df.groupby(['block', 'trial_nr'])['time'].transform(
+                    lambda x: (x.diff() < -0.5).cumsum()
+                )
+            
+            df_mouse_list.append(temp_df)
+            
+    if not df_mouse_list:
+        return pd.DataFrame()
+        
+    return pd.concat(df_mouse_list, ignore_index=True)
+
+
+def align_raw_mouse_trajectories(df_mouse, df_beh):
+    """
+    Merges location coordinates from behavioral data into mouse trajectory data,
+    and rotates/reflects the trajectories so that the target is aligned with
+    the positive y-axis (90 degrees) and the distractor is reflected to the
+    negative x-axis (left side).
+    """
+    location_cols = ['subject_id', 'block', 'trial_nr', 'Target_pos_x', 'Target_pos_y', 
+                     'Distractor_pos_x', 'Distractor_pos_y', 'Control2_pos_x', 'Control2_pos_y']
+    # Merge behavioral target/distractor positions into raw coordinates
+    df_mouse_with_locs = pd.merge(df_mouse, df_beh[location_cols], on=['subject_id', 'block', 'trial_nr'], how='left')
+    df_mouse_with_locs.dropna(subset=['Target_pos_x'], inplace=True)
+
+    aligned_trials = []
+    for (sub_id, block, trial_nr), group in df_mouse_with_locs.groupby(['subject_id', 'block', 'trial_nr']):
+        trial_group = group.copy()
+        try:
+            target_pos = np.array([trial_group['Target_pos_x'].iloc[0], trial_group['Target_pos_y'].iloc[0]])
+            distractor_pos = np.array([trial_group['Distractor_pos_x'].iloc[0], trial_group['Distractor_pos_y'].iloc[0]])
+            control_pos = np.array([trial_group['Control2_pos_x'].iloc[0], trial_group['Control2_pos_y'].iloc[0]])
+        except IndexError:
+            continue
+        
+        traj_points = trial_group[['x', 'y']].values
+        
+        # Rotation: align target vector with positive y-axis (90 deg)
+        target_angle = np.arctan2(target_pos[1], target_pos[0])
+        rotation_angle = np.pi / 2 - target_angle
+        cos_rot = np.cos(rotation_angle)
+        sin_rot = np.sin(rotation_angle)
+        rot_matrix = np.array([[cos_rot, -sin_rot], [sin_rot, cos_rot]])
+        
+        traj_rotated = np.dot(traj_points, rot_matrix.T)
+        target_rotated = np.dot(rot_matrix, target_pos)
+        distractor_rotated = np.dot(rot_matrix, distractor_pos)
+        control_rotated = np.dot(rot_matrix, control_pos)
+        
+        # Reflection: distractor always on the left (negative x)
+        flip_factor = -1.0 if distractor_rotated[0] > 0 else 1.0
+        
+        trial_group['x_aligned'] = traj_rotated[:, 0] * flip_factor
+        trial_group['y_aligned'] = traj_rotated[:, 1]
+        
+        trial_group['target_x_aligned'] = target_rotated[0] * flip_factor
+        trial_group['target_y_aligned'] = target_rotated[1]
+        trial_group['distractor_x_aligned'] = distractor_rotated[0] * flip_factor
+        trial_group['distractor_y_aligned'] = distractor_rotated[1]
+        trial_group['control_x_aligned'] = control_rotated[0] * flip_factor
+        trial_group['control_y_aligned'] = control_rotated[1]
+        
+        aligned_trials.append(trial_group)
+        
+    if not aligned_trials:
+        return pd.DataFrame()
+        
+    return pd.concat(aligned_trials, ignore_index=True)
