@@ -11,6 +11,8 @@ bad_chs = {
 	10: None,
 	11: None,
 	106: None,
+	107: ["P8"],
+	108: None,
 	101: None,
 	109: ["C6"],
 }
