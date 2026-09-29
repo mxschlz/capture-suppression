@@ -1,21 +1,38 @@
+import sys
+import os
 import mne
 import numpy as np
+import matplotlib
+# Use 'Agg' backend unless we are in an interactive console (like sys.ps1 or IPython)
+if not (hasattr(sys, 'ps1') or 'ipykernel' in sys.modules):
+    matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from SPACECUE import load_concatenated_epochs
 from mne.stats import permutation_cluster_1samp_test, spatio_temporal_cluster_1samp_test
 from scipy.stats import t
-from SPACECUE.subjects import subject_ids
-from plotting import difference_topos # Assuming this function is available and works as expected
 import seaborn as sns
 from mne.channels import find_ch_adjacency
+
+# Ensure project root is in python path
+try:
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+except NameError:
+    project_root = os.path.abspath(os.getcwd())
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from SPACECUE import load_concatenated_epochs
+from SPACECUE.subjects import subject_ids
+from plotting import difference_topos # Assuming this function is available and works as expected
+
 sns.set_theme(context="talk", style="ticks")
 plt.ion()
 
-# --- Script Parameters ---
+PLOTS_DIR = os.path.join(project_root, "spacecue", "plots")
+os.makedirs(PLOTS_DIR, exist_ok=True)
 
 # --- 2. General Script Parameters ---
 # Whether to plot the topographies or not (because that takes a while)
-PLOT_TOPOS = True
+PLOT_TOPOS = False
 
 # ROIs for Contra/Ipsi Calculation
 LEFT_ROI_DISTRACTOR = ["C3"]
@@ -50,21 +67,24 @@ TOPO_CMAP = 'RdBu_r'              # Colormap for topographies
 PLOT_SIGNIFICANT_SENSORS_TOPO = False # Whether to run and plot sensor cluster results
 # Define time windows for averaging topo data for cluster analysis (in seconds)
 N2AC_TOPO_CLUSTER_WINDOW = (0.2, 0.4) # Example: 220-380ms for N2ac-like activity
-PD_TOPO_CLUSTER_WINDOW = (0.2, 0.4)   # Example: 290-380ms for Pd-like activity
+PD_TOPO_CLUSTER_WINDOW = (0.3, 0.4)   # Example: 290-380ms for Pd-like activity
 # Alpha for sensor cluster p-values (can be same as ALPHA_STAT_CLUSTER)
 ALPHA_SENSOR_CLUSTER = 0.05
 # Mask parameters for plotting significant sensors
 SENSOR_MASK_PARAMS = dict(marker='o', markerfacecolor='w', markeredgecolor='k',
                           linewidth=0, markersize=5, markeredgewidth=1.5)
 # --- End of Parameters ---
-
 # --- Data Storage ---
+conditions = ['high-probability', 'low-probability']
 subject_data = {
-    'target_contra': [], 'target_ipsi': [], 'target_diff': [],
-    'distractor_contra': [], 'distractor_ipsi': [], 'distractor_diff': [],
-    'target_diff_topo': [], 'distractor_diff_topo': []
+    prob_cond: {
+        'target_contra': [], 'target_ipsi': [], 'target_diff': [],
+        'distractor_contra': [], 'distractor_ipsi': [], 'distractor_diff': [],
+        'target_diff_topo': [], 'distractor_diff_topo': []
+    } for prob_cond in conditions
 }
-processed_subjects = []
+processed_subjects = {prob_cond: [] for prob_cond in conditions}
+subject_ages = {}
 times_vector = None # To be populated from the first subject
 epochs_info = None  # To be populated from the first subject
 
@@ -78,6 +98,15 @@ print(f"Final number of trials after preprocessing: {len(epochs)}")
 # use standard montage (the existing montage of the epochs is wrong)
 montage = mne.channels.make_standard_montage("easycap-M1")
 epochs.set_montage(montage)
+
+fig_init = epochs.average().plot_joint(show=False)
+out_init = os.path.join(PLOTS_DIR, "erp_lateral_initial_joint.png")
+fig_init.savefig(out_init, dpi=300, bbox_inches='tight')
+print(f"Saved initial joint plot to: {out_init}")
+if hasattr(sys, 'ps1') or 'ipykernel' in sys.modules:
+    plt.show()
+else:
+    plt.close(fig_init)
 
 # --- Subject Loop ---
 for subject_id_num in subject_ids:
@@ -95,229 +124,231 @@ for subject_id_num in subject_ids:
         times_vector = epochs_sub.times.copy()
         epochs_info = epochs_sub.info.copy()
 
-    all_conds_sub = list(epochs_sub.event_id.keys())
-
-    try:
-        # TARGETS
-        left_target_epochs = epochs_sub[[x for x in all_conds_sub if "Target-1-Singleton-2" in x]].copy()
-        right_target_epochs = epochs_sub[[x for x in all_conds_sub if "Target-3-Singleton-2" in x]].copy()
-        print(f"  Target trials: {len(left_target_epochs)} left, {len(right_target_epochs)} right")
-        if len(left_target_epochs) == 0 or len(right_target_epochs) == 0:
-            print(f"  Skipping {subject_str} due to zero trials in one of the target conditions.")
-            continue
-
-        # DISTRACTORS
-        left_distractor_epochs = epochs_sub[[x for x in all_conds_sub if "Target-2-Singleton-1" in x]].copy()
-        right_distractor_epochs = epochs_sub[[x for x in all_conds_sub if "Target-2-Singleton-3" in x]].copy()
-        print(f"  Distractor trials: {len(left_distractor_epochs)} left, {len(right_distractor_epochs)} right")
-        if len(left_distractor_epochs) == 0 or len(right_distractor_epochs) == 0:
-            print(f"  Skipping {subject_str} due to zero trials in one of the distractor conditions.")
-            continue
-
-        # Calculate Subject-Level Ipsi/Contra ERPs (TARGETS)
-        contra_target_sub = np.mean(np.concatenate([
-            left_target_epochs.get_data(picks=RIGHT_ROI_TARGET),
-            right_target_epochs.get_data(picks=LEFT_ROI_TARGET)
-        ], axis=0), axis=(0, 1))
-        ipsi_target_sub = np.mean(np.concatenate([
-            left_target_epochs.get_data(picks=LEFT_ROI_TARGET),
-            right_target_epochs.get_data(picks=RIGHT_ROI_TARGET)
-        ], axis=0), axis=(0, 1))
-        diff_target_sub = contra_target_sub - ipsi_target_sub
-
-        # Calculate Subject-Level Ipsi/Contra ERPs (DISTRACTORS)
-        contra_distractor_sub = np.mean(np.concatenate([
-            left_distractor_epochs.get_data(picks=RIGHT_ROI_DISTRACTOR),
-            right_distractor_epochs.get_data(picks=LEFT_ROI_DISTRACTOR)
-        ], axis=0), axis=(0, 1))
-        ipsi_distractor_sub = np.mean(np.concatenate([
-            left_distractor_epochs.get_data(picks=LEFT_ROI_DISTRACTOR),
-            right_distractor_epochs.get_data(picks=RIGHT_ROI_DISTRACTOR)
-        ], axis=0), axis=(0, 1))
-        diff_distractor_sub = contra_distractor_sub - ipsi_distractor_sub
-
-        # Calculate Subject-Level Difference Topographies using imported function
-        # Assuming difference_topos returns dicts of {ch_name: time_series_array}
-        if PLOT_TOPOS:
-            target_diff_topo_dict_sub, distractor_diff_topo_dict_sub = difference_topos(epochs_sub, montage)
-
-            # Convert Topo Dictionaries to Ordered NumPy Arrays
-            n_channels = len(epochs_info.ch_names)
-            n_times_current = len(times_vector) # Should be consistent due to cropping
-            channel_order = epochs_info.ch_names
-
-            target_diff_topo_sub_arr = np.full((n_channels, n_times_current), np.nan)
-            for i, ch_name in enumerate(channel_order):
-                if ch_name in target_diff_topo_dict_sub:
-                    ch_data = np.asarray(target_diff_topo_dict_sub[ch_name])
-                    if ch_data.shape == (n_times_current,):
-                        target_diff_topo_sub_arr[i, :] = ch_data
-                    else:
-                        print(f"  Warning: Ch {ch_name} data shape mismatch ({ch_data.shape} vs {(n_times_current,)}) for target topo, {subject_str}.")
-                # else: # Already NaN by default
-                #     print(f"  Warning: Ch {ch_name} not in target_diff_topo_dict for {subject_str}.")
-
-            distractor_diff_topo_sub_arr = np.full((n_channels, n_times_current), np.nan)
-            for i, ch_name in enumerate(channel_order):
-                if ch_name in distractor_diff_topo_dict_sub:
-                    ch_data = np.asarray(distractor_diff_topo_dict_sub[ch_name])
-                    if ch_data.shape == (n_times_current,):
-                        distractor_diff_topo_sub_arr[i, :] = ch_data
-                    else:
-                        print(f"  Warning: Ch {ch_name} data shape mismatch ({ch_data.shape} vs {(n_times_current,)}) for distractor topo, {subject_str}.")
-                # else: # Already NaN by default
-                #     print(f"  Warning: Ch {ch_name} not in distractor_diff_topo_dict for {subject_str}.")
-
-        # Store Subject Results
-        subject_data['target_contra'].append(contra_target_sub)
-        subject_data['target_ipsi'].append(ipsi_target_sub)
-        subject_data['target_diff'].append(diff_target_sub)
-        subject_data['distractor_contra'].append(contra_distractor_sub)
-        subject_data['distractor_ipsi'].append(ipsi_distractor_sub)
-        subject_data['distractor_diff'].append(diff_distractor_sub)
-        processed_subjects.append(subject_id_num)
-        if PLOT_TOPOS:
-            subject_data['target_diff_topo'].append(target_diff_topo_sub_arr)
-            subject_data['distractor_diff_topo'].append(distractor_diff_topo_sub_arr)
-
-    except Exception as e_proc:
-        print(f"  Error during processing for subject {subject_str}: {e_proc}. Skipping subject for data aggregation.")
+    if epochs_sub.metadata is not None and 'Age' in epochs_sub.metadata.columns:
+        subject_ages[subject_id_num] = float(epochs_sub.metadata['Age'].dropna().iloc[0])
+    else:
+        print(f"  Warning: 'Age' not found in metadata for {subject_str}. Skipping.")
         continue
 
+    if 'DistractorProb' not in epochs_sub.metadata.columns:
+        print(f"  Warning: 'DistractorProb' not found in metadata for {subject_str}. Skipping.")
+        continue
 
-print(f"\n--- Successfully processed {len(processed_subjects)} subjects: {processed_subjects} ---")
+    for prob_cond in conditions:
+        try:
+            epochs_prob = epochs_sub[epochs_sub.metadata['DistractorProb'] == prob_cond]
+            print(f"  [{prob_cond}] Loaded {len(epochs_prob)} epochs.")
+            if len(epochs_prob) == 0:
+                print(f"  No trials for {prob_cond} condition in {subject_str}. Skipping.")
+                continue
 
-if not processed_subjects:
-    raise RuntimeError("No subjects were successfully processed. Cannot continue.")
+            all_conds_prob = list(epochs_prob.event_id.keys())
+
+            # TARGETS
+            if prob_cond == 'high-probability':
+                target_left_pattern = "Target-1-Singleton-3"
+                target_right_pattern = "Target-3-Singleton-1"
+            else:
+                target_left_pattern = "Target-1-Singleton-3"
+                target_right_pattern = "Target-3-Singleton-1"
+
+            left_target_epochs = epochs_prob[[x for x in all_conds_prob if target_left_pattern in x]].copy()
+            right_target_epochs = epochs_prob[[x for x in all_conds_prob if target_right_pattern in x]].copy()
+            print(f"    Target trials: {len(left_target_epochs)} left, {len(right_target_epochs)} right")
+            if len(left_target_epochs) == 0 or len(right_target_epochs) == 0:
+                print(f"    Skipping {subject_str} - {prob_cond} due to zero trials in one of the target conditions.")
+                continue
+
+            # DISTRACTORS
+            left_distractor_epochs = epochs_prob[[x for x in all_conds_prob if "Target-2-Singleton-1" in x]].copy()
+            right_distractor_epochs = epochs_prob[[x for x in all_conds_prob if "Target-2-Singleton-3" in x]].copy()
+            print(f"    Distractor trials: {len(left_distractor_epochs)} left, {len(right_distractor_epochs)} right")
+            if len(left_distractor_epochs) == 0 or len(right_distractor_epochs) == 0:
+                print(f"    Skipping {subject_str} - {prob_cond} due to zero trials in one of the distractor conditions.")
+                continue
+
+            # Calculate Subject-Level Ipsi/Contra ERPs (TARGETS)
+            contra_target_sub = np.mean(np.concatenate([
+                left_target_epochs.get_data(picks=RIGHT_ROI_TARGET),
+                right_target_epochs.get_data(picks=LEFT_ROI_TARGET)
+            ], axis=0), axis=(0, 1))
+            ipsi_target_sub = np.mean(np.concatenate([
+                left_target_epochs.get_data(picks=LEFT_ROI_TARGET),
+                right_target_epochs.get_data(picks=RIGHT_ROI_TARGET)
+            ], axis=0), axis=(0, 1))
+            diff_target_sub = contra_target_sub - ipsi_target_sub
+
+            # Calculate Subject-Level Ipsi/Contra ERPs (DISTRACTORS)
+            contra_distractor_sub = np.mean(np.concatenate([
+                left_distractor_epochs.get_data(picks=RIGHT_ROI_DISTRACTOR),
+                right_distractor_epochs.get_data(picks=LEFT_ROI_DISTRACTOR)
+            ], axis=0), axis=(0, 1))
+            ipsi_distractor_sub = np.mean(np.concatenate([
+                left_distractor_epochs.get_data(picks=LEFT_ROI_DISTRACTOR),
+                right_distractor_epochs.get_data(picks=RIGHT_ROI_DISTRACTOR)
+            ], axis=0), axis=(0, 1))
+            diff_distractor_sub = contra_distractor_sub - ipsi_distractor_sub
+
+            # Calculate Subject-Level Difference Topographies using imported function
+            if PLOT_TOPOS:
+                target_diff_topo_dict_sub, distractor_diff_topo_dict_sub = difference_topos(epochs_prob, montage)
+
+                # Convert Topo Dictionaries to Ordered NumPy Arrays
+                n_channels = len(epochs_info.ch_names)
+                n_times_current = len(times_vector) # Should be consistent due to cropping
+                channel_order = epochs_info.ch_names
+
+                target_diff_topo_sub_arr = np.full((n_channels, n_times_current), np.nan)
+                for i, ch_name in enumerate(channel_order):
+                    if ch_name in target_diff_topo_dict_sub:
+                        ch_data = np.asarray(target_diff_topo_dict_sub[ch_name])
+                        if ch_data.shape == (n_times_current,):
+                            target_diff_topo_sub_arr[i, :] = ch_data
+                        else:
+                            print(f"    Warning: Ch {ch_name} data shape mismatch ({ch_data.shape} vs {(n_times_current,)}) for target topo, {subject_str} - {prob_cond}.")
+
+                distractor_diff_topo_sub_arr = np.full((n_channels, n_times_current), np.nan)
+                for i, ch_name in enumerate(channel_order):
+                    if ch_name in distractor_diff_topo_dict_sub:
+                        ch_data = np.asarray(distractor_diff_topo_dict_sub[ch_name])
+                        if ch_data.shape == (n_times_current,):
+                            distractor_diff_topo_sub_arr[i, :] = ch_data
+                        else:
+                            print(f"    Warning: Ch {ch_name} data shape mismatch ({ch_data.shape} vs {(n_times_current,)}) for distractor topo, {subject_str} - {prob_cond}.")
+
+            # Store Subject Results
+            subject_data[prob_cond]['target_contra'].append(contra_target_sub)
+            subject_data[prob_cond]['target_ipsi'].append(ipsi_target_sub)
+            subject_data[prob_cond]['target_diff'].append(diff_target_sub)
+            subject_data[prob_cond]['distractor_contra'].append(contra_distractor_sub)
+            subject_data[prob_cond]['distractor_ipsi'].append(ipsi_distractor_sub)
+            subject_data[prob_cond]['distractor_diff'].append(diff_distractor_sub)
+            processed_subjects[prob_cond].append(subject_id_num)
+            if PLOT_TOPOS:
+                subject_data[prob_cond]['target_diff_topo'].append(target_diff_topo_sub_arr)
+                subject_data[prob_cond]['distractor_diff_topo'].append(distractor_diff_topo_sub_arr)
+
+        except Exception as e_proc:
+            print(f"    Error during processing for subject {subject_str} - {prob_cond}: {e_proc}. Skipping condition for this subject.")
+            continue
+
+
+for prob_cond in conditions:
+    print(f"\n--- Successfully processed {len(processed_subjects[prob_cond])} subjects for {prob_cond}: {processed_subjects[prob_cond]} ---")
+
+if not any(processed_subjects[prob_cond] for prob_cond in conditions):
+    raise RuntimeError("No subjects were successfully processed for any condition. Cannot continue.")
 if times_vector is None or epochs_info is None:
     raise RuntimeError("Essential data (times_vector or epochs_info) not populated. Check subject loop.")
 
 # Convert lists to numpy arrays
-for key in subject_data:
-    try:
-        subject_data[key] = np.array(subject_data[key])
-    except Exception as e_conv:
-        print(f"Could not convert {key} to numpy array. Data: {subject_data[key]}. Error: {e_conv}")
-        # Handle cases where lists might be empty or have inconsistent shapes if not caught earlier
-        if not subject_data[key]: # If list is empty
+for prob_cond in conditions:
+    for key in subject_data[prob_cond]:
+        if len(subject_data[prob_cond][key]) == 0:  # If list is empty
             if key.endswith('_topo'):
-                subject_data[key] = np.empty((0, len(epochs_info.ch_names), len(times_vector)))
+                subject_data[prob_cond][key] = np.empty((0, len(epochs_info.ch_names), len(times_vector)))
             else:
-                subject_data[key] = np.empty((0, len(times_vector)))
-        else: # If list is not empty but conversion failed, re-raise or handle
-            raise e_conv
+                subject_data[prob_cond][key] = np.empty((0, len(times_vector)))
+        else:
+            try:
+                subject_data[prob_cond][key] = np.array(subject_data[prob_cond][key])
+            except Exception as e_conv:
+                print(f"Could not convert {key} for {prob_cond} to numpy array. Error: {e_conv}")
+                raise e_conv
 
 
 # --- Group Level Analysis ---
-ga_data = {}
-for key in ['target_contra', 'target_ipsi', 'target_diff',
-            'distractor_contra', 'distractor_ipsi', 'distractor_diff',
-            'target_diff_topo', 'distractor_diff_topo']:
-    if subject_data[key].shape[0] > 0: # Check if there are subjects for this key
-        ga_data[key] = np.nanmean(subject_data[key], axis=0) # Use nanmean for topo data
-    else:
-        # Create empty array with correct dimensions if no subjects
-        if key.endswith('_topo'):
-            ga_data[key] = np.empty((len(epochs_info.ch_names), len(times_vector))) * np.nan
+ga_data = {prob_cond: {} for prob_cond in conditions}
+for prob_cond in conditions:
+    for key in ['target_contra', 'target_ipsi', 'target_diff',
+                'distractor_contra', 'distractor_ipsi', 'distractor_diff',
+                'target_diff_topo', 'distractor_diff_topo']:
+        if subject_data[prob_cond][key].shape[0] > 0: # Check if there are subjects for this key
+            ga_data[prob_cond][key] = np.nanmean(subject_data[prob_cond][key], axis=0) # Use nanmean for topo data
         else:
-            ga_data[key] = np.empty(len(times_vector)) * np.nan
+            # Create empty array with correct dimensions if no subjects
+            if key.endswith('_topo'):
+                ga_data[prob_cond][key] = np.empty((len(epochs_info.ch_names), len(times_vector))) * np.nan
+            else:
+                ga_data[prob_cond][key] = np.empty(len(times_vector)) * np.nan
 
 
 # --- Plot Grand Average ERPs with Cluster Significance ---
-fig_erp, ax_erp = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
-ax_erp = ax_erp.flatten()
+fig_erp, ax_erp = plt.subplots(2, 2, figsize=(16, 12), sharey=True)
 
-erp_plot_params = {
-    'Target': {'ax': ax_erp[0], 'contra': ga_data['target_contra'], 'ipsi': ga_data['target_ipsi'], 'diff': ga_data['target_diff'], 'color_diff': 'black'},
-    'Distractor': {'ax': ax_erp[1], 'contra': ga_data['distractor_contra'], 'ipsi': ga_data['distractor_ipsi'], 'diff': ga_data['distractor_diff'], 'color_diff': 'black'}
-}
+erp_plot_params = []
+for cond_idx, cond_name in enumerate(['Target', 'Distractor']):
+    color_waves = 'green' if cond_name == 'Target' else 'red'
+    for prob_idx, prob_cond in enumerate(conditions):
+        ax = ax_erp[cond_idx, prob_idx]
+        erp_plot_params.append({
+            'cond_name': cond_name,
+            'prob_cond': prob_cond,
+            'ax': ax,
+            'contra': ga_data[prob_cond][f'{cond_name.lower()}_contra'],
+            'ipsi': ga_data[prob_cond][f'{cond_name.lower()}_ipsi'],
+            'diff': ga_data[prob_cond][f'{cond_name.lower()}_diff'],
+            'color_diff': 'black',
+            'color_waves': color_waves
+        })
 
 # Group Level Statistics (Cluster Permutation Test)
-n_subs = len(processed_subjects)
-if n_subs >= 2: # Need at least 2 subjects for t-test based threshold and cluster test
-    deg_f = n_subs - 1
-    t_thresh_cluster = t.ppf(1 - ALPHA_STAT_CLUSTER / 2, deg_f) if deg_f > 0 else None # Threshold for forming clusters
-    print(f"\n--- Running Cluster Permutation Tests (N={n_subs}) ---")
-    if t_thresh_cluster:
-        print(f"Using cluster-forming t-threshold: {t_thresh_cluster:.3f} (df={deg_f}, alpha={ALPHA_STAT_CLUSTER}, two-tailed)")
+cluster_results = {prob_cond: {'Target': None, 'Distractor': None} for prob_cond in conditions}
+t_thresh_cluster = {prob_cond: None for prob_cond in conditions}
+
+for prob_cond in conditions:
+    n_subs = len(processed_subjects[prob_cond])
+    if n_subs >= 2: # Need at least 2 subjects for t-test based threshold and cluster test
+        deg_f = n_subs - 1
+        t_thresh_cluster[prob_cond] = t.ppf(1 - ALPHA_STAT_CLUSTER / 2, deg_f) if deg_f > 0 else None # Threshold for forming clusters
+        print(f"\n--- Running Cluster Permutation Tests for {prob_cond} (N={n_subs}) ---")
+        if t_thresh_cluster[prob_cond]:
+            print(f"Using cluster-forming t-threshold: {t_thresh_cluster[prob_cond]:.3f} (df={deg_f}, alpha={ALPHA_STAT_CLUSTER}, two-tailed)")
+        else:
+            print(f"Cannot calculate t-threshold for cluster forming for {prob_cond} (df <=0). Skipping cluster tests.")
+
+        if t_thresh_cluster[prob_cond]:
+            for cond_type in ['Target', 'Distractor']:
+                X_diff = subject_data[prob_cond][f'{cond_type.lower()}_diff']
+                if X_diff.shape[0] < 2 : # Not enough subjects for this specific condition
+                    print(f"Not enough data for {cond_type} ({prob_cond}) cluster test (N={X_diff.shape[0]}). Skipping.")
+                    continue
+
+                t_obs, clusters, cluster_pv, h0 = permutation_cluster_1samp_test(
+                    X_diff, threshold=t_thresh_cluster[prob_cond], n_permutations=N_PERMUTATIONS_CLUSTER,
+                    tail=CLUSTER_TAIL, n_jobs=N_JOBS, out_type="mask", seed=SEED, verbose=False
+                )
+                cluster_results[prob_cond][cond_type] = {'t_obs': t_obs, 'clusters': clusters, 'p_values': cluster_pv}
+                print(f"  {cond_type} ({prob_cond}): Found {np.sum(cluster_pv < ALPHA_STAT_CLUSTER)} significant cluster(s).")
     else:
-        print("Cannot calculate t-threshold for cluster forming (df <=0). Skipping cluster tests.")
-
-    cluster_results = {}
-    if t_thresh_cluster:
-        for cond_type in ['Target', 'Distractor']:
-            X_diff = subject_data[f'{cond_type.lower()}_diff']
-            if X_diff.shape[0] < 2 : # Not enough subjects for this specific condition
-                print(f"Not enough data for {cond_type} cluster test (N={X_diff.shape[0]}). Skipping.")
-                cluster_results[cond_type] = None
-                continue
-
-            t_obs, clusters, cluster_pv, h0 = permutation_cluster_1samp_test(
-                X_diff, threshold=t_thresh_cluster, n_permutations=N_PERMUTATIONS_CLUSTER,
-                tail=CLUSTER_TAIL, n_jobs=N_JOBS, out_type="mask", seed=SEED, verbose=False
-            )
-            cluster_results[cond_type] = {'t_obs': t_obs, 'clusters': clusters, 'p_values': cluster_pv}
-            print(f"  {cond_type}: Found {np.sum(cluster_pv < ALPHA_STAT_CLUSTER)} significant cluster(s).")
-else:
-    print("\nSkipping cluster permutation tests: not enough subjects processed (N < 2).")
-    cluster_results = {'Target': None, 'Distractor': None}
-    t_thresh_cluster = None
+        print(f"\nSkipping cluster permutation tests for {prob_cond}: not enough subjects processed (N < 2).")
 
 
-# Define colors before the loop for clarity and easy modification
-CONTRA_COLOR = "#C51B7D"  # Deep Orange
-IPSI_COLOR = "#8C510A"    # Dark Teal
-
-for cond_name, params in erp_plot_params.items():
+for params in erp_plot_params:
+    cond_name = params['cond_name']
+    prob_cond = params['prob_cond']
     ax = params['ax']
+    n_subs = len(processed_subjects[prob_cond])
+
     # Plot mean ERP waves with new, consistent colors
-    ax.plot(times_vector, params['contra'] * AMPLITUDE_SCALE_FACTOR, color=CONTRA_COLOR, linestyle='-', label="Contra")
-    ax.plot(times_vector, params['ipsi'] * AMPLITUDE_SCALE_FACTOR, color=IPSI_COLOR, linestyle='--', label="Ipsi")
+    ax.plot(times_vector, params['contra'] * AMPLITUDE_SCALE_FACTOR, color=params['color_waves'], linestyle='-', label="Contra")
+    ax.plot(times_vector, params['ipsi'] * AMPLITUDE_SCALE_FACTOR, color=params['color_waves'], linestyle='--', label="Ipsi")
     ax.plot(times_vector, params['diff'] * AMPLITUDE_SCALE_FACTOR, color=params['color_diff'], label="Contra-Ipsi", linewidth=2.5)
-
-    """# --- Add shaded error bands (SEM) that match the line colors ---
-    if n_subs > 1:
-        # Error band for Contra wave
-        contra_data_all_subs = subject_data[f'{cond_name.lower()}_contra']
-        sem_contra = np.std(contra_data_all_subs, axis=0, ddof=1) / np.sqrt(n_subs)
-        mean_contra = params['contra']
-        ax.fill_between(times_vector,
-                        (mean_contra - sem_contra) * AMPLITUDE_SCALE_FACTOR,
-                        (mean_contra + sem_contra) * AMPLITUDE_SCALE_FACTOR,
-                        color=CONTRA_COLOR, alpha=0.2, label='_nolegend_')
-
-        # Error band for Ipsi wave
-        ipsi_data_all_subs = subject_data[f'{cond_name.lower()}_ipsi']
-        sem_ipsi = np.std(ipsi_data_all_subs, axis=0, ddof=1) / np.sqrt(n_subs)
-        mean_ipsi = params['ipsi']
-        ax.fill_between(times_vector,
-                        (mean_ipsi - sem_ipsi) * AMPLITUDE_SCALE_FACTOR,
-                        (mean_ipsi + sem_ipsi) * AMPLITUDE_SCALE_FACTOR,
-                        color=IPSI_COLOR, alpha=0.2, label='_nolegend_')
-
-        # Error band for Difference wave
-        diff_data_all_subs = subject_data[f'{cond_name.lower()}_diff']
-        sem_diff = np.std(diff_data_all_subs, axis=0, ddof=1) / np.sqrt(n_subs)
-        mean_diff = params['diff']
-        ax.fill_between(times_vector,
-                        (mean_diff - sem_diff) * AMPLITUDE_SCALE_FACTOR,
-                        (mean_diff + sem_diff) * AMPLITUDE_SCALE_FACTOR,
-                        color=params['color_diff'], alpha=0.2, label='_nolegend_')"""
 
     ax.axhline(y=0, color='k', linestyle='--', linewidth=0.8)
     ax.axvline(x=0, color='k', linestyle=':', linewidth=0.8)
     ax.legend(loc='upper right')
-    ax.set_title(f"{cond_name} Lateralization (N={n_subs})")
+    ax.set_title(f"{cond_name} lateral - {prob_cond} (N={n_subs})")
     ax.set_ylabel("Amplitude [µV]")
     ax.set_xlabel("Time [s]")
     sns.despine(ax=ax)
 
     # Add significance lines for clusters
-    if cluster_results.get(cond_name) and t_thresh_cluster:
-        res = cluster_results[cond_name]
+    res = cluster_results[prob_cond].get(cond_name)
+    t_thresh = t_thresh_cluster[prob_cond]
+    if res and t_thresh:
         significant_cluster_plotted = False
         for i_c, cl_mask in enumerate(res['clusters']):
-            # cl_mask is already the boolean mask from out_type="mask"
             if res['p_values'][i_c] < ALPHA_STAT_CLUSTER:
                 cluster_times_sig = times_vector[cl_mask]
                 if len(cluster_times_sig) > 0:
@@ -333,468 +364,587 @@ for cond_name, params in erp_plot_params.items():
 
 fig_erp.tight_layout()
 fig_erp.canvas.draw_idle()
+out_erp = os.path.join(PLOTS_DIR, "erp_lateral_grand_average.png")
+fig_erp.savefig(out_erp, dpi=300, bbox_inches='tight')
+print(f"Saved grand average ERP plot to: {out_erp}")
+if hasattr(sys, 'ps1') or 'ipykernel' in sys.modules:
+    plt.show()
+else:
+    plt.close(fig_erp)
+
+# --- Plot Age Cohort Comparison of Lateralized Potentials (Young vs. Old) ---
+print("\n--- Running Age Cohort Comparisons for Lateralized Potentials (Young vs. Old) ---")
+fig_age, ax_age = plt.subplots(2, 2, figsize=(16, 12), sharey=True)
+
+# Colors for cohorts (consistent with EEG age-split plots)
+cohort_colors = {'Young': '#1F77B4', 'Old': '#FF7F0E'}
+
+for cond_idx, cond_name in enumerate(['Target', 'Distractor']):
+    for prob_idx, prob_cond in enumerate(conditions):
+        ax = ax_age[cond_idx, prob_idx]
+        
+        sub_ids = processed_subjects[prob_cond]
+        young_indices = [i for i, sub in enumerate(sub_ids) if subject_ages.get(sub, 0) < 36]
+        old_indices = [i for i, sub in enumerate(sub_ids) if subject_ages.get(sub, 0) >= 36]
+        
+        young_diffs = subject_data[prob_cond][f'{cond_name.lower()}_diff'][young_indices]
+        old_diffs = subject_data[prob_cond][f'{cond_name.lower()}_diff'][old_indices]
+        
+        n_young = len(young_indices)
+        n_old = len(old_indices)
+        
+        mean_young = np.nanmean(young_diffs, axis=0) * AMPLITUDE_SCALE_FACTOR
+        sem_young = (np.nanstd(young_diffs, axis=0) / np.sqrt(n_young)) * AMPLITUDE_SCALE_FACTOR if n_young > 1 else np.zeros_like(mean_young)
+        
+        mean_old = np.nanmean(old_diffs, axis=0) * AMPLITUDE_SCALE_FACTOR
+        sem_old = (np.nanstd(old_diffs, axis=0) / np.sqrt(n_old)) * AMPLITUDE_SCALE_FACTOR if n_old > 1 else np.zeros_like(mean_old)
+        
+        # Run cluster permutation test between Young vs. Old if both groups have enough subjects
+        sig_windows = []
+        if n_young >= 2 and n_old >= 2:
+            from mne.stats import permutation_cluster_test
+            F_obs, clusters, cluster_pv, H0 = permutation_cluster_test(
+                [young_diffs, old_diffs], n_permutations=N_PERMUTATIONS_CLUSTER, tail=0,
+                threshold=None, out_type='indices', verbose=False, seed=SEED
+            )
+            
+            is_sig = np.zeros(len(times_vector), dtype=bool)
+            if clusters:
+                for cl, p_val in zip(clusters, cluster_pv):
+                    if p_val < ALPHA_STAT_CLUSTER:
+                        is_sig[cl[0]] = True
+                        sig_windows.append(f"{times_vector[cl[0][0]]*1000:.0f}-{times_vector[cl[0][-1]]*1000:.0f} ms (p={p_val:.4f})")
+            
+            # Shade significant difference windows (p < 0.05)
+            for i in range(len(times_vector)):
+                if is_sig[i]:
+                    ax.axvspan(times_vector[i], times_vector[i] + (times_vector[1] - times_vector[0]),
+                               color='purple', alpha=0.08, lw=0)
+                        
+        # Plot young
+        ax.plot(times_vector, mean_young, color=cohort_colors['Young'], lw=2.5, label=f"Young (N={n_young})")
+        ax.fill_between(times_vector, mean_young - sem_young, mean_young + sem_young, color=cohort_colors['Young'], alpha=0.15)
+        
+        # Plot old
+        ax.plot(times_vector, mean_old, color=cohort_colors['Old'], lw=2.5, label=f"Old (N={n_old})")
+        ax.fill_between(times_vector, mean_old - sem_old, mean_old + sem_old, color=cohort_colors['Old'], alpha=0.15)
+        
+        ax.axhline(y=0, color='k', linestyle='--', linewidth=0.8)
+        ax.axvline(x=0, color='k', linestyle=':', linewidth=0.8)
+        ax.legend(loc='upper right')
+        ax.set_title(f"{cond_name} Diff - {prob_cond} (Young vs Old)")
+        ax.set_ylabel("Amplitude Difference [µV]")
+        ax.set_xlabel("Time [s]")
+        sns.despine(ax=ax)
+        
+        if sig_windows:
+            print(f"  {cond_name} ({prob_cond}) Young vs Old Sig. Windows: {', '.join(sig_windows)}")
+            
+fig_age.suptitle("Age Cohort Comparison of Lateralized Potentials (Young vs. Old)", fontsize=16, fontweight='bold', y=0.98)
+fig_age.tight_layout()
+fig_age.canvas.draw_idle()
+out_age = os.path.join(PLOTS_DIR, "erp_lateral_age_split.png")
+fig_age.savefig(out_age, dpi=300, bbox_inches='tight')
+print(f"Saved age-split ERP plot to: {out_age}")
+if hasattr(sys, 'ps1') or 'ipykernel' in sys.modules:
+    plt.show()
+else:
+    plt.close(fig_age)
 
 print("\n--- P-values for Significant ERP Time Clusters ---")
-for cond_name in ['Target', 'Distractor']:
-    if cluster_results.get(cond_name):
-        res = cluster_results[cond_name]
-        significant_clusters_found = False
+for prob_cond in conditions:
+    n_subs = len(processed_subjects[prob_cond])
+    print(f"\nCondition: {prob_cond} (N={n_subs})")
+    for cond_name in ['Target', 'Distractor']:
+        res = cluster_results[prob_cond].get(cond_name)
+        if res:
+            significant_clusters_found = False
 
-        # Iterate through each cluster found for the condition
-        for i, p_val in enumerate(res['p_values']):
-            # Check if the cluster's p-value is below the significance threshold
-            if p_val < ALPHA_STAT_CLUSTER:
-                significant_clusters_found = True
+            # Iterate through each cluster found for the condition
+            for i, p_val in enumerate(res['p_values']):
+                # Check if the cluster's p-value is below the significance threshold
+                if p_val < ALPHA_STAT_CLUSTER:
+                    significant_clusters_found = True
 
-                # Get the time points for this specific significant cluster
-                cluster_mask = res['clusters'][i]
-                cluster_times = times_vector[cluster_mask]
+                    # Get the time points for this specific significant cluster
+                    cluster_mask = res['clusters'][i]
+                    cluster_times = times_vector[cluster_mask]
 
-                start_time_ms = cluster_times[0] * 1000
-                end_time_ms = cluster_times[-1] * 1000
+                    start_time_ms = cluster_times[0] * 1000
+                    end_time_ms = cluster_times[-1] * 1000
 
-                # --- Calculate Effect Sizes for Reporting ---
-                # 1. T-values within the cluster
-                t_obs_cluster = res['t_obs'][cluster_mask]
-                mean_t = np.mean(t_obs_cluster)
-                peak_t = t_obs_cluster[np.argmax(np.abs(t_obs_cluster))]
+                    # --- Calculate Effect Sizes for Reporting ---
+                    # 1. T-values within the cluster
+                    t_obs_cluster = res['t_obs'][cluster_mask]
+                    mean_t = np.mean(t_obs_cluster)
+                    peak_t = t_obs_cluster[np.argmax(np.abs(t_obs_cluster))]
 
-                # 2. Cohen's d from T-value (d = t / sqrt(N))
-                cohens_d = mean_t / np.sqrt(n_subs)
+                    # 2. Cohen's d from T-value (d = t / sqrt(N))
+                    cohens_d = mean_t / np.sqrt(n_subs)
 
-                print(f"  {cond_name} -> "
-                      f"Time Window: {start_time_ms:.0f}-{end_time_ms:.0f} ms, "
-                      f"p-value: {p_val:.4f}, "
-                      f"Mean t: {mean_t:.2f}, Peak t: {peak_t:.2f}, Cohen's d: {cohens_d:.2f}")
+                    print(f"  {cond_name} -> "
+                          f"Time Window: {start_time_ms:.0f}-{end_time_ms:.0f} ms, "
+                          f"p-value: {p_val:.4f}, "
+                          f"Mean t: {mean_t:.2f}, Peak t: {peak_t:.2f}, Cohen's d: {cohens_d:.2f}")
 
-        if not significant_clusters_found:
-            print(f"  {cond_name}: No significant time clusters found.")
-    else:
-        print(f"  {cond_name}: No cluster analysis results available.")
+            if not significant_clusters_found:
+                print(f"  {cond_name}: No significant time clusters found.")
+        else:
+            print(f"  {cond_name}: No cluster analysis results available.")
 
 # --- Sensor-Space Cluster Permutation Test ---
-significant_sensors_masks = {'Target': None, 'Distractor': None}  # To store masks for plotting
+significant_sensors_masks = {prob_cond: {'Target': None, 'Distractor': None} for prob_cond in conditions}
 
-if PLOT_SIGNIFICANT_SENSORS_TOPO and epochs_info and n_subs >= 2 and t_thresh_cluster is not None:
-    print(f"\n--- Running Sensor-Space Cluster Permutation Tests (N={n_subs}) ---")
-    try:
-        adjacency, ch_names_adj = mne.channels.find_ch_adjacency(epochs_info, ch_type='eeg')
-        # Sanity check for channel names, though usually they match if epochs_info is consistent
-        if not np.array_equal(ch_names_adj, epochs_info.ch_names):
-            print("  Warning: Channel names from adjacency matrix differ from epochs_info.ch_names.")
-            # This might happen if some channels in epochs_info have no position.
-            # The adjacency matrix will be for channels with positions.
-            # We need to ensure data_for_test aligns with ch_names_adj if they differ.
-            # For now, assume they align or that permutation_cluster_1samp_test handles it via adjacency.
-    except Exception as e_adj:
-        print(f"  Could not create sensor adjacency matrix: {e_adj}. Skipping sensor cluster tests.")
-        adjacency = None
+for prob_cond in conditions:
+    n_subs = len(processed_subjects[prob_cond])
+    t_thresh = t_thresh_cluster[prob_cond]
+    if PLOT_SIGNIFICANT_SENSORS_TOPO and epochs_info and n_subs >= 2 and t_thresh is not None:
+        print(f"\n--- Running Sensor-Space Cluster Permutation Tests for {prob_cond} (N={n_subs}) ---")
+        try:
+            adjacency, ch_names_adj = mne.channels.find_ch_adjacency(epochs_info, ch_type='eeg')
+            # Sanity check for channel names, though usually they match if epochs_info is consistent
+            if not np.array_equal(ch_names_adj, epochs_info.ch_names):
+                print(f"  Warning: Channel names from adjacency matrix differ from epochs_info.ch_names for {prob_cond}.")
+        except Exception as e_adj:
+            print(f"  Could not create sensor adjacency matrix for {prob_cond}: {e_adj}. Skipping sensor cluster tests.")
+            adjacency = None
 
-    if adjacency is not None:
-        for cond_type, time_window in [("Target", N2AC_TOPO_CLUSTER_WINDOW),
-                                       ("Distractor", PD_TOPO_CLUSTER_WINDOW)]:
-            print(
-                f"  Processing {cond_type} difference topographies in window {time_window[0] * 1000:.0f}-{time_window[1] * 1000:.0f} ms")
-
-            # subject_data[..._diff_topo] is (n_subs, n_channels, n_times)
-            subject_topo_data_allchans = subject_data[f'{cond_type.lower()}_diff_topo']
-
-            if subject_topo_data_allchans.shape[0] < 2:
+        if adjacency is not None:
+            for cond_type, time_window in [("Target", N2AC_TOPO_CLUSTER_WINDOW),
+                                           ("Distractor", PD_TOPO_CLUSTER_WINDOW)]:
                 print(
-                    f"    Not enough data for {cond_type} sensor cluster test (N={subject_topo_data_allchans.shape[0]}). Skipping.")
-                continue
-            if subject_topo_data_allchans.shape[1] != len(epochs_info.ch_names):
-                print(
-                    f"    Channel count mismatch for {cond_type} topo data ({subject_topo_data_allchans.shape[1]}) vs epochs_info ({len(epochs_info.ch_names)}). Skipping.")
-                continue
+                    f"  Processing {cond_type} ({prob_cond}) difference topographies in window {time_window[0] * 1000:.0f}-{time_window[1] * 1000:.0f} ms")
 
-            # Find time indices for the window
-            t_start_idx = np.argmin(np.abs(times_vector - time_window[0]))
-            t_end_idx = np.argmin(np.abs(times_vector - time_window[1]))
+                # subject_data[..._diff_topo] is (n_subs, n_channels, n_times)
+                subject_topo_data_allchans = subject_data[prob_cond][f'{cond_type.lower()}_diff_topo']
 
-            if t_start_idx >= t_end_idx:  # Ensure window is valid and has some duration
-                print(
-                    f"    Invalid time window for {cond_type} ({time_window}), or window too small (indices: {t_start_idx}-{t_end_idx}). Skipping.")
-                continue
+                if subject_topo_data_allchans.shape[0] < 2:
+                    print(
+                        f"    Not enough data for {cond_type} ({prob_cond}) sensor cluster test (N={subject_topo_data_allchans.shape[0]}). Skipping.")
+                    continue
+                if subject_topo_data_allchans.shape[1] != len(epochs_info.ch_names):
+                    print(
+                        f"    Channel count mismatch for {cond_type} ({prob_cond}) topo data ({subject_topo_data_allchans.shape[1]}) vs epochs_info ({len(epochs_info.ch_names)}). Skipping.")
+                    continue
 
-            print(f"    Averaging data from time index {t_start_idx} to {t_end_idx}")
+                # Find time indices for the window
+                t_start_idx = np.argmin(np.abs(times_vector - time_window[0]))
+                t_end_idx = np.argmin(np.abs(times_vector - time_window[1]))
 
-            # Average data within this time window for each subject
-            # Data shape becomes (n_subjects, n_channels)
-            data_for_test = np.mean(subject_topo_data_allchans[:, :, t_start_idx:t_end_idx + 1], axis=2)
+                if t_start_idx >= t_end_idx:  # Ensure window is valid and has some duration
+                    print(
+                        f"    Invalid time window for {cond_type} ({prob_cond}) ({time_window}), or window too small. Skipping.")
+                    continue
 
-            # Check for all-NaN slices which can cause issues with stats
-            if np.all(np.isnan(data_for_test)):
-                print(f"    Data for {cond_type} in window {time_window} is all NaN. Skipping cluster test.")
-                continue
+                print(f"    Averaging data from time index {t_start_idx} to {t_end_idx}")
 
-            try:
-                # Note: permutation_cluster_1samp_test uses a t-test internally.
-                # threshold=t_thresh_cluster (calculated earlier for 1D ERPs)
-                t_obs_spatial, clusters_spatial, cluster_pv_spatial, H0_spatial = \
-                    mne.stats.permutation_cluster_1samp_test(
-                        data_for_test,
-                        threshold=t_thresh_cluster,
-                        n_permutations=N_PERMUTATIONS_CLUSTER,
-                        tail=CLUSTER_TAIL,
-                        adjacency=adjacency,
-                        n_jobs=N_JOBS,
-                        seed=SEED,
-                        out_type='mask',  # Gives boolean masks for clusters
-                        verbose=False
-                    )
+                # Average data within this time window for each subject
+                # Data shape becomes (n_subjects, n_channels)
+                data_for_test = np.mean(subject_topo_data_allchans[:, :, t_start_idx:t_end_idx + 1], axis=2)
 
-                # Combine masks of significant clusters
-                significant_cluster_indices = np.where(cluster_pv_spatial < ALPHA_SENSOR_CLUSTER)[0]
-                if len(significant_cluster_indices) > 0:
-                    # final_sensor_mask is True for any sensor part of any significant cluster
-                    final_sensor_mask = np.any(np.array(clusters_spatial)[significant_cluster_indices, :], axis=0)
-                    significant_sensors_masks[cond_type] = final_sensor_mask
+                # Check for all-NaN slices which can cause issues with stats
+                if np.all(np.isnan(data_for_test)):
+                    print(f"    Data for {cond_type} ({prob_cond}) in window {time_window} is all NaN. Skipping cluster test.")
+                    continue
 
-                    sig_ch_names = np.array(epochs_info.ch_names)[final_sensor_mask]
-                    print(f"    {cond_type}: Found {len(significant_cluster_indices)} significant sensor cluster(s).")
-                    print(f"      Significant sensors ({len(sig_ch_names)}): {', '.join(sig_ch_names)}")
-                else:
-                    significant_sensors_masks[cond_type] = None  # Explicitly set to None
-                    print(f"    {cond_type}: No significant sensor clusters found.")
+                try:
+                    t_obs_spatial, clusters_spatial, cluster_pv_spatial, H0_spatial = \
+                        mne.stats.permutation_cluster_1samp_test(
+                            data_for_test,
+                            threshold=t_thresh,
+                            n_permutations=N_PERMUTATIONS_CLUSTER,
+                            tail=CLUSTER_TAIL,
+                            adjacency=adjacency,
+                            n_jobs=N_JOBS,
+                            seed=SEED,
+                            out_type='mask',  # Gives boolean masks for clusters
+                            verbose=False
+                        )
 
-            except Exception as e_spatial_test:
-                print(f"    Error during sensor cluster test for {cond_type}: {e_spatial_test}")
-                significant_sensors_masks[cond_type] = None
-else:
-    if not PLOT_SIGNIFICANT_SENSORS_TOPO:
-        print("\nSkipping sensor permutation tests as PLOT_SIGNIFICANT_SENSORS_TOPO is False.")
-    elif epochs_info is None:
-        print("\nSkipping sensor permutation tests as epochs_info is not available.")
-    elif n_subs < 2:
-        print("\nSkipping sensor permutation tests: not enough subjects processed (N < 2).")
-    elif t_thresh_cluster is None:
-        print("\nSkipping sensor permutation tests: t_thresh_cluster not available (likely due to N < 2).")
+                    # Combine masks of significant clusters
+                    significant_cluster_indices = np.where(cluster_pv_spatial < ALPHA_SENSOR_CLUSTER)[0]
+                    if len(significant_cluster_indices) > 0:
+                        # final_sensor_mask is True for any sensor part of any significant cluster
+                        final_sensor_mask = np.any(np.array(clusters_spatial)[significant_cluster_indices, :], axis=0)
+                        significant_sensors_masks[prob_cond][cond_type] = final_sensor_mask
+
+                        sig_ch_names = np.array(epochs_info.ch_names)[final_sensor_mask]
+                        print(f"    {cond_type} ({prob_cond}): Found {len(significant_cluster_indices)} significant sensor cluster(s).")
+                        print(f"      Significant sensors ({len(sig_ch_names)}): {', '.join(sig_ch_names)}")
+                    else:
+                        significant_sensors_masks[prob_cond][cond_type] = None  # Explicitly set to None
+                        print(f"    {cond_type} ({prob_cond}): No significant sensor clusters found.")
+
+                except Exception as e_spatial_test:
+                    print(f"    Error during sensor cluster test for {cond_type} ({prob_cond}): {e_spatial_test}")
+                    significant_sensors_masks[prob_cond][cond_type] = None
 
 # --- TOPOGRAPHIES (PLOTTING ONLY SIGNIFICANT TIME INTERVALS) ---
 
-# --- 1. Determine Time Windows for Plotting from Significant ERP Clusters ---
-print("\n--- Determining time windows for topomap plotting from significant ERP clusters ---")
-topo_plot_windows = {'Target': [], 'Distractor': []}
+for prob_cond in conditions:
+    n_subs = len(processed_subjects[prob_cond])
+    t_thresh = t_thresh_cluster[prob_cond]
+    # --- 1. Determine Time Windows for Plotting from Significant ERP Clusters ---
+    print(f"\n--- Determining time windows for {prob_cond} topomap plotting from significant ERP clusters ---")
+    topo_plot_windows = {'Target': [], 'Distractor': []}
 
-for cond_name in ['Target', 'Distractor']:
-    significant_clusters_found = False
-    if cluster_results.get(cond_name) and t_thresh_cluster:
-        res = cluster_results[cond_name]
-        for i_c, cl_mask in enumerate(res['clusters']):
-            if res['p_values'][i_c] < ALPHA_STAT_CLUSTER:
-                significant_clusters_found = True
-                cluster_times = times_vector[cl_mask]
-                if len(cluster_times) > 0:
-                    # Add the (start, end) of this significant cluster
-                    topo_plot_windows[cond_name].append((cluster_times[0], cluster_times[-1]))
+    for cond_name in ['Target', 'Distractor']:
+        significant_clusters_found = False
+        res = cluster_results[prob_cond].get(cond_name)
+        if res and t_thresh:
+            for i_c, cl_mask in enumerate(res['clusters']):
+                if res['p_values'][i_c] < ALPHA_STAT_CLUSTER:
+                    significant_clusters_found = True
+                    cluster_times = times_vector[cl_mask]
+                    if len(cluster_times) > 0:
+                        # Add the (start, end) of this significant cluster
+                        topo_plot_windows[cond_name].append((cluster_times[0], cluster_times[-1]))
 
-    if significant_clusters_found:
-        # Combine overlapping or adjacent windows for cleaner reporting
-        # This part is for printing; the plotting logic handles overlaps correctly.
-        from itertools import groupby, count
-        combined_wins = []
-        for win_start, win_end in topo_plot_windows[cond_name]:
-            combined_wins.append(f"({win_start*1000:.0f}-{win_end*1000:.0f} ms)")
-        print(f"  Found significant time windows for {cond_name}: {', '.join(combined_wins)}")
-    else:
-        print(f"  No significant time clusters found for {cond_name}.")
+        if significant_clusters_found:
+            # Combine overlapping or adjacent windows for cleaner reporting
+            from itertools import groupby, count
+            combined_wins = []
+            for win_start, win_end in topo_plot_windows[cond_name]:
+                combined_wins.append(f"({win_start*1000:.0f}-{win_end*1000:.0f} ms)")
+            print(f"  Found significant time windows for {cond_name} ({prob_cond}): {', '.join(combined_wins)}")
+        else:
+            print(f"  No significant time clusters found for {cond_name} ({prob_cond}).")
 
 
-# --- 2. Generate Topomap Plots for the Determined Windows ---
-# Define a highlight color for the ROI time window
-ROI_HIGHLIGHT_COLOR = 'gold'
-ROI_HIGHLIGHT_LW = 2.5
+    # --- 2. Generate Topomap Plots for the Determined Windows ---
+    # Define a highlight color for the ROI time window
+    ROI_HIGHLIGHT_COLOR = 'gold'
+    ROI_HIGHLIGHT_LW = 2.5
 
-for plot_type in ["Target", "Distractor"]:
-    windows = topo_plot_windows.get(plot_type, [])
-    if not windows:
-        print(f"\nSkipping {plot_type} topomaps as no significant time windows were found.")
-        continue
-
-    # --- Calculate a consistent vmin/vmax across all clusters for this condition ---
-    all_times_for_cond = []
-    for start, end in windows:
-        times_in_win = np.arange(start, end + TOPO_TIME_STEP, TOPO_TIME_STEP)
-        times_in_win = times_in_win[times_in_win <= end]
-        all_times_for_cond.extend(list(times_in_win))
-    all_times_for_cond = sorted(list(set(all_times_for_cond)))
-
-    # Get grand average data for this condition
-    ga_diff_topo_data = ga_data[f'{plot_type.lower()}_diff_topo']
-    if np.all(np.isnan(ga_diff_topo_data)):
-        print(f"Skipping {plot_type} topomaps as grand average data is all NaN.")
-        continue
-
-    all_time_indices = [np.argmin(np.abs(times_vector - t)) for t in all_times_for_cond]
-    topo_data_all_times = ga_diff_topo_data[:, all_time_indices] * AMPLITUDE_SCALE_FACTOR
-    if np.all(np.isnan(topo_data_all_times)):
-        print(f"All selected topo data for {plot_type} is NaN. Setting default vlim for plots.")
-        max_abs_val = 1.0
-    else:
-        max_abs_val = np.nanmax(np.abs(topo_data_all_times))
-        if max_abs_val == 0: max_abs_val = 1.0
-
-    vmin, vmax = -max_abs_val, max_abs_val
-    print(f'\nCalculated consistent {plot_type} Topomap Limits: vmin = {vmin:.2f} µV, vmax = {vmax:.2f} µV')
-
-    # --- Loop over each significant window (cluster) to create a separate plot ---
-    for i_win, (start, end) in enumerate(windows):
-        # Generate time points for THIS window only
-        times_to_plot_topo = np.arange(start, end + TOPO_TIME_STEP, TOPO_TIME_STEP)
-        times_to_plot_topo = times_to_plot_topo[times_to_plot_topo <= end]
-
-        if len(times_to_plot_topo) == 0:
+    for plot_type in ["Target", "Distractor"]:
+        windows = topo_plot_windows.get(plot_type, [])
+        if not windows:
+            print(f"\nSkipping {plot_type} ({prob_cond}) topomaps as no significant time windows were found.")
             continue
 
-        n_plots = len(times_to_plot_topo)
-        print(f"\nGenerating {n_plots} topomaps for {plot_type} cluster {i_win + 1} ({start*1000:.0f}-{end*1000:.0f} ms)...")
+        # --- Calculate a consistent vmin/vmax across all clusters for this condition ---
+        all_times_for_cond = []
+        for start, end in windows:
+            times_in_win = np.arange(start, end + TOPO_TIME_STEP, TOPO_TIME_STEP)
+            times_in_win = times_in_win[times_in_win <= end]
+            all_times_for_cond.extend(list(times_in_win))
+        all_times_for_cond = sorted(list(set(all_times_for_cond)))
 
-        n_cols = int(np.ceil(np.sqrt(n_plots)))
-        n_rows = int(np.ceil(n_plots / n_cols))
+        # Get grand average data for this condition
+        ga_diff_topo_data = ga_data[prob_cond][f'{plot_type.lower()}_diff_topo']
+        if np.all(np.isnan(ga_diff_topo_data)):
+            print(f"Skipping {plot_type} ({prob_cond}) topomaps as grand average data is all NaN.")
+            continue
 
-        fig_topo, axes_topo = plt.subplots(n_rows, n_cols, figsize=(max(10, 2.5 * n_cols), 2.5 * n_rows))
-        axes_topo = np.array(axes_topo).flatten()
+        all_time_indices = [np.argmin(np.abs(times_vector - t)) for t in all_times_for_cond]
+        topo_data_all_times = ga_diff_topo_data[:, all_time_indices] * AMPLITUDE_SCALE_FACTOR
+        if np.all(np.isnan(topo_data_all_times)):
+            print(f"All selected topo data for {plot_type} ({prob_cond}) is NaN. Setting default vlim for plots.")
+            max_abs_val = 1.0
+        else:
+            max_abs_val = np.nanmax(np.abs(topo_data_all_times))
+            if max_abs_val == 0: max_abs_val = 1.0
 
-        time_indices_to_plot = [np.argmin(np.abs(times_vector - t)) for t in times_to_plot_topo]
+        vmin, vmax = -max_abs_val, max_abs_val
+        print(f'\nCalculated consistent {plot_type} ({prob_cond}) Topomap Limits: vmin = {vmin:.2f} µV, vmax = {vmax:.2f} µV')
 
-        current_sensor_mask = significant_sensors_masks.get(plot_type, None)
-        current_topo_cluster_window = N2AC_TOPO_CLUSTER_WINDOW if plot_type == "Target" else PD_TOPO_CLUSTER_WINDOW
+        # --- Loop over each significant window (cluster) to create a separate plot ---
+        for i_win, (start, end) in enumerate(windows):
+            # Generate time points for THIS window only
+            times_to_plot_topo = np.arange(start, end + TOPO_TIME_STEP, TOPO_TIME_STEP)
+            times_to_plot_topo = times_to_plot_topo[times_to_plot_topo <= end]
 
-        # This will hold the last plotted image for the colorbar
-        im = None
+            if len(times_to_plot_topo) == 0:
+                continue
 
-        for i, time_point in enumerate(times_to_plot_topo):
-            if i >= len(axes_topo): break
-            ax_current = axes_topo[i]
-            time_idx = time_indices_to_plot[i]
-            data_for_plot = ga_diff_topo_data[:, time_idx] * AMPLITUDE_SCALE_FACTOR
+            n_plots = len(times_to_plot_topo)
+            print(f"\nGenerating {n_plots} topomaps for {plot_type} ({prob_cond}) cluster {i_win + 1} ({start*1000:.0f}-{end*1000:.0f} ms)...")
 
-            im, cn = mne.viz.plot_topomap(data_for_plot, epochs_info, axes=ax_current, cmap=TOPO_CMAP,
-                                          vlim=(vmin, vmax), show=False, sensors=False, outlines='head',
-                                          mask=current_sensor_mask if PLOT_SIGNIFICANT_SENSORS_TOPO else None,
-                                          mask_params=SENSOR_MASK_PARAMS if PLOT_SIGNIFICANT_SENSORS_TOPO else None
-                                         )
-            ax_current.set_title(f"{time_point * 1000:.0f} ms", fontsize=10)
+            n_cols = int(np.ceil(np.sqrt(n_plots)))
+            n_rows = int(np.ceil(n_plots / n_cols))
 
-            if PLOT_SIGNIFICANT_SENSORS_TOPO and \
-               current_topo_cluster_window[0] <= time_point <= current_topo_cluster_window[1]:
-                plt.setp(ax_current.spines.values(), color=ROI_HIGHLIGHT_COLOR, linewidth=ROI_HIGHLIGHT_LW)
+            fig_topo, axes_topo = plt.subplots(n_rows, n_cols, figsize=(max(10, 2.5 * n_cols), 2.5 * n_rows))
+            axes_topo = np.array(axes_topo).flatten()
 
-        # Clean up unused axes
-        for j in range(i + 1, len(axes_topo)):
-            fig_topo.delaxes(axes_topo[j])
+            time_indices_to_plot = [np.argmin(np.abs(times_vector - t)) for t in times_to_plot_topo]
 
-        # Add colorbar to the figure
-        if im:
-            fig_topo.subplots_adjust(right=0.85, top=0.88)
-            cbar_ax = fig_topo.add_axes([0.88, 0.15, 0.03, 0.7])
-            cbar = plt.colorbar(im, cax=cbar_ax, format='%.1f')
-            cbar.set_label('Amplitude Difference [µV]')
+            current_sensor_mask = significant_sensors_masks[prob_cond].get(plot_type, None)
+            current_topo_cluster_window = N2AC_TOPO_CLUSTER_WINDOW if plot_type == "Target" else PD_TOPO_CLUSTER_WINDOW
 
-        # Add title to the figure
-        title = (f"Grand Average {plot_type} Difference Wave Topomaps (N={n_subs})\n"
-                 f"Significant Cluster {i_win + 1}: {start*1000:.0f} - {end*1000:.0f} ms")
-        if PLOT_SIGNIFICANT_SENSORS_TOPO:
-            title += f"\n(Time window for sensor cluster test highlighted in {ROI_HIGHLIGHT_COLOR.lower()})"
-        fig_topo.suptitle(title, fontsize=14, y=0.98)
+            # This will hold the last plotted image for the colorbar
+            im = None
 
-        fig_topo.tight_layout(rect=[0, 0, 0.85, 0.92])
+            for i, time_point in enumerate(times_to_plot_topo):
+                if i >= len(axes_topo): break
+                ax_current = axes_topo[i]
+                time_idx = time_indices_to_plot[i]
+                data_for_plot = ga_diff_topo_data[:, time_idx] * AMPLITUDE_SCALE_FACTOR
 
-# --- (New) Plot a single summary topomap for each condition's sensor test ---
+                im, cn = mne.viz.plot_topomap(data_for_plot, epochs_info, axes=ax_current, cmap=TOPO_CMAP,
+                                              vlim=(vmin, vmax), show=False, sensors=False, outlines='head',
+                                              mask=current_sensor_mask if PLOT_SIGNIFICANT_SENSORS_TOPO else None,
+                                              mask_params=SENSOR_MASK_PARAMS if PLOT_SIGNIFICANT_SENSORS_TOPO else None
+                                             )
+                ax_current.set_title(f"{time_point * 1000:.0f} ms", fontsize=10)
+
+                if PLOT_SIGNIFICANT_SENSORS_TOPO and \
+                   current_topo_cluster_window[0] <= time_point <= current_topo_cluster_window[1]:
+                    plt.setp(ax_current.spines.values(), color=ROI_HIGHLIGHT_COLOR, linewidth=ROI_HIGHLIGHT_LW)
+
+            # Clean up unused axes
+            for j in range(i + 1, len(axes_topo)):
+                fig_topo.delaxes(axes_topo[j])
+
+            # Add colorbar to the figure
+            if im:
+                fig_topo.subplots_adjust(right=0.85, top=0.88)
+                cbar_ax = fig_topo.add_axes([0.88, 0.15, 0.03, 0.7])
+                cbar = plt.colorbar(im, cax=cbar_ax, format='%.1f')
+                cbar.set_label('Amplitude Difference [µV]')
+
+            # Add title to the figure
+            title = (f"Grand Average {plot_type} ({prob_cond}) Difference Wave Topomaps (N={n_subs})\n"
+                     f"Significant Cluster {i_win + 1}: {start*1000:.0f} - {end*1000:.0f} ms")
+            if PLOT_SIGNIFICANT_SENSORS_TOPO:
+                title += f"\n(Time window for sensor cluster test highlighted in {ROI_HIGHLIGHT_COLOR.lower()})"
+            fig_topo.suptitle(title, fontsize=14, y=0.98)
+
+            fig_topo.tight_layout(rect=[0, 0, 0.85, 0.92])
+            cond_str = prob_cond.replace("-", "_")
+            out_topo = os.path.join(PLOTS_DIR, f"erp_lateral_topo_{plot_type.lower()}_{cond_str}_cluster_{i_win + 1}.png")
+            fig_topo.savefig(out_topo, dpi=200, bbox_inches='tight')
+            print(f"Saved topography plot to: {out_topo}")
+            if hasattr(sys, 'ps1') or 'ipykernel' in sys.modules:
+                plt.show()
+            else:
+                plt.close(fig_topo)
+
+# --- Plot summary topomaps for sensor cluster analysis ---
 print("\n--- Plotting Summary Topomaps for Sensor Cluster Analysis ---")
-if PLOT_SIGNIFICANT_SENSORS_TOPO and n_subs >= 2:
-    fig_summary_topo, axes_summary = plt.subplots(1, 2, figsize=(10, 5), squeeze=False)
-    axes_summary = axes_summary.flatten()
+if PLOT_SIGNIFICANT_SENSORS_TOPO:
+    for prob_cond in conditions:
+        n_subs = len(processed_subjects[prob_cond])
+        if n_subs >= 2:
+            fig_summary_topo, axes_summary = plt.subplots(1, 2, figsize=(10, 5), squeeze=False)
+            axes_summary = axes_summary.flatten()
 
-    summary_plot_params = {
-        'Target': {
-            'ax': axes_summary[0],
-            'window': N2AC_TOPO_CLUSTER_WINDOW,
-            'mask': significant_sensors_masks.get('Target')
-        },
-        'Distractor': {
-            'ax': axes_summary[1],
-            'window': PD_TOPO_CLUSTER_WINDOW,
-            'mask': significant_sensors_masks.get('Distractor')
-        }
-    }
+            summary_plot_params = {
+                'Target': {
+                    'ax': axes_summary[0],
+                    'window': N2AC_TOPO_CLUSTER_WINDOW,
+                    'mask': significant_sensors_masks[prob_cond].get('Target')
+                },
+                'Distractor': {
+                    'ax': axes_summary[1],
+                    'window': PD_TOPO_CLUSTER_WINDOW,
+                    'mask': significant_sensors_masks[prob_cond].get('Distractor')
+                }
+            }
 
-    # Find a common color limit for both plots for better comparison
-    vmax_summary = 0
-    for cond_type, params in summary_plot_params.items():
-        ga_topo_data = ga_data[f'{cond_type.lower()}_diff_topo']
-        if np.any(np.isnan(ga_topo_data)): continue
-        t_start_idx = np.argmin(np.abs(times_vector - params['window'][0]))
-        t_end_idx = np.argmin(np.abs(times_vector - params['window'][1]))
+            # Find a common color limit for both plots for better comparison
+            vmax_summary = 0
+            for cond_type, params in summary_plot_params.items():
+                ga_topo_data = ga_data[prob_cond][f'{cond_type.lower()}_diff_topo']
+                if np.any(np.isnan(ga_topo_data)): continue
+                t_start_idx = np.argmin(np.abs(times_vector - params['window'][0]))
+                t_end_idx = np.argmin(np.abs(times_vector - params['window'][1]))
 
-        # Average GA data over the window
-        data_to_plot = np.mean(ga_topo_data[:, t_start_idx:t_end_idx + 1], axis=1) * AMPLITUDE_SCALE_FACTOR
-        current_max = np.nanmax(np.abs(data_to_plot))
-        if current_max > vmax_summary:
-            vmax_summary = current_max
+                # Average GA data over the window
+                data_to_plot = np.mean(ga_topo_data[:, t_start_idx:t_end_idx + 1], axis=1) * AMPLITUDE_SCALE_FACTOR
+                current_max = np.nanmax(np.abs(data_to_plot))
+                if current_max > vmax_summary:
+                    vmax_summary = current_max
 
-    if vmax_summary == 0: vmax_summary = 1.0  # Avoid vlim=(0,0)
+            if vmax_summary == 0: vmax_summary = 1.0  # Avoid vlim=(0,0)
 
-    im = None  # To hold the last plotted image for the colorbar
-    for cond_type, params in summary_plot_params.items():
-        ax = params['ax']
-        window = params['window']
-        mask = params['mask']
+            im = None  # To hold the last plotted image for the colorbar
+            for cond_type, params in summary_plot_params.items():
+                ax = params['ax']
+                window = params['window']
+                mask = params['mask']
 
-        # Get the grand-average data averaged over the specified window
-        ga_topo_data = ga_data[f'{cond_type.lower()}_diff_topo']
-        if np.all(np.isnan(ga_topo_data)):
-            ax.set_title(f"{cond_type} Difference\n(Data not available)")
-            ax.axis('off')
-            continue
+                # Get the grand-average data averaged over the specified window
+                ga_topo_data = ga_data[prob_cond][f'{cond_type.lower()}_diff_topo']
+                if np.all(np.isnan(ga_topo_data)):
+                    ax.set_title(f"{cond_type} Difference ({prob_cond})\n(Data not available)")
+                    ax.axis('off')
+                    continue
 
-        t_start_idx = np.argmin(np.abs(times_vector - window[0]))
-        t_end_idx = np.argmin(np.abs(times_vector - window[1]))
-        data_to_plot = np.mean(ga_topo_data[:, t_start_idx:t_end_idx + 1], axis=1) * AMPLITUDE_SCALE_FACTOR
+                t_start_idx = np.argmin(np.abs(times_vector - window[0]))
+                t_end_idx = np.argmin(np.abs(times_vector - window[1]))
+                data_to_plot = np.mean(ga_topo_data[:, t_start_idx:t_end_idx + 1], axis=1) * AMPLITUDE_SCALE_FACTOR
 
-        im, _ = mne.viz.plot_topomap(
-            data_to_plot,
-            epochs_info,
-            axes=ax,
-            cmap=TOPO_CMAP,
-            vlim=(-vmax_summary, vmax_summary),
-            show=False,
-            sensors=False,
-            outlines='head',
-            mask=None,
-            mask_params=SENSOR_MASK_PARAMS
+                im, _ = mne.viz.plot_topomap(
+                    data_to_plot,
+                    epochs_info,
+                    axes=ax,
+                    cmap=TOPO_CMAP,
+                    vlim=(-vmax_summary, vmax_summary),
+                    show=False,
+                    sensors=False,
+                    outlines='head',
+                    mask=mask,
+                    mask_params=SENSOR_MASK_PARAMS
+                )
+
+                title = f"{cond_type} Difference ({prob_cond})\n({window[0] * 1000:.0f}-{window[1] * 1000:.0f} ms)"
+                ax.set_title(title)
+
+            # Add a single colorbar for the summary figure
+            if im:
+                fig_summary_topo.subplots_adjust(right=0.85)
+                cbar_ax = fig_summary_topo.add_axes([0.88, 0.25, 0.03, 0.5])
+                cbar = plt.colorbar(im, cax=cbar_ax)
+                cbar.set_label('Amplitude Difference [µV]')
+            fig_summary_topo.suptitle(f"Summary of Sensor-Space Cluster Analysis for {prob_cond} (N={n_subs})", fontsize=14, y=0.98)
+            fig_summary_topo.tight_layout(rect=[0, 0, 0.85, 0.92])
+            cond_str = prob_cond.replace("-", "_")
+            out_summary_topo = os.path.join(PLOTS_DIR, f"erp_lateral_sensor_cluster_summary_{cond_str}.png")
+            fig_summary_topo.savefig(out_summary_topo, dpi=200, bbox_inches='tight')
+            print(f"Saved sensor cluster summary plot to: {out_summary_topo}")
+            if hasattr(sys, 'ps1') or 'ipykernel' in sys.modules:
+                plt.show()
+            else:
+                plt.close(fig_summary_topo)
+
+# Run mass univariate analysis for each condition
+for prob_cond in conditions:
+    n_subs = len(processed_subjects[prob_cond])
+    dist_diff_topo = subject_data[prob_cond]["distractor_diff_topo"]
+    if n_subs >= 2 and dist_diff_topo.shape[0] >= 2:
+        print(f"\n--- Running Mass Univariate Spatio-Temporal Analysis for {prob_cond} (N={n_subs}) ---")
+        # 1. define reshaped data
+        X = dist_diff_topo.transpose([0, 2, 1])
+        # 2. Define the Spatial Connectivity
+        connectivity, ch_names = find_ch_adjacency(epochs.info, ch_type='eeg')
+
+        # 3. Run the Mass Univariate Test
+        t_obs, clusters, cluster_pv, H0 = spatio_temporal_cluster_1samp_test(
+            X,
+            adjacency=connectivity,
+            n_permutations=1000,
+            tail=0,  # Two-tailed test
+            threshold=None # Uses a standard t-threshold based on p < 0.05
         )
 
-        title = f"{cond_type} Difference\n({window[0] * 1000:.0f}-{window[1] * 1000:.0f} ms)"
-        ax.set_title(title)
+        # 4. Identify Significant Clusters
+        significant_points = np.where(cluster_pv < 0.05)[0]
 
-    # Add a single colorbar for the summary figure
-    if im:
-        fig_summary_topo.subplots_adjust(right=0.85)
-        cbar_ax = fig_summary_topo.add_axes([0.88, 0.25, 0.03, 0.5])
-        cbar = plt.colorbar(im, cax=cbar_ax)
-        # Corrected the unit from [mV/m²] to [µV] to match the data scaling
-        cbar.set_label('Amplitude Difference [µV]')
-    fig_summary_topo.suptitle(f"Summary of Sensor-Space Cluster Analysis (N={n_subs})", fontsize=14, y=0.98)
-    fig_summary_topo.tight_layout(rect=[0, 0, 0.85, 0.92])
+        if len(significant_points) > 0:
+            print(f"\n--- Visualizing {len(significant_points)} Significant Spatio-Temporal Clusters for {prob_cond} ---")
 
-# Reveal mass univariate analysis results for N2ac
-# 1. define reshaped data
-X = subject_data["distractor_diff_topo"].transpose([0, 2, 1])
-# 2. Define the Spatial Connectivity
-# This tells the algorithm which electrodes are neighbors so it can form spatial clusters.
-connectivity, ch_names = find_ch_adjacency(epochs.info, ch_type='eeg')
+            # Determine common scale for all cluster plots based on T-values
+            v_max_abs = np.nanmax(np.abs(t_obs))
 
-# 3. Run the Mass Univariate Test
-# We use a 1-sample t-test to see where the difference is significantly different from 0.
-t_obs, clusters, cluster_pv, H0 = spatio_temporal_cluster_1samp_test(
-    X,
-    adjacency=connectivity,
-    n_permutations=1000,
-    tail=0,  # Two-tailed test
-    threshold=None # Uses a standard t-threshold based on p < 0.05
-)
+            for i_clust, clust_idx in enumerate(significant_points):
+                # clusters[clust_idx] is a tuple of arrays (time_indices, channel_indices)
+                time_inds, ch_inds = clusters[clust_idx]
 
-# 4. Identify Significant Clusters
-significant_points = np.where(cluster_pv < 0.05)[0]
+                # Get time window
+                t_min = times_vector[time_inds.min()]
+                t_max = times_vector[time_inds.max()]
 
-if len(significant_points) > 0:
-    print(f"\n--- Visualizing {len(significant_points)} Significant Spatio-Temporal Clusters ---")
+                # Create mask for significant sensors (union across time)
+                mask = np.zeros(len(epochs_info.ch_names), dtype=bool)
+                mask[np.unique(ch_inds)] = True
 
-    # Determine common scale for all cluster plots based on T-values
-    v_max_abs = np.nanmax(np.abs(t_obs))
+                # Average T-values over the cluster time window
+                t_map = np.nanmean(t_obs[time_inds.min():time_inds.max() + 1, :], axis=0)
 
-    for i_clust, clust_idx in enumerate(significant_points):
-        # clusters[clust_idx] is a tuple of arrays (time_indices, channel_indices)
-        time_inds, ch_inds = clusters[clust_idx]
+                # --- Calculate Effect Sizes for Spatio-Temporal Cluster ---
+                t_vals_cluster = t_obs[time_inds, ch_inds]
+                mean_t_cluster = np.mean(t_vals_cluster)
+                peak_t_cluster = t_vals_cluster[np.argmax(np.abs(t_vals_cluster))]
 
-        # Get time window
-        t_min = times_vector[time_inds.min()]
-        t_max = times_vector[time_inds.max()]
+                # Cohen's d from T-value
+                cohens_d_st = mean_t_cluster / np.sqrt(X.shape[0])
 
-        # Create mask for significant sensors (union across time)
-        mask = np.zeros(len(epochs_info.ch_names), dtype=bool)
-        mask[np.unique(ch_inds)] = True
+                fig, ax = plt.subplots(figsize=(5, 5))
+                im, _ = mne.viz.plot_topomap(
+                    t_map,
+                    epochs_info,
+                    mask=mask,
+                    mask_params=dict(marker='o', markerfacecolor='w', markeredgecolor='k', linewidth=0, markersize=8),
+                    axes=ax,
+                    show=False,
+                    cmap='RdBu_r',
+                    vlim=(-v_max_abs, v_max_abs)
+                )
+                plt.colorbar(im, ax=ax, label='T-value')
+                ax.set_title(f"Cluster {i_clust + 1} ({prob_cond}, p={cluster_pv[clust_idx]:.3f})\n{t_min * 1000:.0f} - {t_max * 1000:.0f} ms\nMean t={mean_t_cluster:.2f}, d={cohens_d_st:.2f}")
+                cond_str = prob_cond.replace("-", "_")
+                out_st_cluster = os.path.join(PLOTS_DIR, f"erp_lateral_spatiotemporal_cluster_{cond_str}_{i_clust + 1}.png")
+                fig.savefig(out_st_cluster, dpi=200, bbox_inches='tight')
+                print(f"Saved spatio-temporal cluster plot to: {out_st_cluster}")
+                if hasattr(sys, 'ps1') or 'ipykernel' in sys.modules:
+                    plt.show()
+                else:
+                    plt.close(fig)
+        else:
+            print(f"No significant spatio-temporal clusters found for {prob_cond}.")
 
-        # Average T-values over the cluster time window
-        # t_obs is (n_times, n_channels)
-        t_map = np.nanmean(t_obs[time_inds.min():time_inds.max() + 1, :], axis=0)
+        # 5. Butterfly Plot of T-values (MNE Joint Plot)
+        print(f"\n--- Visualizing Temporal Evolution of T-values for {prob_cond} (MNE Joint Plot) ---")
 
-        # --- Calculate Effect Sizes for Spatio-Temporal Cluster ---
-        # t_obs is (n_times, n_channels)
-        t_vals_cluster = t_obs[time_inds, ch_inds]
-        mean_t_cluster = np.mean(t_vals_cluster)
-        peak_t_cluster = t_vals_cluster[np.argmax(np.abs(t_vals_cluster))]
+        # Create Evoked object from T-values
+        t_obs_plot = t_obs.copy()
+        t_obs_plot[np.isnan(t_obs_plot)] = 0
+        t_evoked = mne.EvokedArray(t_obs_plot.T, epochs_info, tmin=times_vector[0], nave=n_subs, comment='T-values')
 
-        # Cohen's d from T-value
-        cohens_d_st = mean_t_cluster / np.sqrt(X.shape[0])
+        # Calculate threshold for visualization
+        n_samples = X.shape[0]
+        deg_f = n_samples - 1
+        t_thresh = t.ppf(1 - ALPHA_STAT_CLUSTER / 2, deg_f)
 
-        fig, ax = plt.subplots(figsize=(5, 5))
-        im, _ = mne.viz.plot_topomap(
-            t_map,
-            epochs_info,
-            mask=mask,
-            mask_params=dict(marker='o', markerfacecolor='w', markeredgecolor='k', linewidth=0, markersize=8),
-            axes=ax,
-            show=False,
+        # Plot joint (Butterfly + Topomaps)
+        fig_joint = t_evoked.plot_joint(times='peaks', title=f'Mass Univariate T-values ({prob_cond})', show=False)
+
+        # Add threshold lines to the butterfly plot axes
+        for ax in fig_joint.axes:
+            if ax.get_xlabel().startswith('Time'):
+                ax.axhline(t_thresh, color='red', linestyle='--', alpha=0.5, label=f'p<{ALPHA_STAT_CLUSTER}')
+                ax.axhline(-t_thresh, color='red', linestyle='--', alpha=0.5)
+        cond_str = prob_cond.replace("-", "_")
+        out_joint = os.path.join(PLOTS_DIR, f"erp_lateral_spatiotemporal_joint_{cond_str}.png")
+        fig_joint.savefig(out_joint, dpi=200, bbox_inches='tight')
+        print(f"Saved spatio-temporal joint plot to: {out_joint}")
+        if hasattr(sys, 'ps1') or 'ipykernel' in sys.modules:
+            plt.show()
+        else:
+            plt.close(fig_joint)
+
+        # 6. Image Plot of T-values
+        print(f"\n--- Visualizing T-values for {prob_cond} (Image Plot) ---")
+
+        # Create mask for significant clusters
+        sig_mask = np.zeros(t_obs.shape, dtype=bool)
+        if len(significant_points) > 0:
+            for clust_idx in significant_points:
+                time_inds, ch_inds = clusters[clust_idx]
+                sig_mask[time_inds, ch_inds] = True
+
+        # Transpose to (n_channels, n_times) for Evoked
+        mask_to_plot = sig_mask.T
+
+        # Create ROIs by checking channel labels
+        selections = mne.channels.make_1020_channel_selections(epochs.info, midline="12z")
+
+        fig_image = t_evoked.plot_image(
+            picks='all',
+            units=dict(eeg='T-value'), # Label colorbar correctly
             cmap='RdBu_r',
-            vlim=(-v_max_abs, v_max_abs)
+            show_names='all',          # Show electrode names
+            mask=mask_to_plot,         # Mask non-significant values
+            show=False,
+            group_by=selections
         )
-        plt.colorbar(im, ax=ax, label='T-value')
-        ax.set_title(f"Cluster {i_clust + 1} (p={cluster_pv[clust_idx]:.3f})\n{t_min * 1000:.0f} - {t_max * 1000:.0f} ms\nMean t={mean_t_cluster:.2f}, d={cohens_d_st:.2f}")
-else:
-    print("No significant spatio-temporal clusters found.")
-
-# 5. Butterfly Plot of T-values (MNE Joint Plot)
-print("\n--- Visualizing Temporal Evolution of T-values (MNE Joint Plot) ---")
-
-# Create Evoked object from T-values
-# t_obs is (n_times, n_channels), needs transpose for EvokedArray
-# Replace NaNs with 0 for plotting, as plot_joint cannot handle NaNs
-t_obs_plot = t_obs.copy()
-t_obs_plot[np.isnan(t_obs_plot)] = 0
-t_evoked = mne.EvokedArray(t_obs_plot.T, epochs_info, tmin=times_vector[0], nave=n_subs, comment='T-values')
-
-# Calculate threshold for visualization
-n_samples = X.shape[0]
-deg_f = n_samples - 1
-t_thresh = t.ppf(1 - ALPHA_STAT_CLUSTER / 2, deg_f)
-
-# Plot joint (Butterfly + Topomaps)
-fig_joint = t_evoked.plot_joint(times='peaks', title='Mass Univariate T-values', show=False)
-
-# Add threshold lines to the butterfly plot axes
-for ax in fig_joint.axes:
-    if ax.get_xlabel().startswith('Time'):
-        ax.axhline(t_thresh, color='red', linestyle='--', alpha=0.5, label=f'p<{ALPHA_STAT_CLUSTER}')
-        ax.axhline(-t_thresh, color='red', linestyle='--', alpha=0.5)
-
-# 6. Image Plot of T-values
-print("\n--- Visualizing T-values (Image Plot) ---")
-
-# Create mask for significant clusters
-# t_obs is (n_times, n_channels)
-sig_mask = np.zeros(t_obs.shape, dtype=bool)
-if len(significant_points) > 0:
-    for clust_idx in significant_points:
-        time_inds, ch_inds = clusters[clust_idx]
-        sig_mask[time_inds, ch_inds] = True
-
-# Transpose to (n_channels, n_times) for Evoked
-# Mask should be True for values to HIDE (non-significant)
-mask_to_plot = sig_mask.T
-
-# Create ROIs by checking channel labels
-selections = mne.channels.make_1020_channel_selections(epochs.info, midline="12z")
-
-v_max = np.max(np.abs(t_obs_plot))
-t_evoked.plot_image(
-    picks='all',
-    units=dict(eeg='T-value'), # Label colorbar correctly
-    cmap='RdBu_r',
-    show_names='all',          # Show electrode names
-    mask=mask_to_plot,         # Mask non-significant values
-    show=False,
-    group_by=selections
-)
+        cond_str = prob_cond.replace("-", "_")
+        out_image = os.path.join(PLOTS_DIR, f"erp_lateral_spatiotemporal_image_{cond_str}.png")
+        fig_image.savefig(out_image, dpi=200, bbox_inches='tight')
+        print(f"Saved spatio-temporal image plot to: {out_image}")
+        if hasattr(sys, 'ps1') or 'ipykernel' in sys.modules:
+            plt.show()
+        else:
+            plt.close(fig_image)
+    else:
+        print(f"\nSkipping mass univariate spatio-temporal analysis for {prob_cond}: not enough subjects (N < 2) or topography data missing (PLOT_TOPOS=False).")
