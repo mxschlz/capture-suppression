@@ -36,12 +36,16 @@ def move_files(source_dir, destination_dir, file_types):
         print(f"An error occurred: {e}")
 
 
-subject = input("Enter the subject name (without extension): ")
-source_directory = f"{get_data_path()}sourcedata/raw/sci-{subject}/eeg/"  # Replace with your source directory
-destination_directory = f"{get_data_path()}sourcedata/raw/sci-{subject}/headgaze" # Replace with your destination directory
+def move_video_data(subject):
+    source_directory = f"{get_data_path()}sourcedata/raw/sci-{subject}/eeg/"  # Replace with your source directory
+    destination_directory = f"{get_data_path()}sourcedata/raw/sci-{subject}/headgaze" # Replace with your destination directory
 
-# Moving .txt and .pdf files:
-file_types_to_move = ['.VideoConfig', '.asf']
-move_files(source_directory, destination_directory, file_types_to_move)
+    # Moving .txt and .pdf files:
+    file_types_to_move = ['.VideoConfig', '.asf']
+    move_files(source_directory, destination_directory, file_types_to_move)
 
-print("File moving process complete.")
+    print("File moving process complete.")
+
+if __name__ == "__main__":
+    subject = input("Enter the subject name (without extension): ")
+    move_video_data(subject)

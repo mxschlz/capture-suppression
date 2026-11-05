@@ -48,7 +48,7 @@ DISTRACTOR_LOC = np.array([-np.sqrt(3) / 2, -0.5])
 CONTROL_LOC = np.array([np.sqrt(3) / 2, -0.5])
 
 NORM_STEPS = 101
-COORD_SCALE = 0.5
+COORD_SCALE = 1.0
 COHORTS = ['Younger adults', 'Older adults']
 OUTCOMES = ['Target', 'Control', 'Distractor']
 

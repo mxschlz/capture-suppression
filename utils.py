@@ -860,7 +860,7 @@ def get_all_waves(trials_df, electrode_pairs, time_window, all_times, lateral_st
     return diff_wave, mean_contra_wave, mean_ipsi_wave, window_times
 
 
-def calculate_trajectory_projections(row, locations_map, verbose=False):
+def calculate_trajectory_projections(row, locations_map, percentage=True, verbose=False):
     """
     Calculates a comprehensive set of trajectory projection scores for a single trial.
     """
@@ -883,19 +883,29 @@ def calculate_trajectory_projections(row, locations_map, verbose=False):
 
     # --- 2. Helper function ---
     def get_projection(digit, avg_vec, locations_map):
-        if pd.isna(digit): return np.nan
+        if pd.isna(digit) or int(digit) not in locations_map:
+            return np.nan
         dir_vec = np.array(locations_map.get(int(digit), (0, 0)))
-        denom = np.dot(dir_vec, dir_vec)
-        if denom < 1e-9:
-            return 0.0
-        return (np.dot(avg_vec, dir_vec) / denom) * 100
+        
+        if percentage:
+            denom = np.dot(dir_vec, dir_vec)
+            if denom < 1e-9:
+                return 0.0
+            return (np.dot(avg_vec, dir_vec) / denom) * 100
+        else:
+            norm = np.linalg.norm(dir_vec)
+            if norm < 1e-6:
+                return np.nan
+            unit_vec = dir_vec / norm
+            return np.dot(avg_vec, unit_vec)
 
     # --- 3. Identify all digits ---
     target_digit = row.get('TargetDigit')
     distractor_digit = row.get('SingletonDigit') if row.get('SingletonPresent') == 1 else np.nan
     all_nontarget_cols = ['SingletonDigit', 'Non-Singleton1Digit', 'Non-Singleton2Digit']
     control_digits = {int(d) for col in all_nontarget_cols if
-                      pd.notna(d := row.get(col)) and d != target_digit and d != distractor_digit}
+                      pd.notna(d := row.get(col)) and int(d) != 0 and int(d) in locations_map
+                      and d != target_digit and d != distractor_digit}
 
     if verbose:
         print(
@@ -1381,12 +1391,13 @@ def load_raw_mouse_trajectories(subject_ids, data_path, calculate_phase=False):
     return pd.concat(df_mouse_list, ignore_index=True)
 
 
-def align_raw_mouse_trajectories(df_mouse, df_beh):
+def align_raw_mouse_trajectories(df_mouse, df_beh, target_radius_dva=1.0):
     """
     Merges location coordinates from behavioral data into mouse trajectory data,
-    and rotates/reflects the trajectories so that the target is aligned with
+    rotates/reflects the trajectories so that the target is aligned with
     the positive y-axis (90 degrees) and the distractor is reflected to the
-    negative x-axis (left side).
+    negative x-axis (left side), and scales coordinates to the canonical
+    stimulus circle radius (default: 1.0 dva).
     """
     location_cols = ['subject_id', 'block', 'trial_nr', 'Target_pos_x', 'Target_pos_y', 
                      'Distractor_pos_x', 'Distractor_pos_y', 'Control2_pos_x', 'Control2_pos_y']
@@ -1406,6 +1417,10 @@ def align_raw_mouse_trajectories(df_mouse, df_beh):
         
         traj_points = trial_group[['x', 'y']].values
         
+        # Scale factor to convert from raw logged radius (2.0) to canonical target_radius_dva (1.0 dva)
+        raw_radius = np.linalg.norm(target_pos)
+        scale_factor = (target_radius_dva / raw_radius) if raw_radius > 0 else 1.0
+        
         # Rotation: align target vector with positive y-axis (90 deg)
         target_angle = np.arctan2(target_pos[1], target_pos[0])
         rotation_angle = np.pi / 2 - target_angle
@@ -1413,10 +1428,10 @@ def align_raw_mouse_trajectories(df_mouse, df_beh):
         sin_rot = np.sin(rotation_angle)
         rot_matrix = np.array([[cos_rot, -sin_rot], [sin_rot, cos_rot]])
         
-        traj_rotated = np.dot(traj_points, rot_matrix.T)
-        target_rotated = np.dot(rot_matrix, target_pos)
-        distractor_rotated = np.dot(rot_matrix, distractor_pos)
-        control_rotated = np.dot(rot_matrix, control_pos)
+        traj_rotated = np.dot(traj_points, rot_matrix.T) * scale_factor
+        target_rotated = np.dot(rot_matrix, target_pos) * scale_factor
+        distractor_rotated = np.dot(rot_matrix, distractor_pos) * scale_factor
+        control_rotated = np.dot(rot_matrix, control_pos) * scale_factor
         
         # Reflection: distractor always on the left (negative x)
         flip_factor = -1.0 if distractor_rotated[0] > 0 else 1.0

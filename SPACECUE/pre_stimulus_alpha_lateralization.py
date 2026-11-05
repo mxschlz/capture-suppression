@@ -184,9 +184,18 @@ def main():
         ch_names = sub_info['ch_names']
         cohort = sub_info['cohort']
         
-        # Normalize subject absolute power by overall mean power to scale across subjects
-        sub_overall_mean = power_raw.mean()
-        power_scaled = power_raw / sub_overall_mean
+        # Total alpha power is analysed in log space: raw Morlet power is
+        # strongly right-skewed (approximately log-normal; subject-level
+        # skew ~2.5, Shapiro-Wilk p < .001). The former subject-wise
+        # normalization (division by the subject's overall mean power) is
+        # applied in the log domain as a subtraction of the subject's mean
+        # log power, so power_scaled is the natural-log power relative to
+        # the subject's GEOMETRIC mean power (0 = at the subject's own
+        # geometric mean). Non-positive values (numerically impossible for
+        # Morlet power) are clipped to the smallest positive float to keep
+        # np.log finite.
+        power_log = np.log(np.maximum(power_raw, np.finfo(float).tiny))
+        power_scaled = power_log - power_log.mean()
         
         # 1. Topography: Mean pre-stimulus alpha value per channel
         li_topo = li_data[:, alpha_idx, :][:, :, pre_stim_idx].mean(axis=(1, 2))
@@ -253,7 +262,12 @@ def main():
         for cl, p_val in zip(cl_li_full, pv_li_full):
             d_val = compute_collapsed_cohens_d(y_li_tc, o_li_tc, cl[0])
             t_start, t_end = times_vector[cl[0][0]], times_vector[cl[0][-1]]
-            status = "SIGNIFICANT" if p_val < 0.05 else "n.s."
+            if p_val < 0.05:
+                status = "SIGNIFICANT"
+            elif p_val < 0.10:
+                status = "TREND"
+            else:
+                status = "n.s."
             print(f"  Full TC Cluster [{status}]: {t_start*1000:.0f} to {t_end*1000:.0f} ms | p = {p_val:.4f} | Peak F = {np.max(F_li_full[cl[0]]):.3f} | Cohen's d = {d_val:.3f}")
             if p_val < 0.05:
                 is_li_sig[cl[0]] = True
@@ -291,6 +305,10 @@ def main():
     is_li_sig_1samp = {c: np.zeros(len(times_vector), dtype=bool) for c in cohorts}
     one_sample_p_pre = {c: [] for c in cohorts}
     one_sample_report = {c: [] for c in cohorts}
+    # Collapsed pre-stimulus mean LI vs. 0 (one-sample t-test) statistics,
+    # stored per cohort for visualizing trends towards significance in the
+    # Alpha LI time course plot.
+    pre_mean_stats = {}
 
     for c, li_tc_arr in [('Young', y_li_tc), ('Old', o_li_tc)]:
         n_c = len(li_tc_arr)
@@ -306,7 +324,12 @@ def main():
             for i_cl, (cl, p_val) in enumerate(zip(cl_full_1s, pv_full_1s)):
                 dz_val = compute_one_sample_cohens_dz(li_tc_arr, cl[0])
                 t_start, t_end = times_vector[cl[0][0]], times_vector[cl[0][-1]]
-                status = "SIGNIFICANT" if p_val < 0.05 else "n.s."
+                if p_val < 0.05:
+                    status = "SIGNIFICANT"
+                elif p_val < 0.10:
+                    status = "TREND"
+                else:
+                    status = "n.s."
                 mean_dir = "positive LI" if np.mean(li_tc_arr[:, cl[0]]) > 0 else "negative LI"
                 print(f"    Full TC Cluster [{status}]: {t_start*1000:.0f} to {t_end*1000:.0f} ms | p = {p_val:.4f} | Peak |t| = {np.max(np.abs(T_full_1s[cl[0]])):.3f} | Cohen's d_z = {dz_val:.3f} ({mean_dir})")
                 one_sample_report[c].append(
@@ -330,7 +353,12 @@ def main():
             for i_cl, (cl, p_val) in enumerate(zip(cl_pre_1s, pv_pre_1s)):
                 dz_val = compute_one_sample_cohens_dz(li_pre_c, cl[0])
                 t_start, t_end = times_vector[pre_stim_idx[cl[0][0]]], times_vector[pre_stim_idx[cl[0][-1]]]
-                status = "SIGNIFICANT" if p_val < 0.05 else "n.s."
+                if p_val < 0.05:
+                    status = "SIGNIFICANT"
+                elif p_val < 0.10:
+                    status = "TREND"
+                else:
+                    status = "n.s."
                 mean_dir = "positive LI" if np.mean(li_pre_c[:, cl[0]]) > 0 else "negative LI"
                 print(f"    Pre-stim Window Cluster [{status}]: {t_start*1000:.0f} to {t_end*1000:.0f} ms | p = {p_val:.4f} | Peak |t| = {np.max(np.abs(T_pre_1s[cl[0]])):.3f} | Cohen's d_z = {dz_val:.3f} ({mean_dir})")
                 one_sample_report[c].append(
@@ -351,6 +379,10 @@ def main():
         one_sample_report[c].append(
             f"       Collapsed Pre-stim Mean vs. 0: t({df_one}) = {tt_1s.statistic:.4f}, p = {tt_1s.pvalue:.4f}, Cohen's d_z = {dz_pre:.4f}\n"
             f"       Shapiro-Wilk normality (collapsed means): W = {sh_w:.3f}, p = {sh_p:.4f}\n")
+        # Store collapsed pre-stimulus mean statistics for plot annotation
+        pre_mean_stats[c] = {'t': tt_1s.statistic, 'p': tt_1s.pvalue,
+                             'dz': dz_pre, 'df': df_one,
+                             'mean': float(np.mean(pre_mean_c))}
 
     # -------------------------------------------------------------
     # 2. PRE-DEFINED ROI SPATIAL CLUSTER PERMUTATION TESTS (-0.75 to 0.0 s)
@@ -435,8 +467,16 @@ def main():
         avg_power_topo[c] = np.mean(power_topos[c], axis=0)
 
     # --- PLOTTING (2 Rows, 3 Columns) ---
+    # Grid layout focused on the Alpha LI time course: the time-course
+    # column is given a much larger share of the canvas width than the
+    # topography columns, and the LI row (row 1) is taller than the power
+    # row (row 2). The topographies are correspondingly rendered smaller.
     sns.set_theme(style="ticks", context="talk")
-    fig, axes = plt.subplots(2, 3, figsize=(16.5, 10))
+    fig = plt.figure(figsize=(16.5, 10))
+    gs = fig.add_gridspec(2, 3, width_ratios=[2.2, 1.0, 1.0],
+                          height_ratios=[1.25, 1.0])
+    axes = np.array([[fig.add_subplot(gs[r, c]) for c in range(3)]
+                     for r in range(2)])
     
     from SPACECUE.colors import COLOR_DISTRACTOR_YOUNG, COLOR_DISTRACTOR_OLD
     colors = {'Young': COLOR_DISTRACTOR_YOUNG, 'Old': COLOR_DISTRACTOR_OLD}
@@ -453,12 +493,12 @@ def main():
         ax_li_tc.fill_between(times_vector, avg_li_tc[c] - sem_li_tc[c], avg_li_tc[c] + sem_li_tc[c], color=colors[c], alpha=0.18)
     
     # Highlight pre-stimulus window [-0.75, 0.0 s]
-    ax_li_tc.axvspan(-0.75, 0.0, color='gray', alpha=0.10, label='Pre-stimulus (−750–0 ms)')
+    ax_li_tc.axvspan(-0.75, 0.0, color='gray', alpha=0.10, label='−750–0 ms')
     ax_li_tc.axhline(0, color='gray', linestyle='--', alpha=0.6, lw=1)
     ax_li_tc.axvline(0, color='black', linestyle=':', alpha=0.6, lw=1)
     ax_li_tc.set_xlim(-1.0, 1.0)
     ax_li_tc.set_ylabel("Alpha LI (Left − Right Hemi)", fontsize=13)
-    ax_li_tc.set_title("Alpha LI Time Course\n(12 ROI Electrode Pairs)", fontsize=14, fontweight='semibold')
+    ax_li_tc.set_title("Alpha LI Time Course", fontsize=14, fontweight='semibold')
 
     # Shade significant cluster intervals: one-sample clusters against zero
     # (in each cohort's color, Old additionally hatched) and between-group
@@ -485,19 +525,27 @@ def main():
                 ax_li_tc.axvspan(times_vector[i], times_vector[i] + dt, color='purple', alpha=0.20, lw=0,
                                 label='Young ≠ Old (p < 0.05)' if i == first_idx_grp else '_nolegend_')
 
-    if np.any(is_li_sig) or any(np.any(is_li_sig_1samp[c]) for c in cohorts):
-        ax_li_tc.legend(frameon=True, fontsize=10.5, loc='upper left')
-    else:
-        def _fmt_min_p(arr):
-            return f"{np.min(arr):.2f}" if (arr is not None and len(arr) > 0 and not np.all(np.isnan(arr))) else "n/a"
-        min_p_pre = np.min(pv_li_pre) if len(pv_li_pre) > 0 else np.nan
-        p_lines = [f"Young ≠ Old: n.s. (min p = {_fmt_min_p(pv_li_pre)})"]
-        for c in cohorts:
-            p_lines.append(f"{c} vs. 0: n.s. (min p = {_fmt_min_p(one_sample_p_pre[c])})")
-        ax_li_tc.text(0.04, 0.08, "\n".join(p_lines), transform=ax_li_tc.transAxes, fontsize=10.5,
-                      fontstyle='italic',
+    # 3) Trend towards significance in the collapsed pre-stimulus mean LI:
+    #    one-sample t-test of the window-averaged LI [-0.75, 0] s against 0.
+    #    Instead of enumerating all non-significant cluster results, this
+    #    trend is visualized directly: each trending cohort's window-
+    #    collapsed mean LI is drawn as a thick horizontal segment across
+    #    the pre-stimulus window, annotated with the full statistics
+    #    (t, df, exact unrounded p, Cohen's d_z).
+    trend_txt_lines = []
+    for c in cohorts:
+        st = pre_mean_stats.get(c)
+        if st is not None and 0.05 <= st['p'] < 0.10:
+            trend_txt_lines.append(
+                f"{c}: pre-stim mean LI vs. 0\n"
+                f"t({st['df']}) = {st['t']:.2f}, p = {st['p']:.4f}, d = {st['dz']:.2f}"
+            )
+    if trend_txt_lines:
+        ax_li_tc.text(0.04, 0.08, "\n".join(trend_txt_lines), transform=ax_li_tc.transAxes,
+                      fontsize=10.5, fontstyle='italic', ha='left', va='bottom',
                       bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.85, edgecolor='none'))
-        ax_li_tc.legend(frameon=True, fontsize=10.5, loc='upper left')
+
+    ax_li_tc.legend(frameon=True, fontsize=10.5, loc='upper right')
     sns.despine(ax=ax_li_tc)
 
     # Dynamic LI topo scaling based strictly on actual data max (no artificial minimum floor)
@@ -511,7 +559,7 @@ def main():
         vlim=(li_vmin, li_vmax), show=False, outlines='head', sensors=False,
         mask=roi_mask, mask_params=roi_marker_params
     )
-    topo_y_title = f"Younger Cohort (N={n_young})\nPre-stimulus (−750 to 0 ms)"
+    topo_y_title = f"Younger Cohort (N={n_young})\n−750 to 0 ms"
     ax_li_topo_y.set_title(topo_y_title, fontsize=13, fontweight='semibold')
     
     # Older LI Topomap
@@ -521,7 +569,7 @@ def main():
         vlim=(li_vmin, li_vmax), show=False, outlines='head', sensors=False,
         mask=roi_mask, mask_params=roi_marker_params
     )
-    topo_o_title = f"Older Cohort (N={n_old})\nPre-stimulus (−750 to 0 ms)"
+    topo_o_title = f"Older Cohort (N={n_old})\n−750 to 0 ms"
     ax_li_topo_o.set_title(topo_o_title, fontsize=13, fontweight='semibold')
     
     # Shared LI colorbar
@@ -539,12 +587,12 @@ def main():
         ax_pwr_tc.fill_between(times_vector, avg_power_tc[c] - sem_power_tc[c], avg_power_tc[c] + sem_power_tc[c], color=colors[c], alpha=0.18)
         
     ax_pwr_tc.axvspan(-0.75, 0.0, color='gray', alpha=0.10)
-    ax_pwr_tc.axhline(1.0, color='gray', linestyle='--', alpha=0.6, lw=1)
+    ax_pwr_tc.axhline(0.0, color='gray', linestyle='--', alpha=0.6, lw=1)
     ax_pwr_tc.axvline(0, color='black', linestyle=':', alpha=0.6, lw=1)
     ax_pwr_tc.set_xlim(-1.0, 1.0)
     ax_pwr_tc.set_xlabel("Time (s)", fontsize=13)
-    ax_pwr_tc.set_ylabel("Relative Alpha Power (Scaled)", fontsize=13)
-    ax_pwr_tc.set_title("Total Alpha Power Time Course\n(Pre-defined ROI)", fontsize=14, fontweight='semibold')
+    ax_pwr_tc.set_ylabel("Log Relative Alpha Power (ln)", fontsize=13)
+    ax_pwr_tc.set_title("Total Alpha Power Time Course\n", fontsize=14, fontweight='semibold')
 
     if np.any(is_pwr_sig):
         dt = times_vector[1] - times_vector[0]
@@ -552,46 +600,45 @@ def main():
             if is_pwr_sig[i]:
                 ax_pwr_tc.axvspan(times_vector[i], times_vector[i] + dt, color='purple', alpha=0.20, lw=0,
                                  label='Sig. Cluster (p < 0.05)' if i == np.where(is_pwr_sig)[0][0] else '_nolegend_')
-        ax_pwr_tc.legend(frameon=True, fontsize=10.5, loc='upper left')
+        ax_pwr_tc.legend(frameon=True, fontsize=10.5, loc='upper right')
     else:
         min_p_pwr = np.min(pv_pwr_pre) if len(pv_pwr_pre) > 0 else np.nan
-        p_txt_pwr = f"Pre-stim cluster: n.s. (min p = {min_p_pwr:.2f})" if not np.isnan(min_p_pwr) else "Pre-stim cluster: n.s."
-        ax_pwr_tc.text(0.04, 0.08, p_txt_pwr, transform=ax_pwr_tc.transAxes, fontsize=10.5, fontstyle='italic',
-                       bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.85, edgecolor='none'))
-        ax_pwr_tc.legend(frameon=True, fontsize=10.5, loc='upper left')
+        ax_pwr_tc.legend(frameon=True, fontsize=10.5, loc='upper right')
     sns.despine(ax=ax_pwr_tc)
 
-    # Consistent Power topo scaling
-    pwr_vmax = max(avg_power_topo['Young'].max(), avg_power_topo['Old'].max())
-    pwr_vmin = min(avg_power_topo['Young'].min(), avg_power_topo['Old'].min())
+    # Consistent Power topo scaling: log-relative power is signed around 0
+    # (0 = the subject's geometric mean power), so a symmetric diverging
+    # scale centered on zero is used
+    pwr_absmax = max(np.abs(avg_power_topo['Young']).max(),
+                     np.abs(avg_power_topo['Old']).max())
+    pwr_vmax, pwr_vmin = pwr_absmax, -pwr_absmax
     
     # Younger Power Topomap
     ax_pwr_topo_y = axes[1, 1]
     im_pwr_y, _ = mne.viz.plot_topomap(
-        avg_power_topo['Young'], info, axes=ax_pwr_topo_y, cmap='Reds',
+        avg_power_topo['Young'], info, axes=ax_pwr_topo_y, cmap='RdBu_r',
         vlim=(pwr_vmin, pwr_vmax), show=False, outlines='head', sensors=False,
         mask=roi_mask, mask_params=roi_marker_params
     )
-    ax_pwr_topo_y.set_title(f"Younger Cohort (N={n_young})\nPre-stimulus (−750 to 0 ms)", fontsize=13, fontweight='semibold')
+    ax_pwr_topo_y.set_title(f"Younger Cohort (N={n_young})\n−750 to 0 ms", fontsize=13, fontweight='semibold')
     
     # Older Power Topomap
     ax_pwr_topo_o = axes[1, 2]
     im_pwr_o, _ = mne.viz.plot_topomap(
-        avg_power_topo['Old'], info, axes=ax_pwr_topo_o, cmap='Reds',
+        avg_power_topo['Old'], info, axes=ax_pwr_topo_o, cmap='RdBu_r',
         vlim=(pwr_vmin, pwr_vmax), show=False, outlines='head', sensors=False,
         mask=roi_mask, mask_params=roi_marker_params
     )
-    pwr_o_title = f"Older Cohort (N={n_old})\nPre-stimulus (−750 to 0 ms)"
+    pwr_o_title = f"Older Cohort (N={n_old})\n−750 to 0 ms"
     ax_pwr_topo_o.set_title(pwr_o_title, fontsize=13, fontweight='semibold')
     
     # Shared Power colorbar
     cbar_pwr_ax = fig.add_axes([0.92, 0.12, 0.015, 0.3])
     cbar_pwr = plt.colorbar(im_pwr_y, cax=cbar_pwr_ax)
-    cbar_pwr.set_label('Rel. Alpha Power', fontsize=11)
+    cbar_pwr.set_label('Log Rel. Alpha Power (ln)', fontsize=11)
     cbar_pwr.ax.tick_params(labelsize=10)
 
     # Labels and layout adjustments
-    fig.suptitle(f"Pre- and Post-Stimulus Alpha Dynamics (Young vs. Old, N = {len(subject_ids_list)})\nNon-parametric cluster-based permutation tests (Dots: 12 Parieto-Occipital ROI Pairs)", fontsize=16, fontweight='semibold')
     plt.tight_layout(rect=[0, 0, 0.9, 0.94])
     
     # Save the output plot

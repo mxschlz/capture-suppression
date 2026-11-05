@@ -109,11 +109,18 @@ def main():
         [y_data, o_data], n_permutations=1000, tail=0, threshold=None, out_type='indices', verbose=False
     )
     
-    # Create a boolean mask of significant time points
+    # Create a boolean mask of significant time points.
+    # Clusters that extend (partially) into the negative (pre-stimulus) time
+    # interval are considered baseline noise and are therefore excluded.
     is_sig = np.zeros(len(times), dtype=bool)
     if clusters:
         for cluster, p_val in zip(clusters, cluster_p_values):
             if p_val < 0.05:
+                if times[cluster[0][0]] < 0:
+                    print(f"  Excluding significant cluster (p = {p_val:.4f}) "
+                          f"at {times[cluster[0][0]] * 1000:.1f} ms to "
+                          f"{times[cluster[0][-1]] * 1000:.1f} ms: overlaps negative time interval.")
+                    continue
                 is_sig[cluster[0]] = True
 
     # Calculate grand averages and SEMs
@@ -261,10 +268,17 @@ def main():
         has_sig = False
         for c_idx, (cluster, p_val) in enumerate(zip(clusters, cluster_p_values)):
             if p_val < 0.05:
-                has_sig = True
                 indices = cluster[0]
                 t_start_ms = times[indices[0]] * 1000
                 t_end_ms = times[indices[-1]] * 1000
+                # Skip clusters (partially) located in the negative time interval
+                if times[indices[0]] < 0:
+                    report_lines.append(
+                        f"  Cluster {c_idx+1:d} ({t_start_ms:5.1f} ms to {t_end_ms:5.1f} ms, "
+                        f"p = {p_val:.4f}) excluded: overlaps negative time interval."
+                    )
+                    continue
+                has_sig = True
                 report_lines.append(f"  Significant Cluster {c_idx+1:d}: {t_start_ms:5.1f} ms to {t_end_ms:5.1f} ms | Cluster p-value = {p_val:.4f}")
         if not has_sig:
             report_lines.append("  No significant clusters found.")

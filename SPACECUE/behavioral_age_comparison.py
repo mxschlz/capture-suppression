@@ -7,6 +7,7 @@ import matplotlib
 if not (hasattr(sys, 'ps1') or 'ipykernel' in sys.modules):
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 import seaborn as sns
 import pingouin as pg
 from scipy.stats import sem
@@ -22,6 +23,26 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import SPACECUE
+from SPACECUE.colors import (
+    COLOR_TARGET_YOUNG, COLOR_TARGET_OLD,
+    COLOR_DISTRACTOR_YOUNG, COLOR_DISTRACTOR_OLD,
+    COLOR_CONTROL_YOUNG, COLOR_CONTROL_OLD,
+)
+
+
+# ----------------------------------------------------------------------------
+# Effect-size helpers
+# ----------------------------------------------------------------------------
+def cohens_dz(high, low):
+    """Cohen's dz for paired designs: mean(diff) / SD(diff).
+
+    NOTE: pingouin's 'cohen-d' for paired t-tests is d_av (mean difference
+    divided by the average SD of the two conditions), which ignores the
+    within-subject correlation. It is NOT dz and must not be labelled as such.
+    """
+    diff = (high - low).dropna()
+    return diff.mean() / diff.std(ddof=1)
+
 
 def main():
     print("=========================================================")
@@ -139,25 +160,36 @@ def main():
         
         print(f"\n{label} Paired Comparisons (High vs. Low Distractor Location Probability):")
         print(f"  Young (N={len(y_high)}): High={y_high.mean():.2f} ± {y_high.std():.2f}, Low={y_low.mean():.2f} ± {y_low.std():.2f}")
-        print(f"    t({tt_y['dof'].values[0]:.1f}) = {tt_y['T'].values[0]:.4f}, p = {tt_y['p-val'].values[0]:.4f}, Cohen's dz = {tt_y['cohen-d'].values[0]:.4f}")
+        print(f"    t({tt_y['dof'].values[0]:.1f}) = {tt_y['T'].values[0]:.4f}, p = {tt_y['p-val'].values[0]:.4f}, Cohen's dz = {cohens_dz(y_high, y_low):.4f}")
         print(f"  Old   (N={len(o_high)}): High={o_high.mean():.2f} ± {o_high.std():.2f}, Low={o_low.mean():.2f} ± {o_low.std():.2f}")
-        print(f"    t({tt_o['dof'].values[0]:.1f}) = {tt_o['T'].values[0]:.4f}, p = {tt_o['p-val'].values[0]:.4f}, Cohen's dz = {tt_o['cohen-d'].values[0]:.4f}")
+        print(f"    t({tt_o['dof'].values[0]:.1f}) = {tt_o['T'].values[0]:.4f}, p = {tt_o['p-val'].values[0]:.4f}, Cohen's dz = {cohens_dz(o_high, o_low):.4f}")
 
-    def draw_paired_bracket(ax, x1, x2, y_base, h, text, color, lw=1.6):
+    def draw_paired_bracket(ax, x1, x2, y_base, h, text, color, lw=1.4):
         """Draws a clean paired comparison bracket with label."""
         ax.plot([x1, x1, x2, x2], [y_base, y_base + h, y_base + h, y_base], 
                 color=color, lw=lw, clip_on=False)
         ax.text((x1 + x2) * 0.5, y_base + h * 1.3, text, 
                 ha='center', va='bottom', color=color, 
-                fontweight='bold', fontsize=11.5)
+                fontweight='bold', fontsize=10)
 
     # 8. Plotting Summary Figure
     print("\nGenerating behavioral summary figures...")
     sns.set_theme(style="ticks", context="talk")
-    fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+    # Narrow format: compressing the x-axis steepens the High-vs-Low
+    # probability slopes in the bottom row so those effects stand out
+    fig, axes = plt.subplots(2, 3, figsize=(12, 12))
     
-    # Colors for cohorts (consistent with EEG age-split plots)
-    cohort_colors = {'Young': '#1F77B4', 'Old': '#FF7F0E'}
+    # SPACECUE standard palette (SPACECUE/colors.py): light shade = Young,
+    # dark shade = Old. Green family for general behavioral metrics
+    # (consistent with the cohort colors in plot_mean_cursor_trajectories.py).
+    cohort_colors = {'Young': COLOR_TARGET_YOUNG, 'Old': COLOR_TARGET_OLD}
+    
+    # Per-stimulus-family cohort shades for the towardness panels
+    family_cohort_colors = {
+        'target_towardness': {'Young': COLOR_TARGET_YOUNG, 'Old': COLOR_TARGET_OLD},
+        'distractor_towardness': {'Young': COLOR_DISTRACTOR_YOUNG, 'Old': COLOR_DISTRACTOR_OLD},
+        'control_towardness': {'Young': COLOR_CONTROL_YOUNG, 'Old': COLOR_CONTROL_OLD},
+    }
     
     # Panel A: Reaction Time
     sns.barplot(data=sub_metrics, x='cohort', y='rt', ax=axes[0, 0], palette=cohort_colors, errorbar='se', capsize=0.1, alpha=0.3)
@@ -173,7 +205,7 @@ def main():
     sns.barplot(data=sub_metrics, x='cohort', y='IsCorrect', ax=axes[0, 1], palette=cohort_colors, errorbar='se', capsize=0.1, alpha=0.3)
     sns.stripplot(data=sub_metrics, x='cohort', y='IsCorrect', ax=axes[0, 1], hue='cohort', palette=cohort_colors, size=8, jitter=0.1, linewidth=1, edgecolor='gray', legend=False)
     axes[0, 1].set_title("Accuracy", fontweight='bold')
-    axes[0, 1].set_ylabel("Accuracy (%)")
+    axes[0, 1].set_ylabel("Proportion correct")
     axes[0, 1].set_xlabel("Age Cohort")
     acc_p = stats_results['IsCorrect']['p-val'].values[0]
     axes[0, 1].text(0.5, axes[0, 1].get_ylim()[1]*0.9, f"p = {acc_p:.3f}\nd = {stats_results['IsCorrect']['cohen-d'].values[0]:.2f}", ha='center', fontweight='bold')
@@ -190,12 +222,29 @@ def main():
         'control_towardness': 'Control'
     })
     
-    sns.barplot(data=toward_melt, x='metric', y='score', hue='cohort', ax=axes[0, 2], palette=cohort_colors, errorbar='se', capsize=0.1, alpha=0.7)
-    axes[0, 2].set_title("Towardness Scores by Cohort", fontweight='bold')
+    # Grouped bars with the SPACECUE stimulus-family cohort shades
+    # (light = Young, dark = Old per stimulus family; SPACECUE/colors.py)
+    bar_family_colors = [
+        ('Target', COLOR_TARGET_YOUNG, COLOR_TARGET_OLD),
+        ('Distractor', COLOR_DISTRACTOR_YOUNG, COLOR_DISTRACTOR_OLD),
+        ('Control', COLOR_CONTROL_YOUNG, COLOR_CONTROL_OLD),
+    ]
+    for x_idx, (metric, c_young, c_old) in enumerate(bar_family_colors):
+        sub_m = toward_melt[toward_melt['metric'] == metric]
+        for cohort, col, x_off in [('Young', c_young, -0.19), ('Old', c_old, 0.19)]:
+            vals = sub_m.loc[sub_m['cohort'] == cohort, 'score'].dropna()
+            axes[0, 2].bar(x_idx + x_off, vals.mean(), width=0.36, color=col,
+                           alpha=0.7, yerr=sem(vals), capsize=4,
+                           error_kw=dict(lw=1.5, capthick=1.5))
+    axes[0, 2].set_xticks([0, 1, 2])
+    axes[0, 2].set_xticklabels(['Target', 'Distractor', 'Control'])
+    axes[0, 2].set_title("Towardness by Cohort", fontweight='bold', fontsize=13)
     axes[0, 2].set_ylabel("Towardness (%)")
     axes[0, 2].set_xlabel("Stimulus Dimension")
     axes[0, 2].axhline(0, color='black', linestyle='--', alpha=0.5, lw=1)
-    axes[0, 2].legend(title='Cohort', loc='upper right')
+    axes[0, 2].legend(handles=[Patch(facecolor=COLOR_TARGET_YOUNG, alpha=0.7, label='Young'),
+                               Patch(facecolor=COLOR_TARGET_OLD, alpha=0.7, label='Old')],
+                      title='Cohort', loc='upper right')
     sns.despine(ax=axes[0, 2])
     
     # Add stats comparison on all Towardness metrics (Young vs Old cohorts)
@@ -226,6 +275,9 @@ def main():
     }
     
     for var, (label, ax) in interaction_vars.items():
+        # SPACECUE cohort shades for this stimulus family (light = Young, dark = Old)
+        cohort_colors = family_cohort_colors[var]
+        
         # Rename for plotting
         plot_df = sub_prob_data[var].copy()
         plot_df['DistractorProb'] = plot_df['DistractorProb'].replace({
@@ -234,7 +286,15 @@ def main():
         })
         
         sns.pointplot(data=plot_df, x='DistractorProb', y=var, hue='cohort', ax=ax, palette=cohort_colors, markers=['o', 's'], linestyles=['-', '--'], dodge=0.1, errorbar='se', capsize=0.1)
-        
+
+        # Thicken the cohort mean lines (they span the two x categories,
+        # unlike the short error-bar caps) so the High-vs-Low probability
+        # effect dominates over the thin per-subject lines
+        for ln in ax.lines:
+            xd = np.asarray(ln.get_xdata())
+            if len(xd) >= 2 and (np.max(xd) - np.min(xd)) > 0.5:
+                ln.set_linewidth(3.0)
+
         # Plot individual subject lines to show within-subject changes
         for sub_id in plot_df['subject_id'].unique():
             sub_data = plot_df[plot_df['subject_id'] == sub_id]
@@ -244,11 +304,11 @@ def main():
             x_coords = [0, 1] if sub_data['DistractorProb'].iloc[0] == 'High Prob' else [1, 0]
             # Apply small dodge
             dodge_val = -0.05 if cohort == 'Young' else 0.05
-            ax.plot([x + dodge_val for x in x_coords], sub_data[var], color=color, alpha=0.20, lw=1.2)
+            ax.plot([x + dodge_val for x in x_coords], sub_data[var], color=color, alpha=0.15, lw=1.0)
             
-        ax.set_title(f"{label} x Cohort", fontweight='bold', pad=12)
+        ax.set_title(f"{label} x Cohort", fontweight='bold', pad=12, fontsize=13)
         ax.set_ylabel(f"{label} (%)")
-        ax.set_xlabel("Distractor Location Probability")
+        ax.set_xlabel("Distractor Probability")
         ax.axhline(0, color='black', linestyle='--', alpha=0.5, lw=1)
         sns.despine(ax=ax)
         
@@ -257,9 +317,9 @@ def main():
         tt_o = paired_stats_results[var]['Old']
         
         p_y = tt_y['p-val'].values[0]
-        dz_y = tt_y['cohen-d'].values[0]
+        dz_y = cohens_dz(paired_stats_results[var]['y_high'], paired_stats_results[var]['y_low'])
         p_o = tt_o['p-val'].values[0]
-        dz_o = tt_o['cohen-d'].values[0]
+        dz_o = cohens_dz(paired_stats_results[var]['o_high'], paired_stats_results[var]['o_low'])
         
         star_y = '***' if p_y < 0.001 else ('**' if p_y < 0.01 else ('*' if p_y < 0.05 else 'n.s.'))
         star_o = '***' if p_o < 0.001 else ('**' if p_o < 0.01 else ('*' if p_o < 0.05 else 'n.s.'))
@@ -269,29 +329,29 @@ def main():
         y_min_data = plot_df[var].min()
         y_span = y_max_data - y_min_data
         
-        y_b1 = y_max_data + y_span * 0.06
-        h1 = y_span * 0.035
-        y_b2 = y_b1 + y_span * 0.16
-        h2 = y_span * 0.035
+        y_b1 = y_max_data + y_span * 0.05
+        h1 = y_span * 0.03
+        y_b2 = y_b1 + y_span * 0.14
+        h2 = y_span * 0.03
         
-        top_lim = y_b2 + y_span * 0.18
-        bot_lim = y_min_data - y_span * 0.06
+        top_lim = y_b2 + y_span * 0.15
+        bot_lim = y_min_data - y_span * 0.05
         ax.set_ylim(bot_lim, top_lim)
         
         # Young bracket (solid line, Young blue color)
-        text_y = f"Young: {star_y} (p = {p_y:.3f}, $d_z$ = {dz_y:.2f})"
+        text_y = f"Young: {star_y} (p = {p_y:.3f}, $d$ = {dz_y:.2f})"
         draw_paired_bracket(ax, -0.05, 0.95, y_b1, h1, text_y, cohort_colors['Young'])
         
         # Old bracket (solid line, Old orange color)
-        text_o = f"Old: {star_o} (p = {p_o:.3f}, $d_z$ = {dz_o:.2f})"
+        text_o = f"Old: {star_o} (p = {p_o:.3f}, $d$ = {dz_o:.2f})"
         draw_paired_bracket(ax, 0.05, 1.05, y_b2, h2, text_o, cohort_colors['Old'])
         
-        # Adjust legend to avoid clutter and overlap
-        if ax == axes[1, 0]:
-            ax.legend(title='Cohort', loc='lower left', framealpha=0.9)
-        else:
-            legend = ax.get_legend()
-            if legend: legend.remove()
+        # Remove the pointplot legends: in the narrow format they would
+        # collide with the per-subject lines, and the colored cohort
+        # bracket labels ("Young:" / "Old:") already identify the two means
+        legend = ax.get_legend()
+        if legend:
+            legend.remove()
     
     plt.tight_layout()
     
@@ -375,7 +435,7 @@ def main():
             f"    Mean Difference: {(yh - yl).mean():.4f} ± {(yh - yl).std():.4f}",
             f"    T-statistic:     t({tt_y['dof'].values[0]:.1f}) = {tt_y['T'].values[0]:.4f}",
             f"    p-value:         p = {tt_y['p-val'].values[0]:.4f}",
-            f"    Effect Size:     Cohen's dz = {tt_y['cohen-d'].values[0]:.4f}",
+            f"    Effect Size:     Cohen's dz = {cohens_dz(yh, yl):.4f}",
             f"    Power:           Power = {tt_y['power'].values[0]:.4f}",
             f"  Old Cohort (N={len(oh)}):",
             f"    High Prob Mean:  {oh.mean():.4f} ± {oh.std():.4f} (SEM: {sem(oh):.4f})",
@@ -383,7 +443,7 @@ def main():
             f"    Mean Difference: {(oh - ol).mean():.4f} ± {(oh - ol).std():.4f}",
             f"    T-statistic:     t({tt_o['dof'].values[0]:.1f}) = {tt_o['T'].values[0]:.4f}",
             f"    p-value:         p = {tt_o['p-val'].values[0]:.4f}",
-            f"    Effect Size:     Cohen's dz = {tt_o['cohen-d'].values[0]:.4f}",
+            f"    Effect Size:     Cohen's dz = {cohens_dz(oh, ol):.4f}",
             f"    Power:           Power = {tt_o['power'].values[0]:.4f}"
         ])
         

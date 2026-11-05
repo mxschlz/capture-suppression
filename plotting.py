@@ -40,12 +40,23 @@ def difference_topos(epochs, montage):
             is_left = channel_position[0] < 0  # x coordinate negative = left
             print(f"channel {ch_name} is left {is_left}")
             # --- TARGET ---
+            is_high_prob = False
+            if epochs.metadata is not None and 'DistractorProb' in epochs.metadata.columns:
+                is_high_prob = (epochs.metadata['DistractorProb'] == 'high-probability').any()
+
+            if is_high_prob:
+                target_left_pattern = "Target-1-Singleton-3"
+                target_right_pattern = "Target-3-Singleton-1"
+            else:
+                target_left_pattern = "Target-1-Singleton-2"
+                target_right_pattern = "Target-3-Singleton-2"
+
             if is_left:
-                contra_target_epochs = epochs[[x for x in all_conds if "Target-3-Singleton-2" in x]]
-                ipsi_target_epochs = epochs[[x for x in all_conds if "Target-1-Singleton-2" in x]]
+                contra_target_epochs = epochs[[x for x in all_conds if target_right_pattern in x]]
+                ipsi_target_epochs = epochs[[x for x in all_conds if target_left_pattern in x]]
             else:  # Right hemisphere
-                contra_target_epochs = epochs[[x for x in all_conds if "Target-1-Singleton-2" in x]]
-                ipsi_target_epochs = epochs[[x for x in all_conds if "Target-3-Singleton-2" in x]]
+                contra_target_epochs = epochs[[x for x in all_conds if target_left_pattern in x]]
+                ipsi_target_epochs = epochs[[x for x in all_conds if target_right_pattern in x]]
 
             # mne.epochs.equalize_epoch_counts([contra_target_epochs, ipsi_target_epochs], method="random")
 
