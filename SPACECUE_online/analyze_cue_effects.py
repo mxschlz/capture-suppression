@@ -36,6 +36,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import SPACECUE_online
+from SPACECUE.colors import COLOR_TARGET_YOUNG, COLOR_CONTROL_YOUNG, COLOR_DISTRACTOR_YOUNG, COLOR_DIFF
 
 sns.set_theme(context="talk", style="ticks")
 plt.ion()
@@ -43,7 +44,7 @@ plt.ion()
 # ============================================================
 # PARAMETERS
 # ============================================================
-NEW_INSTRUCTION_SUBJECTS = [39, 49]      # collected after the instruction change
+NEW_INSTRUCTION_SUBJECTS = SPACECUE_online.FINAL_SUBJECTS  # collected after the instruction change
 NEW_LABEL = 'new instruction (subjects ' + ', '.join(str(s) for s in NEW_INSTRUCTION_SUBJECTS) + ')'
 OLD_4BLOCK_SUBJECTS = list(range(1, 14)) + [15]   # 4-block design without target cues
 
@@ -53,10 +54,10 @@ CUE_MAP = {
     'cue_nonsingleton_location': 'Control Cue',
     'cue_neutral': 'Neutral Cue',
 }
-CUE_ORDER = ['Target Cue', 'Distractor Cue', 'Control Cue', 'Neutral Cue']
-INFORMATIVE_ORDER = ['Target Cue', 'Distractor Cue', 'Control Cue']
-CUE_PALETTE = {'Target Cue': '#0173B2', 'Distractor Cue': '#DE8F05',
-               'Control Cue': '#029E73', 'Neutral Cue': '#949494'}
+CUE_ORDER = ['Target Cue', 'Control Cue', 'Distractor Cue', 'Neutral Cue']
+INFORMATIVE_ORDER = ['Target Cue', 'Control Cue', 'Distractor Cue']
+CUE_PALETTE = {'Target Cue': COLOR_TARGET_YOUNG, 'Control Cue': COLOR_CONTROL_YOUNG,
+               'Distractor Cue': COLOR_DISTRACTOR_YOUNG, 'Neutral Cue': COLOR_DIFF}
 COHORT_PALETTE = {'old instruction': '#56B4E9', 'new instruction': '#D55E00'}
 RESPONSE_PALETTE = {'Correct': '#0173B2', 'Distractor Intrusion': '#DE8F05',
                     'Control Intrusion': '#029E73', 'Other Digit': '#CC78BC',
@@ -622,7 +623,7 @@ for row_i, sub in enumerate(NEW_INSTRUCTION_SUBJECTS):
     for ax, dv, ylab, title in [(axes[row_i, 0], 'acc', 'Accuracy (Proportion Correct)', 'Accuracy'),
                                 (axes[row_i, 1], 'rt', 'Response Time (s)', 'Response Time (Correct Trials)')]:
         sns.barplot(data=s_new, x='block', y=dv, hue='Cue Type',
-                    hue_order=['Neutral Cue', 'Target Cue', 'Distractor Cue', 'Control Cue'],
+                    hue_order=['Neutral Cue'] + INFORMATIVE_ORDER,
                     palette=CUE_PALETTE, errorbar=None, alpha=0.7, ax=ax)
         ax.set_ylabel(ylab)
         ax.set_xlabel('Block')

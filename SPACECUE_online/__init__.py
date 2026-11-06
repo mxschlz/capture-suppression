@@ -49,3 +49,12 @@ def get_concatenated_data_path():
         raise OSError("Unsupported operating system.")
     return data_path
 
+
+# --- Final Analysis Constants (Updated Paradigm / New Instruction) ---
+FINAL_SUBJECTS = [39, 49]            # extend with every new subject of the updated paradigm
+FINAL_PARADIGM_START = "2026-11-03"  # ISO date cutoff for automated filename cross-check
+DELAYS = [0.5, 1.0, 1.5, 2.0]        # cue-stimulus delay levels (s)
+CHANCE_LEVEL = 1 / 9                 # 9-digit response button box in SPACECUE_online
+TARGET_N = 50                        # target sample size for d_z = 0.5
+
+
