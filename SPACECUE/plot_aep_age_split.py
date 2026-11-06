@@ -39,7 +39,7 @@ def main():
     cohorts = {'Young': [], 'Old': []}
 
     # Fronto-central channel ROI for AEP / Vertex potentials
-    roi_channels = ["Fz", "FCz", "Cz"]
+    roi_channels = ["Cz"]
     tmin, tmax = -0.2, 0.8  # Focus on the 0-500ms post-stimulus window
     baseline_desc = "None (aggressively high-pass filtered with 1 Hz)"
 
