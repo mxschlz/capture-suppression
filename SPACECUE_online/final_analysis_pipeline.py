@@ -219,20 +219,24 @@ logprint(f"Trial-level anticipation RTs (< {MIN_ANTICIPATION_RT:.2f} s) removed:
 # 4. FACTORIAL DESIGN & CELL COUNT VERIFICATION
 # ============================================================
 logprint('=' * 78)
-logprint('2. FACTORIAL DESIGN VERIFICATION (3 Block Types x 2 Informativeness x 4 Delays)')
+logprint('2. FACTORIAL DESIGN VERIFICATION (3 Cue Types x 4 Delays)')
 logprint('=' * 78)
 
-cell_counts = (df.groupby(['subject_id', 'Block Type', 'Informativeness', 'Delay'])
+# Evaluated on the 3 x 4 informative design cells
+cell_counts = (df[df['CueInstruction'] != 'cue_neutral']
+               .groupby(['subject_id', 'Cue Type', 'Delay'])
                .agg(n_trials=('acc', 'size'),
                     n_responded=('rt_all', 'count'))
                .reset_index())
+cell_counts['Cue Type'] = pd.Categorical(cell_counts['Cue Type'], categories=INFORMATIVE_ORDER, ordered=True)
+cell_counts = cell_counts.sort_values(['subject_id', 'Cue Type', 'Delay']).reset_index(drop=True)
 cell_counts.to_csv(os.path.join(out_dir, 'design_cell_counts.csv'), index=False)
 
 min_trials = int(cell_counts['n_trials'].min())
 max_trials = int(cell_counts['n_trials'].max())
 mean_trials = cell_counts['n_trials'].mean()
 min_resp = int(cell_counts['n_responded'].min())
-logprint(f"Total cells per subject: 24 (3 Block Types x 2 Informativeness x 4 Delays)")
+logprint(f"Total cells per subject: 12 (3 Cue Types x 4 Delays)")
 logprint(f"Trials per cell across subjects: mean = {mean_trials:.1f}, min = {min_trials}, max = {max_trials}")
 logprint(f"Responded trials per cell (for RT): min = {min_resp}, max = {int(cell_counts['n_responded'].max())}")
 if (cell_counts['n_trials'] < 10).any():
@@ -690,17 +694,14 @@ fig.tight_layout()
 fig.savefig(os.path.join(fig_dir, 'fig3_delay_averaged_cue_effects.png'), dpi=200)
 plt.close('all')
 
-# --- Figure 4: Trial Count Heatmap per Cell (Design Verification) -------------
-mean_counts = (cell_counts.groupby(['Block Type', 'Informativeness', 'Delay'], observed=True)['n_trials']
-               .mean().reset_index())
-cond_order = [f"{cue} ({inf})" for cue in INFORMATIVE_ORDER for inf in ['Informative', 'Neutral']]
-mean_counts['Condition'] = mean_counts['Block Type'].astype(str) + ' (' + mean_counts['Informativeness'] + ')'
-piv_counts = (mean_counts.pivot(index='Condition', columns='Delay', values='n_trials')
-              .reindex(index=cond_order, columns=DELAYS))
+# --- Figure 4: Trial Count Heatmap per Cell (4 Delays x 3 Cue Types) ---------
+piv_counts = (cell_counts.groupby(['Delay', 'Cue Type'], observed=True)['n_trials']
+              .mean().unstack('Cue Type')[INFORMATIVE_ORDER]
+              .reindex(DELAYS))
 
-fig, ax = plt.subplots(figsize=(10, 6))
+fig, ax = plt.subplots(figsize=(8, 6))
 sns.heatmap(piv_counts, annot=False, cmap='viridis', cbar_kws={'label': 'Mean Trial Count'}, ax=ax)
-# Manually annotate every cell to bypass the matplotlib 3.8 + seaborn 0.12 annotation bug
+# Manually annotate every cell with bold, high-contrast labels
 val_mid = 0.5 * (np.nanmin(piv_counts.values) + np.nanmax(piv_counts.values))
 for r_idx in range(piv_counts.shape[0]):
     for c_idx in range(piv_counts.shape[1]):
@@ -710,8 +711,8 @@ for r_idx in range(piv_counts.shape[0]):
             ax.text(c_idx + 0.5, r_idx + 0.5, f"{val:.1f}",
                     ha='center', va='center', color=txt_color, fontsize=14, fontweight='bold')
 ax.set_title(f'Mean Trial Count per Design Cell (N = {len(valid_subjects)})')
-ax.set_xlabel('Cue–Stimulus Delay (s)')
-ax.set_ylabel('Block Type (Informativeness)')
+ax.set_ylabel('Cue–Stimulus Delay (s)')
+ax.set_xlabel('Cue Type')
 fig.tight_layout()
 fig.savefig(os.path.join(fig_dir, 'fig4_cell_counts_heatmap.png'), dpi=200)
 plt.close('all')
