@@ -1,231 +1,130 @@
+"""
+SPACECUE — Alpha Lateralization Pipeline & Cueing Strength (0.8 vs 0.6) Analysis
+================================================================================
+Interactive script structured into sequential cells (# %%) for PyCharm / IPython.
+
+Uses the shared incremental pickle cache (pre_stim_alpha_subject_data.pkl)
+so existing subjects are loaded in < 1 second and new subjects compute only once.
+"""
+
+# %% [Cell 1: Setup, Imports & Configuration]
 import sys
-import mne
+import os
+import glob
 import numpy as np
+import pandas as pd
+import scipy.stats
+from scipy.stats import t, sem
 import matplotlib
 # Use 'Agg' backend unless we are in an interactive console (like sys.ps1 or IPython)
 if not (hasattr(sys, 'ps1') or 'ipykernel' in sys.modules):
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import glob
-import os
-from scipy.stats import t, sem
-from mne.stats import permutation_cluster_1samp_test
-import pandas as pd
 import seaborn as sns
-import SPACECUE
-from SPACECUE.subjects import subject_ids
+import mne
+from mne.stats import permutation_cluster_1samp_test, permutation_cluster_test
 
-sns.set_theme(context="talk", style="ticks")
-
-# --- Analysis Parameters ---
-freqs = np.arange(5, 20, 1)
-n_cycles = freqs / 2
-method = "morlet"
-decim = 5
-n_jobs = 5
-
-picks_for_diff = 'eeg'
-tmin_analysis, tmax_analysis = -1.0, 1.0
-
-left_roi_hemi  = ["TP9",  "TP7",  "CP5", "CP3", "CP1", "P7",  "P5",  "P3",  "P1",  "PO7", "PO3", "O1"]
-right_roi_hemi = ["TP10", "TP8",  "CP6", "CP4", "CP2", "P8",  "P6",  "P4",  "P2",  "PO8", "PO4", "O2"]
-alpha_fmin_hemi, alpha_fmax_hemi = 8, 12
-
-n_permutations_cluster = 10000
-alpha_stat_cluster = 0.05
-cluster_tail = 0
-
-SIG_LINE_Y_OFFSET_TVAL = 0.01
-SIG_LINE_LW_TVAL       = 4
-SIG_LINE_ALPHA_TVAL    = 0.7
-SIG_LINE_COLOR_TVAL    = 'purple'
-
+# Add project root to sys.path
 try:
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 except NameError:
     project_root = os.path.abspath(os.getcwd())
-PLOTS_DIR = os.path.join(project_root, "spacecue", "plots")
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+import SPACECUE
+from SPACECUE.subjects import subject_ids
+from SPACECUE.pre_stimulus_alpha_lateralization import run_computation
+
+# Publication styling adhering strictly to AGENTS.md
+sns.set_theme(context="talk", style="ticks")
+if hasattr(sys, 'ps1') or 'ipykernel' in sys.modules:
+    plt.ion()
+
+PLOTS_DIR = os.path.normpath(os.path.join(project_root, "SPACECUE", "plots"))
 os.makedirs(PLOTS_DIR, exist_ok=True)
 
-# --- Data Storage ---
+# ROI definitions
+left_roi_hemi  = ["TP9",  "TP7",  "CP5", "CP3", "CP1", "P7",  "P5",  "P3",  "P1",  "PO7", "PO3", "O1"]
+right_roi_hemi = ["TP10", "TP8",  "CP6", "CP4", "CP2", "P8",  "P6",  "P4",  "P2",  "PO8", "PO4", "O2"]
+alpha_fmin_hemi, alpha_fmax_hemi = 8, 12
+
+print("=" * 80)
+print("SPACECUE ALPHA LATERALIZATION & CUEING STRENGTH PIPELINE")
+print(f"Output directory: {PLOTS_DIR}")
+print("=" * 80)
+
+
+# %% [Cell 2: Load Multi-Condition TFR Data from Shared Incremental Cache]
+# Loads all condition splits: expected (all), expected_08, expected_06, target, singleton
+cached_subject_data = run_computation(force_recompute=False, include_all_conditions=True)
+
+# Reconstruct MNE AverageTFRArray objects from cached dictionaries
+subject_ids_available = sorted(list(cached_subject_data.keys()))
+print(f"\nReconstructing TFR objects for {len(subject_ids_available)} subjects...")
+
+# Load template info from first subject epoch file
+first_sub = subject_ids_available[0]
+first_epo_pattern = os.path.join(SPACECUE.get_data_path(), "derivatives", "epoching",
+                                 f"sci-{first_sub}", "eeg", f"sci-{first_sub}_task-spacecue-epo.fif")
+template_info = mne.read_epochs(glob.glob(first_epo_pattern)[0], preload=False, verbose=False).info
+
+times_vector = cached_subject_data[first_sub]['times']
+freqs_vector = cached_subject_data[first_sub]['freqs']
+
 subject_results = {
-    'target_li':      [],
-    'singleton_li':   [],
-    'expected_li':    [],
+    'target_li': [],
+    'singleton_li': [],
+    'expected_li': [],
     'expected_li_08': [],
     'expected_li_06': []
 }
-subject_cohorts = []   # 'Young' or 'Old' per processed subject
+subject_cohorts = []
 processed_subjects = []
-times_vector = None
 
-# --- Subject Loop ---
-for subject in subject_ids[:]:
-    print(f"\n--- Processing Subject: {subject} ---")
-    try:
-        epoch_file_pattern = os.path.join(
-            SPACECUE.get_data_path(), "derivatives", "epoching",
-            f"sci-{subject}", "eeg", f"sci-{subject}_task-spacecue-epo.fif"
-        )
-        epoch_files = glob.glob(epoch_file_pattern)
-        if not epoch_files:
-            print(f"  Epoch file not found for subject {subject}. Skipping.")
-            continue
-        epochs_sub = mne.read_epochs(epoch_files[0], preload=True)
-        print(f"  Loaded {len(epochs_sub)} epochs.")
-    except Exception as e:
-        print(f"  Error loading data for subject {subject}: {e}. Skipping.")
+# Mappings from subject_results keys to cached condition keys
+cond_map = {
+    'target_li': 'target',
+    'singleton_li': 'singleton',
+    'expected_li': 'expected_all',
+    'expected_li_08': 'expected_08',
+    'expected_li_06': 'expected_06'
+}
+
+for sub in subject_ids_available:
+    s_info = cached_subject_data[sub]
+    conds = s_info.get('conditions', {})
+    
+    # Check if this subject has expected condition data
+    exp_all = conds.get('expected_all', None)
+    if exp_all is None:
         continue
+        
+    for res_key, c_key in cond_map.items():
+        c_data = conds.get(c_key, None)
+        if c_data is not None:
+            tfr_obj = mne.time_frequency.AverageTFRArray(
+                info=template_info,
+                data=c_data['li_data'],
+                times=times_vector,
+                freqs=freqs_vector,
+                nave=c_data.get('nave', 100),
+                comment=f"sci-{sub}_{c_key}",
+                method="morlet"
+            )
+            subject_results[res_key].append(tfr_obj)
+            
+    subject_cohorts.append(s_info['cohort'])
+    processed_subjects.append(sub)
 
-    # Determine cohort from metadata Age
-    cohort = 'Unknown'
-    if epochs_sub.metadata is not None and 'Age' in epochs_sub.metadata.columns:
-        age = float(epochs_sub.metadata['Age'].iloc[0])
-        cohort = 'Young' if age <= 35 else 'Old'
+print(f"Successfully loaded {len(processed_subjects)} subjects with full condition splits.")
 
-    all_conds_sub = list(epochs_sub.event_id.keys())
 
-    try:
-        left_target_epochs_sub  = epochs_sub[[x for x in all_conds_sub if "Target-1-Singleton-2" in x]].copy()
-        right_target_epochs_sub = epochs_sub[[x for x in all_conds_sub if "Target-3-Singleton-2" in x]].copy()
-        if len(left_target_epochs_sub) == 0 or len(right_target_epochs_sub) == 0:
-            raise ValueError("Zero trials in one of the target conditions.")
-
-        left_singleton_epochs_sub  = epochs_sub[[x for x in all_conds_sub if "Target-2-Singleton-1" in x]].copy()
-        right_singleton_epochs_sub = epochs_sub[[x for x in all_conds_sub if "Target-2-Singleton-3" in x]].copy()
-        if len(left_singleton_epochs_sub) == 0 or len(right_singleton_epochs_sub) == 0:
-            raise ValueError("Zero trials in one of the singleton conditions.")
-
-        # Expected distractor
-        if epochs_sub.metadata is not None and 'HP_Distractor_Loc' in epochs_sub.metadata.columns:
-            hp_loc_numeric = pd.to_numeric(epochs_sub.metadata['HP_Distractor_Loc'], errors='coerce')
-            left_expected_epochs_sub  = epochs_sub[hp_loc_numeric == 1.0].copy()
-            right_expected_epochs_sub = epochs_sub[hp_loc_numeric == 3.0].copy()
-
-            if 'HP_Distractor_Prob' in epochs_sub.metadata.columns:
-                hp_prob_numeric = pd.to_numeric(epochs_sub.metadata['HP_Distractor_Prob'], errors='coerce')
-                left_expected_08_epochs_sub  = epochs_sub[(hp_loc_numeric == 1.0) & (hp_prob_numeric == 0.8)].copy()
-                right_expected_08_epochs_sub = epochs_sub[(hp_loc_numeric == 3.0) & (hp_prob_numeric == 0.8)].copy()
-                left_expected_06_epochs_sub  = epochs_sub[(hp_loc_numeric == 1.0) & (hp_prob_numeric == 0.6)].copy()
-                right_expected_06_epochs_sub = epochs_sub[(hp_loc_numeric == 3.0) & (hp_prob_numeric == 0.6)].copy()
-            else:
-                left_expected_08_epochs_sub = right_expected_08_epochs_sub = None
-                left_expected_06_epochs_sub = right_expected_06_epochs_sub = None
-        else:
-            left_expected_epochs_sub  = right_expected_epochs_sub  = None
-            left_expected_08_epochs_sub = right_expected_08_epochs_sub = None
-            left_expected_06_epochs_sub = right_expected_06_epochs_sub = None
-    except Exception as e:
-        print(f"  Error splitting conditions for subject {subject}: {e}. Skipping.")
-        continue
-
-    def get_lateralization_index(left_epochs, right_epochs, picks_calc, freqs_calc, n_cycles_calc,
-                                 decim_calc, method_calc, tmin_crop=None, tmax_crop=None, n_jobs_tfr=-1):
-        tfr_left = left_epochs.compute_tfr(
-            method=method_calc, picks=picks_calc, freqs=freqs_calc,
-            n_cycles=n_cycles_calc, decim=decim_calc, n_jobs=n_jobs_tfr,
-            return_itc=False, average=False)
-        if tmin_crop is not None or tmax_crop is not None:
-            tfr_left.crop(tmin=tmin_crop, tmax=tmax_crop)
-        alpha_left_avg = tfr_left.average()
-
-        tfr_right = right_epochs.compute_tfr(
-            method=method_calc, picks=picks_calc, freqs=freqs_calc,
-            n_cycles=n_cycles_calc, decim=decim_calc, n_jobs=n_jobs_tfr,
-            return_itc=False, average=False)
-        if tmin_crop is not None or tmax_crop is not None:
-            tfr_right.crop(tmin=tmin_crop, tmax=tmax_crop)
-        alpha_right_avg = tfr_right.average()
-
-        li_data = (alpha_left_avg.data - alpha_right_avg.data) / (alpha_left_avg.data + alpha_right_avg.data)
-        li_power = mne.time_frequency.AverageTFRArray(
-            data=li_data, info=alpha_left_avg.info, times=alpha_left_avg.times,
-            freqs=freqs_calc, nave=(alpha_left_avg.nave + alpha_right_avg.nave) // 2,
-            comment='Lateralization Index', method=method_calc
-        )
-        return li_power, alpha_left_avg.times
-
-    try:
-        alpha_diff_target_lr,    times_t = get_lateralization_index(
-            left_target_epochs_sub, right_target_epochs_sub, picks_for_diff,
-            freqs, n_cycles, decim, method, tmin_analysis, tmax_analysis, n_jobs_tfr=n_jobs)
-        alpha_diff_singleton_lr, _ = get_lateralization_index(
-            left_singleton_epochs_sub, right_singleton_epochs_sub, picks_for_diff,
-            freqs, n_cycles, decim, method, tmin_analysis, tmax_analysis, n_jobs_tfr=n_jobs)
-
-        if left_expected_epochs_sub is not None and len(left_expected_epochs_sub) > 0 and len(right_expected_epochs_sub) > 0:
-            alpha_diff_expected_lr, _ = get_lateralization_index(
-                left_expected_epochs_sub, right_expected_epochs_sub, picks_for_diff,
-                freqs, n_cycles, decim, method, tmin_analysis, tmax_analysis, n_jobs_tfr=n_jobs)
-            subject_results['expected_li'].append(alpha_diff_expected_lr)
-        if left_expected_08_epochs_sub is not None and len(left_expected_08_epochs_sub) > 0 and len(right_expected_08_epochs_sub) > 0:
-            alpha_diff_expected_08_lr, _ = get_lateralization_index(
-                left_expected_08_epochs_sub, right_expected_08_epochs_sub, picks_for_diff,
-                freqs, n_cycles, decim, method, tmin_analysis, tmax_analysis, n_jobs_tfr=n_jobs)
-            subject_results['expected_li_08'].append(alpha_diff_expected_08_lr)
-        if left_expected_06_epochs_sub is not None and len(left_expected_06_epochs_sub) > 0 and len(right_expected_06_epochs_sub) > 0:
-            alpha_diff_expected_06_lr, _ = get_lateralization_index(
-                left_expected_06_epochs_sub, right_expected_06_epochs_sub, picks_for_diff,
-                freqs, n_cycles, decim, method, tmin_analysis, tmax_analysis, n_jobs_tfr=n_jobs)
-            subject_results['expected_li_06'].append(alpha_diff_expected_06_lr)
-
-        if times_vector is None:
-            times_vector = times_t
-        subject_results['target_li'].append(alpha_diff_target_lr)
-        subject_results['singleton_li'].append(alpha_diff_singleton_lr)
-        subject_cohorts.append(cohort)
-        processed_subjects.append(subject)
-    except Exception as e:
-        print(f"  Error during TFR/LI calculation for subject {subject}: {e}. Skipping.")
-        continue
-
-print(f"\n--- Successfully processed {len(processed_subjects)} subjects: {processed_subjects} ---")
-
-if not processed_subjects:
-    raise RuntimeError("No subjects were successfully processed.")
-if times_vector is None:
-    raise RuntimeError("Could not determine the time vector.")
-
-# --- Align time vectors ---
-all_tfrs = (subject_results['target_li'] + subject_results['singleton_li'] +
-            subject_results['expected_li'] + subject_results['expected_li_08'] + subject_results['expected_li_06'])
-time_lengths = [len(tfr.times) for tfr in all_tfrs]
-
-if len(set(time_lengths)) > 1:
-    common_tmin = max(tfr.times[0] for tfr in all_tfrs)
-    common_tmax = min(tfr.times[-1] for tfr in all_tfrs)
-    for tfr in all_tfrs:
-        tfr.crop(tmin=common_tmin, tmax=common_tmax)
-    shortest_tfr = min(all_tfrs, key=lambda x: len(x.times))
-    times_vector = shortest_tfr.times.copy()
-    from scipy.interpolate import interp1d
-    from mne.time_frequency import AverageTFRArray
-    for i, tfr in enumerate(all_tfrs):
-        if len(tfr.times) != len(times_vector) or not np.allclose(tfr.times, times_vector):
-            f_interp = interp1d(tfr.times, tfr.data, axis=-1, bounds_error=False, fill_value="extrapolate")
-            new_data = f_interp(times_vector)
-            all_tfrs[i] = AverageTFRArray(
-                info=tfr.info, data=new_data, times=times_vector, freqs=tfr.freqs,
-                nave=tfr.nave, comment=tfr.comment, method=tfr.method)
-    len_t   = len(subject_results['target_li'])
-    len_s   = len(subject_results['singleton_li'])
-    len_e   = len(subject_results['expected_li'])
-    len_e08 = len(subject_results['expected_li_08'])
-    len_e06 = len(subject_results['expected_li_06'])
-    idx = 0
-    subject_results['target_li']      = all_tfrs[idx:idx+len_t];   idx += len_t
-    subject_results['singleton_li']   = all_tfrs[idx:idx+len_s];   idx += len_s
-    subject_results['expected_li']    = all_tfrs[idx:idx+len_e];   idx += len_e
-    subject_results['expected_li_08'] = all_tfrs[idx:idx+len_e08]; idx += len_e08
-    subject_results['expected_li_06'] = all_tfrs[idx:idx+len_e06]
-else:
-    times_vector = all_tfrs[0].times.copy()
-
-# --- Helper functions ---
+# %% [Cell 3: Helper Functions for Feature Extraction & Statistics]
 def extract_hemi_tc(li_sub):
     """Return (left_tc, right_tc) time courses averaged over posterior ROI + alpha band."""
     ch = li_sub.ch_names
-    vl = [c for c in left_roi_hemi  if c in ch]
+    vl = [c for c in left_roi_hemi if c in ch]
     vr = [c for c in right_roi_hemi if c in ch]
     if not vl or not vr:
         return None, None
@@ -233,328 +132,365 @@ def extract_hemi_tc(li_sub):
     r_tc = li_sub.copy().pick(vr).crop(fmin=alpha_fmin_hemi, fmax=alpha_fmax_hemi).data.mean(axis=(0, 1))
     return l_tc, r_tc
 
-def run_cluster_test(diff_tc_all):
-    """1-sample cluster permutation test on (N_subjects, times) difference array."""
+def compute_collapsed_cohens_d(group1_data, group2_data, indices):
+    """Computes circularity-safe Cohen's d collapsed across significant cluster indices."""
+    g1 = np.mean(group1_data[:, indices], axis=1)
+    g2 = np.mean(group2_data[:, indices], axis=1)
+    n1, n2 = len(g1), len(g2)
+    v1, v2 = np.var(g1, ddof=1), np.var(g2, ddof=1)
+    sp = np.sqrt(((n1 - 1) * v1 + (n2 - 1) * v2) / (n1 + n2 - 2))
+    return (np.mean(g1) - np.mean(g2)) / sp if sp > 0 else 0.0
+
+def compute_one_sample_cohens_dz(data, indices):
+    """Computes circularity-safe Cohen's d_z for 1-sample test collapsed across cluster."""
+    collapsed = np.mean(data[:, indices], axis=1)
+    sd = np.std(collapsed, ddof=1)
+    return np.mean(collapsed) / sd if sd > 0 else 0.0
+
+def run_cluster_test_1samp(diff_tc_all, n_permutations=10000, seed=42):
+    """1-sample cluster permutation test on (N_subjects, times) array against 0."""
     n = diff_tc_all.shape[0]
     if n < 2:
-        return None, None, None, None
+        return None, [], [], None
     df = n - 1
-    thresh = t.ppf(1 - alpha_stat_cluster / 2, df)
+    thresh = t.ppf(1 - 0.05 / 2, df)
     t_obs, clusters, cluster_pv, _ = permutation_cluster_1samp_test(
-        diff_tc_all, threshold=thresh, n_permutations=n_permutations_cluster,
-        tail=cluster_tail, n_jobs=n_jobs, out_type="mask", seed=42, verbose=False)
+        diff_tc_all, threshold=thresh, n_permutations=n_permutations,
+        tail=0, n_jobs=4, out_type="mask", seed=seed, verbose=False
+    )
     return t_obs, clusters, cluster_pv, thresh
 
-def plot_tc(ax, ga, se, color, label):
-    ax.plot(times_vector, ga, color=color, lw=2.5, label=label)
-    ax.fill_between(times_vector, ga - se, ga + se, color=color, alpha=0.18)
-
-def plot_sig_clusters(ax, t_obs, thresh, clusters, cluster_pv):
-    if t_obs is None:
-        ax.text(0.5, 0.5, "No stats", ha='center', va='center', transform=ax.transAxes)
-        return
-    ax.plot(times_vector, t_obs, color='black', lw=1.5, label="Observed T")
-    if thresh is not None:
-        ax.axhline( thresh, color='gray', ls='--', lw=1, label=f'Threshold (t={thresh:.2f})')
-        ax.axhline(-thresh, color='gray', ls='--', lw=1)
-    sig_found = False
-    if clusters is not None:
-        for i, cl_mask in enumerate(clusters):
-            if cluster_pv[i] < alpha_stat_cluster:
-                c_times = times_vector[cl_mask]
-                if len(c_times) > 0:
-                    lbl = f'Sig. cluster (p<{alpha_stat_cluster})' if not sig_found else '_nolegend_'
-                    sig_found = True
-                    ax.hlines(y=SIG_LINE_Y_OFFSET_TVAL, xmin=c_times[0], xmax=c_times[-1],
-                              color=SIG_LINE_COLOR_TVAL, lw=SIG_LINE_LW_TVAL,
-                              alpha=SIG_LINE_ALPHA_TVAL, label=lbl)
-    ax.legend(loc='best', fontsize=10)
-
 def ax_decor(ax, xlabel=None, ylabel=None):
-    ax.axhline(0, color='k', ls=':', lw=0.8)
-    ax.axvline(0, color='k', ls=':', lw=0.8)
+    ax.axhline(0, color='k', ls=':', lw=0.8, alpha=0.7)
+    ax.axvline(0, color='k', ls=':', lw=0.8, alpha=0.7)
     if xlabel: ax.set_xlabel(xlabel)
     if ylabel: ax.set_ylabel(ylabel)
     sns.despine(ax=ax)
 
-# Shortcuts
-has_expected    = len(subject_results['expected_li'])    > 0
-has_expected_08 = len(subject_results['expected_li_08']) > 0
-has_expected_06 = len(subject_results['expected_li_06']) > 0
 
-# ============================================================
-# FIGURE 1 — GA TFR Spectrograms Overview
-#   Row 0: Target LI | Singleton LI | Target-Singleton diff
-#   Row 1: Expected (all) | Expected (0.8) | Expected (0.6)
-# ============================================================
-print("\n--- Plotting Figure 1: TFR Overview ---")
+# %% [Cell 4: Pre-Stimulus Alpha Lateralization by Cueing Strength (0.8 vs 0.6)]
+# Extract L-R hemispheric difference time courses for 0.8 and 0.6
+exp08_diffs, exp06_diffs = [], []
+exp08_cohorts, exp06_cohorts = [], []
+exp08_subs, exp06_subs = [], []
+
+for idx, li_sub in enumerate(subject_results['expected_li_08']):
+    l, r = extract_hemi_tc(li_sub)
+    if l is not None:
+        exp08_diffs.append(l - r)
+        exp08_cohorts.append(subject_cohorts[idx])
+        exp08_subs.append(processed_subjects[idx])
+
+for idx, li_sub in enumerate(subject_results['expected_li_06']):
+    l, r = extract_hemi_tc(li_sub)
+    if l is not None:
+        exp06_diffs.append(l - r)
+        exp06_cohorts.append(subject_cohorts[idx])
+        exp06_subs.append(processed_subjects[idx])
+
+# Align paired subjects who have both 0.8 and 0.6
+common_subs = [s for s in exp08_subs if s in exp06_subs]
+idx08 = [exp08_subs.index(s) for s in common_subs]
+idx06 = [exp06_subs.index(s) for s in common_subs]
+
+arr08 = np.array([exp08_diffs[i] for i in idx08])
+arr06 = np.array([exp06_diffs[i] for i in idx06])
+paired_cohorts = [exp08_cohorts[i] for i in idx08]
+
+n_total = len(common_subs)
+pre_stim_mask = (times_vector >= -0.75) & (times_vector <= 0.0)
+
+# Pre-stimulus window collapsed means per subject
+pre08_means = arr08[:, pre_stim_mask].mean(axis=1)
+pre06_means = arr06[:, pre_stim_mask].mean(axis=1)
+pre_diff = pre08_means - pre06_means
+
+# 1. Overall Statistics (All Subjects N=41)
+print("\n" + "=" * 80)
+print(f"CUEING STRENGTH STATISTICS: PROB 0.8 vs 0.6 (N = {n_total})")
+print("=" * 80)
+
+sh_08_w, sh_08_p = scipy.stats.shapiro(pre08_means)
+sh_06_w, sh_06_p = scipy.stats.shapiro(pre06_means)
+sh_df_w, sh_df_p = scipy.stats.shapiro(pre_diff)
+
+tt_08 = scipy.stats.ttest_1samp(pre08_means, 0.0)
+tt_06 = scipy.stats.ttest_1samp(pre06_means, 0.0)
+tt_paired = scipy.stats.ttest_rel(pre08_means, pre06_means)
+
+dz_08 = np.mean(pre08_means) / np.std(pre08_means, ddof=1)
+dz_06 = np.mean(pre06_means) / np.std(pre06_means, ddof=1)
+dz_paired = np.mean(pre_diff) / np.std(pre_diff, ddof=1)
+
+print(f"Pre-stimulus Mean Alpha LI [-750 to 0 ms]:")
+print(f"  Prob 0.8: M = {pre08_means.mean():.4f} ± {pre08_means.std(ddof=1):.4f} (SEM = {sem(pre08_means):.4f}) | t({n_total-1}) = {tt_08.statistic:.4f}, p = {tt_08.pvalue:.4f}, d_z = {dz_08:.4f}")
+print(f"  Prob 0.6: M = {pre06_means.mean():.4f} ± {pre06_means.std(ddof=1):.4f} (SEM = {sem(pre06_means):.4f}) | t({n_total-1}) = {tt_06.statistic:.4f}, p = {tt_06.pvalue:.4f}, d_z = {dz_06:.4f}")
+print(f"  Paired (0.8 − 0.6): Diff M = {pre_diff.mean():.4f} | t({n_total-1}) = {tt_paired.statistic:.4f}, p = {tt_paired.pvalue:.4f}, d_z = {dz_paired:.4f}")
+
+# 2. Cohort Breakdown (Young vs Old × 0.8 vs 0.6)
+young_mask = np.array([c == 'Young' for c in paired_cohorts])
+old_mask = np.array([c == 'Old' for c in paired_cohorts])
+
+n_young = np.sum(young_mask)
+n_old = np.sum(old_mask)
+
+y_pre08 = pre08_means[young_mask]
+y_pre06 = pre06_means[young_mask]
+y_diff = y_pre08 - y_pre06
+
+o_pre08 = pre08_means[old_mask]
+o_pre06 = pre06_means[old_mask]
+o_diff = o_pre08 - o_pre06
+
+y_tt_08 = scipy.stats.ttest_1samp(y_pre08, 0.0)
+y_tt_06 = scipy.stats.ttest_1samp(y_pre06, 0.0)
+y_tt_rel = scipy.stats.ttest_rel(y_pre08, y_pre06)
+
+o_tt_08 = scipy.stats.ttest_1samp(o_pre08, 0.0)
+o_tt_06 = scipy.stats.ttest_1samp(o_pre06, 0.0)
+o_tt_rel = scipy.stats.ttest_rel(o_pre08, o_pre06)
+
+print(f"\nCohort Breakdown:")
+print(f"  Younger Cohort (N={n_young}):")
+print(f"    0.8: M = {y_pre08.mean():.4f} (SEM = {sem(y_pre08):.4f}) | t({n_young-1}) = {y_tt_08.statistic:.4f}, p = {y_tt_08.pvalue:.4f}, d_z = {y_pre08.mean()/np.std(y_pre08, ddof=1):.4f}")
+print(f"    0.6: M = {y_pre06.mean():.4f} (SEM = {sem(y_pre06):.4f}) | t({n_young-1}) = {y_tt_06.statistic:.4f}, p = {y_tt_06.pvalue:.4f}, d_z = {y_pre06.mean()/np.std(y_pre06, ddof=1):.4f}")
+print(f"    0.8 vs 0.6: t({n_young-1}) = {y_tt_rel.statistic:.4f}, p = {y_tt_rel.pvalue:.4f}, d_z = {y_diff.mean()/np.std(y_diff, ddof=1):.4f}")
+print(f"  Older Cohort (N={n_old}):")
+print(f"    0.8: M = {o_pre08.mean():.4f} (SEM = {sem(o_pre08):.4f}) | t({n_old-1}) = {o_tt_08.statistic:.4f}, p = {o_tt_08.pvalue:.4f}, d_z = {o_pre08.mean()/np.std(o_pre08, ddof=1):.4f}")
+print(f"    0.6: M = {o_pre06.mean():.4f} (SEM = {sem(o_pre06):.4f}) | t({n_old-1}) = {o_tt_06.statistic:.4f}, p = {o_tt_06.pvalue:.4f}, d_z = {o_pre06.mean()/np.std(o_pre06, ddof=1):.4f}")
+print(f"    0.8 vs 0.6: t({n_old-1}) = {o_tt_rel.statistic:.4f}, p = {o_tt_rel.pvalue:.4f}, d_z = {o_diff.mean()/np.std(o_diff, ddof=1):.4f}")
+
+# 2x2 Mixed ANOVA using pingouin if available
+anova_report_str = ""
+try:
+    import pingouin as pg
+    df_anova = pd.DataFrame({
+        'Subject': np.concatenate([common_subs, common_subs]),
+        'Cohort': np.concatenate([paired_cohorts, paired_cohorts]),
+        'Probability': np.concatenate([['Prob_08']*n_total, ['Prob_06']*n_total]),
+        'Alpha_LI': np.concatenate([pre08_means, pre06_means])
+    })
+    aov = pg.mixed_anova(data=df_anova, dv='Alpha_LI', within='Probability', between='Cohort', subject='Subject')
+    anova_report_str = aov.to_string()
+    print("\n2x2 Mixed ANOVA (Cohort × Probability):")
+    print(aov[['Source', 'DF1', 'DF2', 'F', 'p-unc', 'np2']])
+except Exception as e_aov:
+    print(f"\nCould not run mixed ANOVA: {e_aov}")
+
+# Cluster permutation tests on time courses (Paired 0.8 - 0.6)
+t_obs_pair, cl_pair, pv_pair, thresh_pair = run_cluster_test_1samp(arr08 - arr06)
+
+# Save full text report
+report_path = os.path.join(PLOTS_DIR, "alpha_lateralization_cueing_strength_report.txt")
+with open(report_path, "w", encoding="utf-8") as f_rep:
+    f_rep.write("=" * 80 + "\n")
+    f_rep.write("  PRE-STIMULUS ALPHA LATERALIZATION: CUEING STRENGTH (0.8 vs 0.6) REPORT\n")
+    f_rep.write("=" * 80 + "\n\n")
+    f_rep.write(f"Total Paired Subjects N = {n_total} (Young N = {n_young}, Old N = {n_old})\n\n")
+    f_rep.write("1. COLLAPSED PRE-STIMULUS WINDOW [-750 to 0 ms] (12 Posterior ROI Pairs, 8-12 Hz):\n")
+    f_rep.write(f"   Overall (N={n_total}):\n")
+    f_rep.write(f"     Prob 0.8: M = {pre08_means.mean():.4f} ± {pre08_means.std(ddof=1):.4f} (SEM = {sem(pre08_means):.4f}) | t({n_total-1}) = {tt_08.statistic:.4f}, p = {tt_08.pvalue:.4f}, d_z = {dz_08:.4f}\n")
+    f_rep.write(f"     Prob 0.6: M = {pre06_means.mean():.4f} ± {pre06_means.std(ddof=1):.4f} (SEM = {sem(pre06_means):.4f}) | t({n_total-1}) = {tt_06.statistic:.4f}, p = {tt_06.pvalue:.4f}, d_z = {dz_06:.4f}\n")
+    f_rep.write(f"     Paired (0.8 - 0.6): t({n_total-1}) = {tt_paired.statistic:.4f}, p = {tt_paired.pvalue:.4f}, d_z = {dz_paired:.4f}\n\n")
+    f_rep.write(f"   Younger Cohort (N={n_young}):\n")
+    f_rep.write(f"     Prob 0.8: M = {y_pre08.mean():.4f} (SEM = {sem(y_pre08):.4f}) | t({n_young-1}) = {y_tt_08.statistic:.4f}, p = {y_tt_08.pvalue:.4f}, d_z = {y_pre08.mean()/np.std(y_pre08, ddof=1):.4f}\n")
+    f_rep.write(f"     Prob 0.6: M = {y_pre06.mean():.4f} (SEM = {sem(y_pre06):.4f}) | t({n_young-1}) = {y_tt_06.statistic:.4f}, p = {y_tt_06.pvalue:.4f}, d_z = {y_pre06.mean()/np.std(y_pre06, ddof=1):.4f}\n")
+    f_rep.write(f"     Paired (0.8 - 0.6): t({n_young-1}) = {y_tt_rel.statistic:.4f}, p = {y_tt_rel.pvalue:.4f}, d_z = {y_diff.mean()/np.std(y_diff, ddof=1):.4f}\n\n")
+    f_rep.write(f"   Older Cohort (N={n_old}):\n")
+    f_rep.write(f"     Prob 0.8: M = {o_pre08.mean():.4f} (SEM = {sem(o_pre08):.4f}) | t({n_old-1}) = {o_tt_08.statistic:.4f}, p = {o_tt_08.pvalue:.4f}, d_z = {o_pre08.mean()/np.std(o_pre08, ddof=1):.4f}\n")
+    f_rep.write(f"     Prob 0.6: M = {o_pre06.mean():.4f} (SEM = {sem(o_pre06):.4f}) | t({n_old-1}) = {o_tt_06.statistic:.4f}, p = {o_tt_06.pvalue:.4f}, d_z = {o_pre06.mean()/np.std(o_pre06, ddof=1):.4f}\n")
+    f_rep.write(f"     Paired (0.8 - 0.6): t({n_old-1}) = {o_tt_rel.statistic:.4f}, p = {o_tt_rel.pvalue:.4f}, d_z = {o_diff.mean()/np.std(o_diff, ddof=1):.4f}\n\n")
+    if anova_report_str:
+        f_rep.write("2. 2x2 MIXED ANOVA (Cohort × Probability):\n")
+        f_rep.write(anova_report_str + "\n\n")
+print(f"Saved full statistical report to {report_path}")
+
+
+# %% [Cell 5: Generate Publication Figures (Strictly AGENTS.md)]
+plt.close('all')
+
+# ------------------------------------------------------------------------------
+# FIGURE 5: Pre-Stimulus Cueing Strength (0.8 vs 0.6) × Age Cohort Focus
+# ------------------------------------------------------------------------------
+print("\n--- Generating Figure 5: Cueing Strength Focus ---")
+fig5, axes5 = plt.subplots(1, 3, figsize=(18, 5.5))
+
+color_08 = "#7B1FA2"  # Deep Purple for 0.8
+color_06 = "#F57C00"  # Orange for 0.6
+
+# Panel A: Younger Cohort Time Course (0.8 vs 0.6)
+ax_y = axes5[0]
+y_08_tc, y_06_tc = arr08[young_mask], arr06[young_mask]
+ga_y08, se_y08 = y_08_tc.mean(0), sem(y_08_tc, 0)
+ga_y06, se_y06 = y_06_tc.mean(0), sem(y_06_tc, 0)
+
+ax_y.plot(times_vector, ga_y08, color=color_08, lw=2.5, label=f"Prob 0.8 (N={n_young})")
+ax_y.fill_between(times_vector, ga_y08 - se_y08, ga_y08 + se_y08, color=color_08, alpha=0.3)
+ax_y.plot(times_vector, ga_y06, color=color_06, lw=2.5, label=f"Prob 0.6 (N={n_young})")
+ax_y.fill_between(times_vector, ga_y06 - se_y06, ga_y06 + se_y06, color=color_06, alpha=0.3)
+ax_y.axvspan(-0.75, 0.0, color='gray', alpha=0.10, label='Pre-stim (−750–0 ms)')
+ax_decor(ax_y, xlabel="Time (s)", ylabel="Alpha LI (Left − Right Hemi)")
+ax_y.set_title(f"Younger Cohort: Alpha LI Time Course\n0.8 vs 0.6 p = {y_tt_rel.pvalue:.3f}", fontsize=13, fontweight='semibold')
+ax_y.set_xlim(-1.0, 1.0)
+ax_y.legend(loc="upper right", fontsize=10, frameon=True)
+
+# Panel B: Older Cohort Time Course (0.8 vs 0.6)
+ax_o = axes5[1]
+o_08_tc, o_06_tc = arr08[old_mask], arr06[old_mask]
+ga_o08, se_o08 = o_08_tc.mean(0), sem(o_08_tc, 0)
+ga_o06, se_o06 = o_06_tc.mean(0), sem(o_06_tc, 0)
+
+ax_o.plot(times_vector, ga_o08, color=color_08, lw=2.5, label=f"Prob 0.8 (N={n_old})")
+ax_o.fill_between(times_vector, ga_o08 - se_o08, ga_o08 + se_o08, color=color_08, alpha=0.3)
+ax_o.plot(times_vector, ga_o06, color=color_06, lw=2.5, label=f"Prob 0.6 (N={n_old})")
+ax_o.fill_between(times_vector, ga_o06 - se_o06, ga_o06 + se_o06, color=color_06, alpha=0.3)
+ax_o.axvspan(-0.75, 0.0, color='gray', alpha=0.10, label='Pre-stim (−750–0 ms)')
+ax_decor(ax_o, xlabel="Time (s)")
+ax_o.set_title(f"Older Cohort: Alpha LI Time Course\n0.8 vs 0.6 p = {o_tt_rel.pvalue:.3f}", fontsize=13, fontweight='semibold')
+ax_o.set_xlim(-1.0, 1.0)
+ax_o.legend(loc="upper right", fontsize=10, frameon=True)
+
+# Panel C: Paired Subject-Level Slope Plot across Cueing Strengths
+ax_slope = axes5[2]
+x_pos = np.array([0, 1])
+
+# Younger lines
+for i in range(n_young):
+    ax_slope.plot([0.8, 1.2], [y_pre06[i], y_pre08[i]], color="#1976D2", alpha=0.25, lw=1.2)
+# Older lines
+for i in range(n_old):
+    ax_slope.plot([1.8, 2.2], [o_pre06[i], o_pre08[i]], color="#E64A19", alpha=0.25, lw=1.2)
+
+# Group means + error bars
+ax_slope.errorbar([0.8, 1.2], [y_pre06.mean(), y_pre08.mean()], yerr=[sem(y_pre06), sem(y_pre08)],
+                  color="#0D47A1", lw=3.0, capsize=4, marker='o', markersize=8, label=f"Young (N={n_young})")
+ax_slope.errorbar([1.8, 2.2], [o_pre06.mean(), o_pre08.mean()], yerr=[sem(o_pre06), sem(o_pre08)],
+                  color="#BF360C", lw=3.0, capsize=4, marker='s', markersize=8, label=f"Old (N={n_old})")
+
+ax_slope.axhline(0, color='black', linestyle=':', lw=0.8, alpha=0.7)
+ax_slope.set_xticks([0.8, 1.2, 1.8, 2.2])
+ax_slope.set_xticklabels(["0.6", "0.8", "0.6", "0.8"])
+ax_slope.set_xlabel("Cueing Strength (Prob)", fontsize=13)
+ax_slope.set_ylabel("Pre-Stim Mean Alpha LI", fontsize=13)
+ax_slope.set_title("Individual & Group Alpha LI\n(−750 to 0 ms)", fontsize=13, fontweight='semibold')
+ax_slope.legend(loc="upper left", frameon=True, fontsize=10)
+sns.despine(ax=ax_slope)
+
+fig5.tight_layout()
+out5 = os.path.join(PLOTS_DIR, "alpha_lat_prestim_cueing_strength_cohort.png")
+fig5.savefig(out5, dpi=300, bbox_inches="tight")
+print(f"Saved: {out5}")
+
+# ------------------------------------------------------------------------------
+# FIGURE 1: GA TFR Spectrograms Overview
+# ------------------------------------------------------------------------------
+print("\n--- Generating Figure 1: TFR Overview ---")
 ga_li_target    = mne.grand_average(subject_results['target_li'])
 ga_li_singleton = mne.grand_average(subject_results['singleton_li'])
 ga_diff_ts      = ga_li_target - ga_li_singleton
 
-fig1, axes1 = plt.subplots(2, 3, figsize=(21, 11), sharey=True)
-fig1.suptitle("Grand Average Alpha Lateralization Index — TFR Spectrograms", fontsize=17, fontweight='semibold')
+fig1, axes1 = plt.subplots(2, 3, figsize=(18, 9.5), sharey=True)
+fig1.suptitle("Grand Average Alpha Lateralization Index — TFR Spectrograms", fontsize=16, fontweight='semibold')
 
 row0_specs = [
-    (axes1[0, 0], ga_li_target,    f"Target LI\n(N={len(subject_results['target_li'])})"),
-    (axes1[0, 1], ga_li_singleton, f"Singleton LI\n(N={len(subject_results['singleton_li'])})"),
+    (axes1[0, 0], ga_li_target,    f"Target LI (N={len(subject_results['target_li'])})"),
+    (axes1[0, 1], ga_li_singleton, f"Singleton LI (N={len(subject_results['singleton_li'])})"),
     (axes1[0, 2], ga_diff_ts,       "Target − Singleton"),
 ]
 for ax, ga_obj, title in row0_specs:
-    ga_obj.plot(axes=ax, show=False, colorbar=True, combine="mean", cmap="coolwarm")
+    ga_obj.plot(axes=ax, show=False, colorbar=True, combine="mean", cmap="RdBu_r")
     ax.axvline(0, color='k', ls=':', lw=0.8)
-    ax.set_title(title, fontsize=13)
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Frequency (Hz)")
+    ax.set_title(title, fontsize=12)
+    ax.set_xlabel("Time (s)", fontsize=11)
+    ax.set_ylabel("Frequency (Hz)", fontsize=11)
     sns.despine(ax=ax)
 
-ga_li_expected = ga_li_exp08 = ga_li_exp06 = None
 row1_specs = [
-    (axes1[1, 0], 'expected_li',    "Expected Distractor LI"),
-    (axes1[1, 1], 'expected_li_08', "Expected Distractor — Prob 0.8"),
-    (axes1[1, 2], 'expected_li_06', "Expected Distractor — Prob 0.6"),
+    (axes1[1, 0], 'expected_li',    f"Expected Distractor (All, N={len(subject_results['expected_li'])})"),
+    (axes1[1, 1], 'expected_li_08', f"Expected Distractor — Prob 0.8 (N={len(subject_results['expected_li_08'])})"),
+    (axes1[1, 2], 'expected_li_06', f"Expected Distractor — Prob 0.6 (N={len(subject_results['expected_li_06'])})"),
 ]
 for ax, key, title in row1_specs:
     li_list = subject_results[key]
     if li_list:
         ga_obj = mne.grand_average(li_list)
-        if key == 'expected_li':    ga_li_expected = ga_obj
-        elif key == 'expected_li_08': ga_li_exp08 = ga_obj
-        elif key == 'expected_li_06': ga_li_exp06 = ga_obj
-        ga_obj.plot(axes=ax, show=False, colorbar=True, combine="mean", cmap="coolwarm")
+        ga_obj.plot(axes=ax, show=False, colorbar=True, combine="mean", cmap="RdBu_r")
         ax.axvline(0, color='k', ls=':', lw=0.8)
-        ax.set_title(f"{title}\n(N={len(li_list)})", fontsize=13)
-        ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Frequency (Hz)")
+        ax.set_title(title, fontsize=12)
+        ax.set_xlabel("Time (s)", fontsize=11)
+        ax.set_ylabel("Frequency (Hz)", fontsize=11)
         sns.despine(ax=ax)
-    else:
-        ax.set_visible(False)
 
-plt.tight_layout(rect=[0, 0, 1, 0.95])
+fig1.tight_layout(rect=[0, 0, 1, 0.96])
 out1 = os.path.join(PLOTS_DIR, "alpha_lat_tfr_overview.png")
-fig1.savefig(out1, bbox_inches='tight', dpi=200)
-print(f"  Saved: {out1}")
+fig1.savefig(out1, dpi=300, bbox_inches="tight")
+print(f"Saved: {out1}")
+
+# ------------------------------------------------------------------------------
+# FIGURE 3: Probability Comparison (0.8 vs 0.6)
+# ------------------------------------------------------------------------------
+print("\n--- Generating Figure 3: Probability Comparison ---")
+ga08 = arr08.mean(0)
+se08 = sem(arr08, 0)
+ga06 = arr06.mean(0)
+se06 = sem(arr06, 0)
+
+fig3, axes3 = plt.subplots(1, 3, figsize=(18, 5.5))
+fig3.suptitle("Expected Distractor: Probability 0.8 vs 0.6 — Alpha Lateralization", fontsize=16, fontweight='semibold')
+
+# Col 0: Time courses
+ax = axes3[0]
+ax.plot(times_vector, ga08, color=color_08, lw=2.5, label=f"Prob 0.8 (N={n_total})")
+ax.fill_between(times_vector, ga08 - se08, ga08 + se08, color=color_08, alpha=0.3)
+ax.plot(times_vector, ga06, color=color_06, lw=2.5, label=f"Prob 0.6 (N={n_total})")
+ax.fill_between(times_vector, ga06 - se06, ga06 + se06, color=color_06, alpha=0.3)
+ax.axvspan(-0.75, 0.0, color='gray', alpha=0.10, label='Pre-stim window')
+ax.set_ylabel("L−R Alpha LI (8–12 Hz)", fontsize=12)
+ax.set_title("Lateralization Strength over Time", fontsize=13, fontweight='semibold')
+ax.legend(loc='best', fontsize=10, frameon=True)
+ax_decor(ax, xlabel="Time (s)")
+
+# Col 1: Paired Cluster Test
+ax = axes3[1]
+if t_obs_pair is not None:
+    ax.plot(times_vector, t_obs_pair, color='black', lw=1.5, label="Observed T")
+    ax.axhline(thresh_pair, color='gray', ls='--', lw=1, label=f"Threshold (t={thresh_pair:.2f})")
+    ax.axhline(-thresh_pair, color='gray', ls='--', lw=1)
+    sig_found = False
+    for i, cl_mask in enumerate(cl_pair):
+        if pv_pair[i] < 0.05:
+            c_times = times_vector[cl_mask]
+            if len(c_times) > 0:
+                lbl = 'Sig. cluster (p < 0.05)' if not sig_found else '_nolegend_'
+                sig_found = True
+                ax.hlines(y=0.01, xmin=c_times[0], xmax=c_times[-1], color='purple', lw=4, alpha=0.7, label=lbl)
+    ax.legend(loc='best', fontsize=10)
+else:
+    ax.text(0.5, 0.5, "No stats available", ha='center', va='center', transform=ax.transAxes)
+ax.set_title("Paired Cluster Test (0.8 − 0.6)", fontsize=13, fontweight='semibold')
+ax.set_ylabel("T-value", fontsize=12)
+ax_decor(ax, xlabel="Time (s)")
+
+# Col 2: TFR Difference Spectrogram
+ax = axes3[2]
+ga_exp08_all = mne.grand_average(subject_results['expected_li_08'])
+ga_exp06_all = mne.grand_average(subject_results['expected_li_06'])
+ga_diff_prob = ga_exp08_all - ga_exp06_all
+ga_diff_prob.plot(axes=ax, show=False, colorbar=True, combine="mean", cmap="RdBu_r")
+ax.axvline(0, color='k', ls=':', lw=0.8)
+ax.set_title("TFR Difference Spectrogram (0.8 − 0.6)", fontsize=13, fontweight='semibold')
+ax.set_xlabel("Time (s)", fontsize=11)
+ax.set_ylabel("Frequency (Hz)", fontsize=11)
+sns.despine(ax=ax)
+
+fig3.tight_layout()
+out3 = os.path.join(PLOTS_DIR, "alpha_lat_probability_comparison.png")
+fig3.savefig(out3, dpi=300, bbox_inches="tight")
+print(f"Saved: {out3}")
+
+print("\n" + "=" * 80)
+print("ALPHA LATERALIZATION ANALYSIS COMPLETED SUCCESSFULLY!")
+print(f"All figures saved to: {PLOTS_DIR}")
+print("=" * 80)
 if hasattr(sys, 'ps1') or 'ipykernel' in sys.modules:
     plt.show()
-else:
-    plt.close(fig1)
-
-# ============================================================
-# FIGURE 2 — Hemispheric Time Courses + Cluster Stats
-#   3 columns: Target | Singleton | Expected Distractor
-#   Row 0: Left vs Right Hemi LI time courses
-#   Row 1: Cluster T-stats (L-R difference)
-# ============================================================
-print("\n--- Plotting Figure 2: Hemispheric Time Courses ---")
-
-conditions_hemi = [
-    ('Target',              subject_results['target_li']),
-    ('Singleton',           subject_results['singleton_li']),
-    ('Expected Distractor', subject_results['expected_li'] if has_expected else []),
-]
-col_colors = {'Left': '#1565C0', 'Right': '#C62828'}
-
-fig2, axes2 = plt.subplots(2, 3, figsize=(21, 11), sharex=True)
-fig2.suptitle("Hemispheric Alpha LI Time Courses + Cluster Permutation Tests", fontsize=17, fontweight='semibold')
-
-for col, (cond_name, li_list) in enumerate(conditions_hemi):
-    left_tcs, right_tcs = [], []
-    for li_sub in li_list:
-        l, r = extract_hemi_tc(li_sub)
-        if l is not None:
-            left_tcs.append(l); right_tcs.append(r)
-    n = len(left_tcs)
-    ax_tc   = axes2[0, col]
-    ax_stat = axes2[1, col]
-
-    if n == 0:
-        ax_tc.set_visible(False); ax_stat.set_visible(False); continue
-
-    left_arr  = np.array(left_tcs);  right_arr = np.array(right_tcs)
-    ga_l, ga_r = left_arr.mean(0), right_arr.mean(0)
-    se_l, se_r = sem(left_arr, 0),  sem(right_arr, 0)
-
-    plot_tc(ax_tc, ga_l, se_l, col_colors['Left'],  'Left Hemi')
-    plot_tc(ax_tc, ga_r, se_r, col_colors['Right'], 'Right Hemi')
-    ax_tc.set_title(f"{cond_name} (N={n})", fontsize=13, fontweight='semibold')
-    ax_tc.set_ylabel(f"Alpha LI ({alpha_fmin_hemi}–{alpha_fmax_hemi} Hz)" if col == 0 else "")
-    ax_tc.legend(loc='best', fontsize=10, frameon=False)
-    ax_decor(ax_tc)
-
-    diff_arr = left_arr - right_arr
-    t_obs, clusters, cluster_pv, thresh = run_cluster_test(diff_arr)
-    plot_sig_clusters(ax_stat, t_obs, thresh, clusters, cluster_pv)
-    ax_stat.set_ylabel("T-value" if col == 0 else "")
-    ax_stat.set_title(f"{cond_name}: Cluster Test (L−R)", fontsize=12)
-    ax_decor(ax_stat, xlabel="Time (s)")
-
-plt.tight_layout(rect=[0, 0, 1, 0.95])
-out2 = os.path.join(PLOTS_DIR, "alpha_lat_hemispheric_timecourses.png")
-fig2.savefig(out2, bbox_inches='tight', dpi=200)
-print(f"  Saved: {out2}")
-if hasattr(sys, 'ps1') or 'ipykernel' in sys.modules:
-    plt.show()
-else:
-    plt.close(fig2)
-
-# ============================================================
-# FIGURE 3 — Probability Comparison: 0.6 vs 0.8
-#   Col 0: Overlaid L-R LI time courses
-#   Col 1: Paired cluster test (0.8 − 0.6)
-#   Col 2: TFR difference spectrogram (0.8 − 0.6)
-# ============================================================
-print("\n--- Plotting Figure 3: Probability Comparison ---")
-
-if has_expected_08 and has_expected_06:
-    exp08_ltcs, exp08_rtcs, exp06_ltcs, exp06_rtcs = [], [], [], []
-    for li_sub in subject_results['expected_li_08']:
-        l, r = extract_hemi_tc(li_sub)
-        if l is not None:
-            exp08_ltcs.append(l); exp08_rtcs.append(r)
-    for li_sub in subject_results['expected_li_06']:
-        l, r = extract_hemi_tc(li_sub)
-        if l is not None:
-            exp06_ltcs.append(l); exp06_rtcs.append(r)
-
-    n08, n06 = len(exp08_ltcs), len(exp06_ltcs)
-    exp08_l, exp08_r = np.array(exp08_ltcs), np.array(exp08_rtcs)
-    exp06_l, exp06_r = np.array(exp06_ltcs), np.array(exp06_rtcs)
-    diff08 = exp08_l - exp08_r
-    diff06 = exp06_l - exp06_r
-    ga08 = diff08.mean(0); se08 = sem(diff08, 0) if n08 > 1 else np.zeros_like(ga08)
-    ga06 = diff06.mean(0); se06 = sem(diff06, 0) if n06 > 1 else np.zeros_like(ga06)
-
-    fig3, axes3 = plt.subplots(1, 3, figsize=(21, 6))
-    fig3.suptitle("Expected Distractor: Probability 0.6 vs 0.8 — Alpha Lateralisation",
-                  fontsize=17, fontweight='semibold')
-
-    # Col 0: Overlaid time courses
-    ax = axes3[0]
-    plot_tc(ax, ga08, se08, '#6A0DAD', f'Prob 0.8 (N={n08})')
-    plot_tc(ax, ga06, se06, '#E87722', f'Prob 0.6 (N={n06})')
-    ax.axvspan(-0.75, 0.0, color='gray', alpha=0.08, label='Pre-stim window')
-    ax.set_ylabel(f"L−R Alpha LI ({alpha_fmin_hemi}–{alpha_fmax_hemi} Hz)")
-    ax.set_title("Lateralisation Strength over Time", fontsize=13, fontweight='semibold')
-    ax.legend(loc='best', fontsize=11, frameon=False)
-    ax_decor(ax, xlabel="Time (s)")
-
-    # Col 1: Paired cluster test
-    ax = axes3[1]
-    if n08 == n06 and n08 >= 2:
-        paired_diff = diff08 - diff06
-        t_obs_p, cl_p, pv_p, thresh_p = run_cluster_test(paired_diff)
-        plot_sig_clusters(ax, t_obs_p, thresh_p, cl_p, pv_p)
-        ax.set_title("Paired Cluster Test (0.8 − 0.6)", fontsize=13, fontweight='semibold')
-        ax.set_ylabel("T-value")
-    else:
-        ax.text(0.5, 0.5, f"Unequal N\n(N08={n08}, N06={n06})\nPaired test unavailable",
-                ha='center', va='center', transform=ax.transAxes, fontsize=12)
-    ax_decor(ax, xlabel="Time (s)")
-
-    # Col 2: TFR difference spectrogram
-    ax = axes3[2]
-    if ga_li_exp08 is not None and ga_li_exp06 is not None:
-        ga_diff_prob = ga_li_exp08 - ga_li_exp06
-        ga_diff_prob.plot(axes=ax, show=False, colorbar=True, combine="mean", cmap="coolwarm")
-        ax.axvline(0, color='k', ls=':', lw=0.8)
-        ax.set_title("TFR Difference Spectrogram (0.8 − 0.6)", fontsize=13, fontweight='semibold')
-        ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Frequency (Hz)")
-        sns.despine(ax=ax)
-
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
-    out3 = os.path.join(PLOTS_DIR, "alpha_lat_probability_comparison.png")
-    fig3.savefig(out3, bbox_inches='tight', dpi=200)
-    print(f"  Saved: {out3}")
-    if hasattr(sys, 'ps1') or 'ipykernel' in sys.modules:
-        plt.show()
-    else:
-        plt.close(fig3)
-else:
-    print("  Skipping Figure 3: insufficient probability data.")
-
-# ============================================================
-# FIGURE 4 — Age Split: Pre- and Post-Stimulus Alpha LI
-#   Rows: Young | Old
-#   Cols: Target | Singleton | Expected Distractor
-#   Each panel: L-R hemi LI time course with window shading
-# ============================================================
-print("\n--- Plotting Figure 4: Age Split ---")
-
-cohorts = ['Young', 'Old']
-cohort_colors = {'Young': '#1F77B4', 'Old': '#FF7F0E'}
-
-cond_keys   = ['target_li', 'singleton_li', 'expected_li']
-cond_labels = ['Target',    'Singleton',    'Expected Distractor']
-
-# Build per-cohort L-R diff time courses
-# target_li and singleton_li are aligned 1:1 with subject_cohorts
-cond_cohort_tcs = {}
-for key in cond_keys[:2]:
-    data = {c: [] for c in cohorts}
-    for i, li_sub in enumerate(subject_results[key]):
-        coh = subject_cohorts[i]
-        l, r = extract_hemi_tc(li_sub)
-        if l is not None:
-            data[coh].append(l - r)
-    cond_cohort_tcs[key] = data
-
-# expected_li: appended in the same order as processed_subjects
-# Use processed_subjects index to recover cohort
-proc_set = list(processed_subjects)
-data_exp = {c: [] for c in cohorts}
-exp_idx  = 0
-for i, sub in enumerate(proc_set):
-    if exp_idx >= len(subject_results['expected_li']):
-        break
-    # expected_li entries correspond to subjects who had expected epochs;
-    # they were appended in subject order, so we track with exp_idx.
-    coh = subject_cohorts[i]
-    l, r = extract_hemi_tc(subject_results['expected_li'][exp_idx])
-    if l is not None:
-        data_exp[coh].append(l - r)
-    exp_idx += 1
-cond_cohort_tcs['expected_li'] = data_exp
-
-fig4, axes4 = plt.subplots(2, 3, figsize=(21, 11), sharex=True)
-fig4.suptitle("Alpha Lateralisation: Young vs Old — Pre- and Post-Stimulus",
-              fontsize=17, fontweight='semibold')
-
-for col, (key, label) in enumerate(zip(cond_keys, cond_labels)):
-    for row, cohort in enumerate(cohorts):
-        ax = axes4[row, col]
-        tcs = cond_cohort_tcs[key][cohort]
-        n   = len(tcs)
-
-        if row == 0:
-            ax.set_title(label, fontsize=13, fontweight='semibold')
-        if col == 0:
-            ax.set_ylabel(f"{cohort}\nL−R Alpha LI ({alpha_fmin_hemi}–{alpha_fmax_hemi} Hz)", fontsize=11)
-        if row == 1:
-            ax.set_xlabel("Time (s)", fontsize=11)
-
-        if n == 0:
-            ax.text(0.5, 0.5, 'No data', ha='center', va='center', transform=ax.transAxes)
-            ax_decor(ax)
-            continue
-
-        arr = np.array(tcs)
-        ga  = arr.mean(0)
-        se  = sem(arr, 0) if n > 1 else np.zeros_like(ga)
-
-        plot_tc(ax, ga, se, cohort_colors[cohort], f'{cohort} (N={n})')
-        ax.axvspan(-0.75, 0.0, color='steelblue', alpha=0.07, label='Pre-stim (−0.75–0 s)')
-        ax.axvspan( 0.0,  0.5, color='coral',     alpha=0.07, label='Post-stim (0–0.5 s)')
-        ax.legend(loc='upper left', fontsize=10, frameon=False)
-        ax_decor(ax)
-
-plt.tight_layout(rect=[0, 0, 1, 0.95])
-out4 = os.path.join(PLOTS_DIR, "alpha_lat_age_split.png")
-fig4.savefig(out4, bbox_inches='tight', dpi=200)
-print(f"  Saved: {out4}")
-if hasattr(sys, 'ps1') or 'ipykernel' in sys.modules:
-    plt.show()
-else:
-    plt.close(fig4)
-
-print("\n=== All figures saved to:", PLOTS_DIR, "===")

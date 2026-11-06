@@ -27,94 +27,154 @@ from SPACECUE.subjects import subject_ids
 import SPACECUE
 
 
-def run_computation(force_recompute=False):
+def run_computation(force_recompute=False, include_all_conditions=True):
+    """
+    Computes or loads Morlet Time-Frequency Representations across subjects.
+    
+    If include_all_conditions=True, computes all condition pairs:
+      - expected (all)
+      - expected_08 (Prob 0.8)
+      - expected_06 (Prob 0.6)
+      - target
+      - singleton
+    Saves and updates incrementally in derivatives/cache/pre_stim_alpha_subject_data.pkl,
+    ensuring existing subjects are never recomputed when new subjects are added.
+    """
     cache_dir = os.path.join(SPACECUE.get_data_path(), "derivatives", "cache")
     cache_path = os.path.join(cache_dir, "pre_stim_alpha_subject_data.pkl")
 
-    if not force_recompute and os.path.exists(cache_path):
-        print(f"Loading cached subject data from {cache_path}...")
+    subject_data = {}
+    if os.path.exists(cache_path) and not force_recompute:
+        print(f"Checking cached subject data at {cache_path}...")
         try:
             with open(cache_path, 'rb') as f:
                 subject_data = pickle.load(f)
-            print(f"Successfully loaded {len(subject_data)} subjects from cache.")
-            return subject_data
+            print(f"Loaded {len(subject_data)} existing subjects from cache.")
         except Exception as e:
-            print(f"Cache load failed ({e}). Recomputing...")
-
-    print("Running Time-Frequency analysis for all subjects...")
+            print(f"Cache load failed ({e}). Re-initializing cache...")
+            subject_data = {}
 
     # Analysis parameters matching alpha_lateralization.py
     freqs = np.arange(5, 20, 1)
     n_cycles = freqs / 2
     method = "morlet"
     decim = 5
-    
-    subject_data = {}
-    montage = mne.channels.make_standard_montage("easycap-M1")
 
-    for subject in subject_ids:
-        print(f"Processing Subject: {subject}...")
+    subjects_to_compute = []
+    for s in subject_ids:
+        # Check if epoch file exists on disk
+        epoch_file_pattern = os.path.join(SPACECUE.get_data_path(), "derivatives", "epoching", f"sci-{s}", "eeg",
+                                          f"sci-{s}_task-spacecue-epo.fif")
+        if not glob.glob(epoch_file_pattern):
+            continue
+        # Check if subject needs computation
+        if s not in subject_data:
+            subjects_to_compute.append(s)
+        elif include_all_conditions and ('conditions' not in subject_data[s] or 'expected_08' not in subject_data[s].get('conditions', {})):
+            subjects_to_compute.append(s)
+
+    if not subjects_to_compute:
+        print(f"All {len(subject_data)} available subjects are up to date in cache.")
+        return subject_data
+
+    print(f"\nFound {len(subjects_to_compute)} subject(s) requiring TFR computation: {subjects_to_compute}")
+    os.makedirs(cache_dir, exist_ok=True)
+
+    for idx_s, subject in enumerate(subjects_to_compute, start=1):
+        print(f"\n[{idx_s}/{len(subjects_to_compute)}] Computing TFR for Subject: sci-{subject}...")
         epoch_file_pattern = os.path.join(SPACECUE.get_data_path(), "derivatives", "epoching", f"sci-{subject}", "eeg",
                                           f"sci-{subject}_task-spacecue-epo.fif")
         epoch_files = glob.glob(epoch_file_pattern)
         if not epoch_files:
             print(f"  Epoch file not found for subject {subject}. Skipping.")
             continue
-            
-        epochs_sub = mne.read_epochs(epoch_files[0], preload=True)
-        epochs_sub.set_montage(montage)
-        
-        # Determine cohort based on Age
-        age = float(epochs_sub.metadata['Age'].iloc[0])
-        cohort = 'Young' if age <= 35 else 'Old'
-        
-        # Mask for expected distractor location
-        hp_loc_numeric = pd.to_numeric(epochs_sub.metadata['HP_Distractor_Loc'], errors='coerce')
-        left_expected_epochs = epochs_sub[hp_loc_numeric == 1.0]
-        right_expected_epochs = epochs_sub[hp_loc_numeric == 3.0]
-        
-        if len(left_expected_epochs) == 0 or len(right_expected_epochs) == 0:
-            print(f"  Skipping subject {subject} due to zero trials in one condition.")
+
+        try:
+            epochs_sub = mne.read_epochs(epoch_files[0], preload=True, verbose=False)
+        except Exception as e_load:
+            print(f"  Error loading epochs for subject {subject}: {e_load}. Skipping.")
             continue
-            
-        # Compute TFR for Left expected distractor
-        tfr_left = left_expected_epochs.compute_tfr(
+
+        # Determine cohort based on Age
+        age = float(epochs_sub.metadata['Age'].iloc[0]) if 'Age' in epochs_sub.metadata.columns else np.nan
+        cohort = 'Young' if age <= 35 else 'Old'
+
+        hp_loc_numeric = pd.to_numeric(epochs_sub.metadata['HP_Distractor_Loc'], errors='coerce') if 'HP_Distractor_Loc' in epochs_sub.metadata.columns else pd.Series([], dtype=float)
+        hp_prob_numeric = pd.to_numeric(epochs_sub.metadata['HP_Distractor_Prob'], errors='coerce') if 'HP_Distractor_Prob' in epochs_sub.metadata.columns else pd.Series([], dtype=float)
+        all_conds_sub = list(epochs_sub.event_id.keys())
+
+        # Masks for all condition splits
+        mask_exp_left = (hp_loc_numeric == 1.0)
+        mask_exp_right = (hp_loc_numeric == 3.0)
+
+        mask_exp08_left = (hp_loc_numeric == 1.0) & (hp_prob_numeric == 0.8)
+        mask_exp08_right = (hp_loc_numeric == 3.0) & (hp_prob_numeric == 0.8)
+
+        mask_exp06_left = (hp_loc_numeric == 1.0) & (hp_prob_numeric == 0.6)
+        mask_exp06_right = (hp_loc_numeric == 3.0) & (hp_prob_numeric == 0.6)
+
+        target_l_events = [x for x in all_conds_sub if "Target-1-Singleton-2" in x]
+        target_r_events = [x for x in all_conds_sub if "Target-3-Singleton-2" in x]
+        mask_target_left = np.isin(epochs_sub.events[:, 2], [epochs_sub.event_id[k] for k in target_l_events])
+        mask_target_right = np.isin(epochs_sub.events[:, 2], [epochs_sub.event_id[k] for k in target_r_events])
+
+        sing_l_events = [x for x in all_conds_sub if "Target-2-Singleton-1" in x]
+        sing_r_events = [x for x in all_conds_sub if "Target-2-Singleton-3" in x]
+        mask_sing_left = np.isin(epochs_sub.events[:, 2], [epochs_sub.event_id[k] for k in sing_l_events])
+        mask_sing_right = np.isin(epochs_sub.events[:, 2], [epochs_sub.event_id[k] for k in sing_r_events])
+
+        # Compute single Morlet TFR pass across all epochs for this subject
+        print(f"  Running single Morlet TFR pass ({len(epochs_sub)} epochs)...")
+        tfr_all = epochs_sub.compute_tfr(
             method=method, freqs=freqs, n_cycles=n_cycles, decim=decim,
-            return_itc=False, average=False, n_jobs=4
+            return_itc=False, average=False, n_jobs=4, verbose=False
         )
-        alpha_left_avg = tfr_left.average()
-        
-        # Compute TFR for Right expected distractor
-        tfr_right = right_expected_epochs.compute_tfr(
-            method=method, freqs=freqs, n_cycles=n_cycles, decim=decim,
-            return_itc=False, average=False, n_jobs=4
-        )
-        alpha_right_avg = tfr_right.average()
-        
-        # Calculate LI: (Left - Right) / (Left + Right)
-        li_data = (alpha_left_avg.data - alpha_right_avg.data) / (alpha_left_avg.data + alpha_right_avg.data)
-        
-        # Calculate mean power: (Left + Right) / 2
-        mean_power_data = (alpha_left_avg.data + alpha_right_avg.data) / 2
-        
-        # Store essential data
+
+        def _calc_li_power(m_l, m_r):
+            if np.sum(m_l) == 0 or np.sum(m_r) == 0:
+                return None
+            tfr_l_avg = tfr_all[m_l].average()
+            tfr_r_avg = tfr_all[m_r].average()
+            li = (tfr_l_avg.data - tfr_r_avg.data) / (tfr_l_avg.data + tfr_r_avg.data)
+            mp = (tfr_l_avg.data + tfr_r_avg.data) / 2.0
+            return {
+                'li_data': li,
+                'mean_power_data': mp,
+                'nave': (tfr_l_avg.nave + tfr_r_avg.nave) // 2
+            }
+
+        # Expected all
+        exp_all = _calc_li_power(mask_exp_left, mask_exp_right)
+        if exp_all is None:
+            print(f"  Skipping subject {subject}: insufficient expected distractor trials.")
+            continue
+
+        cond_dict = {'expected_all': exp_all}
+        if include_all_conditions:
+            cond_dict['expected_08'] = _calc_li_power(mask_exp08_left, mask_exp08_right)
+            cond_dict['expected_06'] = _calc_li_power(mask_exp06_left, mask_exp06_right)
+            cond_dict['target'] = _calc_li_power(mask_target_left, mask_target_right)
+            cond_dict['singleton'] = _calc_li_power(mask_sing_left, mask_sing_right)
+
+        # Retain exact top-level keys for backward compatibility
         subject_data[subject] = {
-            'li_data': li_data,
-            'mean_power_data': mean_power_data,
-            'times': alpha_left_avg.times,
-            'freqs': alpha_left_avg.freqs,
-            'ch_names': alpha_left_avg.ch_names,
+            'li_data': exp_all['li_data'],
+            'mean_power_data': exp_all['mean_power_data'],
+            'times': tfr_all.times.copy(),
+            'freqs': tfr_all.freqs.copy(),
+            'ch_names': tfr_all.ch_names.copy(),
             'cohort': cohort,
-            'age': age
+            'age': age,
+            'conditions': cond_dict
         }
 
-    os.makedirs(cache_dir, exist_ok=True)
-    try:
-        with open(cache_path, 'wb') as f:
-            pickle.dump(subject_data, f)
-        print(f"Saved calculated LI and Power TFRs to cache at {cache_path}.")
-    except Exception as e:
-        print(f"Warning: Could not save cache to {cache_path}: {e}")
+        # Save checkpoint after each successfully processed subject
+        try:
+            with open(cache_path, 'wb') as f:
+                pickle.dump(subject_data, f)
+            print(f"  Saved subject {subject} to cache ({len(subject_data)} total in {cache_path}).")
+        except Exception as e_save:
+            print(f"  Warning: Could not save cache to {cache_path}: {e_save}")
 
     return subject_data
 
@@ -147,7 +207,7 @@ def compute_one_sample_cohens_dz(data, indices):
 
 
 def main():
-    subject_data = run_computation(force_recompute=False)
+    subject_data = run_computation(force_recompute=False, include_all_conditions=False)
 
     # Left and Right ROI definitions
     left_roi_hemi = ["TP9", "TP7", "CP5", "CP3", "CP1", "P7", "P5", "P3", "P1", "PO7", "PO3", "O1"]
@@ -156,9 +216,7 @@ def main():
     subject_ids_list = list(subject_data.keys())
     epoch_file_pattern = os.path.join(SPACECUE.get_data_path(), "derivatives", "epoching", f"sci-{subject_ids_list[0]}", "eeg",
                                       f"sci-{subject_ids_list[0]}_task-spacecue-epo.fif")
-    first_subject_epochs = mne.read_epochs(glob.glob(epoch_file_pattern)[0], preload=False)
-    montage = mne.channels.make_standard_montage("easycap-M1")
-    first_subject_epochs.set_montage(montage)
+    first_subject_epochs = mne.read_epochs(glob.glob(epoch_file_pattern)[0], preload=False, verbose=False)
     info = first_subject_epochs.info
 
     cohorts = ['Young', 'Old']
