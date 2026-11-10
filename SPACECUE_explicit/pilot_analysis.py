@@ -97,6 +97,8 @@ def add_zero_test_annotations(ax, data, x, y, hue=None, order=None, hue_order=No
                 path_effects=[pe.withStroke(linewidth=2, foreground='black')])
 
 df = pd.read_csv(f"{SPACECUE_explicit.get_data_path()}\\concatenated\\data_for_jamovi_single_trials.csv")
+# Filter globally for Block Design subjects only
+df = df[df['CueDesignStrategy'] == 'Block'].copy()
 
 df_mean = df.groupby(["subject_id", "CueInstruction", "CueDesignStrategy", "cohort", 'age'])[["select_target", "rt"]].mean().reset_index()
 df_mean["select_target"] = df_mean["select_target"].astype(float)
@@ -149,17 +151,6 @@ for effect in ['target_rt_benefit', 'distractor_rt_cost']:
     print(f"\n--- One-sample t-test: {effect} vs 0 ---")
     print(pg.print_table(pg.ttest(df_pivot_rt[effect].dropna(), 0).round(3)))
 
-print("\n--- Independent T-Test: target_effect by CueDesignStrategy ---")
-print(pg.print_table(pg.ttest(
-    df_pivot_acc.query("CueDesignStrategy=='Trial'")['target_effect'],
-    df_pivot_acc.query("CueDesignStrategy=='Block'")['target_effect']
-).round(3)))
-
-print("\n--- Independent T-Test: distractor_effect by CueDesignStrategy ---")
-print(pg.print_table(pg.ttest(
-    df_pivot_acc.query("CueDesignStrategy=='Trial'")['distractor_effect'],
-    df_pivot_acc.query("CueDesignStrategy=='Block'")['distractor_effect']
-).round(3)))
 
 print("\n--- Independent T-Test: target_effect by cohort ---")
 print(pg.print_table(pg.ttest(
@@ -211,28 +202,7 @@ ax.set_xlabel("Cue")
 plt.tight_layout()
 sns.despine()
 
-# Plot 2: Accuracy effects by CueDesignStrategy
-pairs_strategy = [
-    (('target_effect', 'Block'), ('target_effect', 'Trial')),
-    (('distractor_effect', 'Block'), ('distractor_effect', 'Trial')),
-]
-plt.figure(figsize=(7, 5))
-ax = plt.gca()
-sns.barplot(data=df_acc_effects, x='effect_type', y='accuracy_effect',
-            hue='CueDesignStrategy', errorbar=ERRORBAR, ax=ax, palette=STRATEGY_PALETTE)
-ax.axhline(0, color='black', linestyle='--')
-ax.set_ylim(YLIM_ACC_EFFECT)
-ax.set_title('Accuracy Cueing Effect by Design Strategy')
-ax.set_ylabel('Difference in Proportion correct')
-Annotator(ax=ax, pairs=pairs_strategy, data=df_acc_effects,
-          x='effect_type', y='accuracy_effect', hue='CueDesignStrategy').configure(
-    test='t-test_ind', text_format='star', loc='inside', verbose=0,
-    comparisons_correction=COMPARISON_CORRECTION,
-    pvalue_thresholds=PVALUE_THRESHOLDS
-).apply_and_annotate()
-add_zero_test_annotations(ax, df_acc_effects, x='effect_type', y='accuracy_effect', 
-                          hue='CueDesignStrategy', correction=COMPARISON_CORRECTION)
-plt.tight_layout()
+
 
 # Plot 3: Accuracy effects by cohort
 pairs_cohort = [
@@ -280,28 +250,7 @@ add_zero_test_annotations(ax, df_rt_effects, x='effect_type', y='rt_effect',
                           correction=COMPARISON_CORRECTION)
 plt.tight_layout()
 
-# Plot 5: RT effects by CueDesignStrategy
-pairs_strategy_rt = [
-    (('target_rt_benefit', 'Block'), ('target_rt_benefit', 'Trial')),
-    (('distractor_rt_cost', 'Block'), ('distractor_rt_cost', 'Trial')),
-]
-plt.figure(figsize=(7, 5))
-ax = plt.gca()
-sns.barplot(data=df_rt_effects, x='effect_type', y='rt_effect',
-            hue='CueDesignStrategy', errorbar=ERRORBAR, ax=ax, palette=STRATEGY_PALETTE)
-ax.axhline(0, color='black', linestyle='--')
-ax.set_ylim(YLIM_RT_EFFECT)
-ax.set_title('RT Cueing Effect by Design Strategy')
-ax.set_ylabel('Response Time Effect (s)')
-Annotator(ax=ax, pairs=pairs_strategy_rt, data=df_rt_effects,
-          x='effect_type', y='rt_effect', hue='CueDesignStrategy').configure(
-    test='t-test_ind', text_format='star', loc='inside', verbose=0,
-    comparisons_correction=COMPARISON_CORRECTION,
-    pvalue_thresholds=PVALUE_THRESHOLDS
-).apply_and_annotate()
-add_zero_test_annotations(ax, df_rt_effects, x='effect_type', y='rt_effect', 
-                          hue='CueDesignStrategy', correction=COMPARISON_CORRECTION)
-plt.tight_layout()
+
 
 # Plot 6: RT effects by cohort
 pairs_cohort_rt = [
@@ -607,3 +556,175 @@ if not paired_df.empty:
     add_zero_test_annotations(axes2[1], paired_df, x='cohort', y='rt_rep_benefit')
 
     plt.tight_layout()
+
+# ============================================================
+# SECTION 6: PRIMING ANALYSIS
+# ============================================================
+print("\n--- Descriptive Statistics: Priming ---")
+
+# Ensure Priming is treated as a categorical variable and drop NaNs
+df_priming = df.dropna(subset=['Priming']).copy()
+df_priming['Priming_Cat'] = df_priming['Priming'].map({-1.0: 'Negative Priming', 0.0: 'No Priming', 1.0: 'Positive Priming'})
+
+# Group by subject and priming
+df_prim_perf = df_priming.groupby(['subject_id', 'cohort', 'Priming_Cat'])[['select_target', 'rt']].mean().reset_index()
+df_prim_perf['select_target'] = df_prim_perf['select_target'].astype(float)
+
+print(df_prim_perf.groupby('Priming_Cat')[['select_target', 'rt']].describe().round(3))
+
+# Plotting Accuracy & RT for Priming
+fig3, axes3 = plt.subplots(1, 2, figsize=(12, 5))
+fig3.suptitle('Performance as a function of Priming', fontsize=16, fontweight='bold')
+priming_order = ['Negative Priming', 'No Priming', 'Positive Priming']
+priming_palette = {'Negative Priming': 'red', 'No Priming': 'grey', 'Positive Priming': 'green'}
+
+# Accuracy Plot
+sns.barplot(data=df_prim_perf, x='Priming_Cat', y='select_target', errorbar=ERRORBAR,
+            ax=axes3[0], palette=priming_palette, order=priming_order)
+axes3[0].set_title('Accuracy')
+axes3[0].set_xlabel('Priming')
+axes3[0].set_ylabel('Proportion correct')
+
+# Statistical Annotation for Accuracy (paired t-tests between adjacent levels or all pairs)
+pairs_priming = [('Negative Priming', 'No Priming'), ('No Priming', 'Positive Priming'), ('Negative Priming', 'Positive Priming')]
+Annotator(ax=axes3[0], pairs=pairs_priming, data=df_prim_perf,
+          x='Priming_Cat', y='select_target', order=priming_order).configure(
+    test='t-test_paired', text_format='star', loc='inside', verbose=0,
+    comparisons_correction=COMPARISON_CORRECTION,
+    pvalue_thresholds=PVALUE_THRESHOLDS
+).apply_and_annotate()
+
+# RT Plot
+sns.barplot(data=df_prim_perf, x='Priming_Cat', y='rt', errorbar=ERRORBAR,
+            ax=axes3[1], palette=priming_palette, order=priming_order)
+axes3[1].set_title('Response Time')
+axes3[1].set_xlabel('Priming')
+axes3[1].set_ylabel('RT (s)')
+
+Annotator(ax=axes3[1], pairs=pairs_priming, data=df_prim_perf,
+          x='Priming_Cat', y='rt', order=priming_order).configure(
+    test='t-test_paired', text_format='star', loc='inside', verbose=0,
+    comparisons_correction=COMPARISON_CORRECTION,
+    pvalue_thresholds=PVALUE_THRESHOLDS
+).apply_and_annotate()
+
+plt.tight_layout()
+
+# Optional: Priming by Cohort
+fig4, axes4 = plt.subplots(1, 2, figsize=(14, 5))
+fig4.suptitle('Performance as a function of Priming by Cohort', fontsize=16, fontweight='bold')
+
+sns.barplot(data=df_prim_perf, x='Priming_Cat', y='select_target', hue='cohort', errorbar=ERRORBAR,
+            ax=axes4[0], palette=COHORT_PALETTE, order=priming_order)
+axes4[0].set_title('Accuracy')
+axes4[0].set_xlabel('Priming')
+axes4[0].set_ylabel('Proportion correct')
+
+sns.barplot(data=df_prim_perf, x='Priming_Cat', y='rt', hue='cohort', errorbar=ERRORBAR,
+            ax=axes4[1], palette=COHORT_PALETTE, order=priming_order)
+axes4[1].set_title('Response Time')
+axes4[1].set_xlabel('Priming')
+axes4[1].set_ylabel('RT (s)')
+plt.tight_layout()
+
+# ============================================================
+# SECTION 7: RESPONSE TYPES (BLOCK DESIGN ONLY)
+# ============================================================
+print("\n======================================================================")
+print("Analysis 7: Response Types by Cue Condition (Block Design Only)")
+print("======================================================================")
+
+import glob
+import os
+from color_config import COLOR_TARGET, COLOR_DISTRACTOR, COLOR_CONTROL, COLOR_RANDOM_ERROR
+
+# Load raw clean files to extract selection columns
+raw_files = glob.glob(os.path.join(SPACECUE_explicit.get_data_path(), 'derivatives', 'preprocessing', 'sub-*', 'beh', 'sub-*_clean.csv'))
+if raw_files:
+    raw_df = pd.concat([pd.read_csv(f) for f in raw_files], ignore_index=True)
+    
+    # Merge selection columns into a new df for response analysis
+    resp_df = pd.merge(
+        df,
+        raw_df[['subject_id', 'absolute_trial_nr', 'select_distractor', 'select_control', 'select_other']],
+        on=['subject_id', 'absolute_trial_nr'],
+        how='left'
+    )
+    
+    # Melt the selection columns to get a 'response_type' column
+    melt_cols = {'select_target': 'Target', 'select_distractor': 'Distractor', 'select_control': 'Control', 'select_other': 'Random Error'}
+    
+    def get_resp_type(row):
+        for col, rtype in melt_cols.items():
+            if pd.notna(row[col]) and row[col] == 1:
+                return rtype
+        return 'Missing'
+    
+    resp_df['response_type'] = resp_df.apply(get_resp_type, axis=1)
+    
+    # Calculate proportions
+    subjects = resp_df['subject_id'].unique()
+    cues = resp_df['CueInstruction'].dropna().unique()
+    response_types = ['Target', 'Distractor', 'Control', 'Random Error']
+    
+    idx = pd.MultiIndex.from_product([subjects, cues, response_types], names=['subject_id', 'CueInstruction', 'response_type'])
+    all_combs = pd.DataFrame(index=idx).reset_index()
+    
+    counts = resp_df.groupby(['subject_id', 'CueInstruction', 'response_type']).size().reset_index(name='count')
+    merged_counts = pd.merge(all_combs, counts, on=['subject_id', 'CueInstruction', 'response_type'], how='left')
+    merged_counts['count'] = merged_counts['count'].fillna(0)
+    
+    total_trials = resp_df.groupby(['subject_id', 'CueInstruction']).size().reset_index(name='total')
+    response_props = pd.merge(merged_counts, total_trials, on=['subject_id', 'CueInstruction'])
+    response_props['proportion'] = response_props['count'] / response_props['total']
+    
+    # Map CueInstruction to friendly names
+    cue_map = {
+        'cue_distractor_location': 'Distractor Cue',
+        'cue_target_location': 'Target Cue',
+        'cue_neutral': 'Neutral Cue'
+    }
+    response_props['Cue Type'] = response_props['CueInstruction'].map(cue_map)
+    resp_plot_df = response_props[response_props['response_type'] != 'Missing'].copy()
+    
+    cue_order_abs = ['Target Cue', 'Distractor Cue', 'Neutral Cue']
+    hue_order_resp = ['Target', 'Distractor', 'Control', 'Random Error']
+    RESPONSE_PALETTE = {
+        'Target': COLOR_TARGET,
+        'Distractor': COLOR_DISTRACTOR,
+        'Control': COLOR_CONTROL,
+        'Random Error': COLOR_RANDOM_ERROR
+    }
+    
+    # Absolute Response Types
+    fig_resp, ax_resp = plt.subplots(figsize=(12, 6))
+    sns.barplot(data=resp_plot_df, x='Cue Type', y='proportion', hue='response_type', ax=ax_resp, order=cue_order_abs, hue_order=hue_order_resp, palette=RESPONSE_PALETTE, errorbar='se')
+    sns.stripplot(data=resp_plot_df, x='Cue Type', y='proportion', hue='response_type', dodge=True, ax=ax_resp, color='black', alpha=0.6, jitter=False, order=cue_order_abs, hue_order=hue_order_resp, legend=False)
+    
+    ax_resp.set_title('Response Types by Cue Condition (Block Design)')
+    ax_resp.set_xlabel('Cue Type')
+    ax_resp.set_ylabel('Proportion of Trials')
+    sns.despine(ax=ax_resp)
+    handles, labels = ax_resp.get_legend_handles_labels()
+    ax_resp.legend(handles, labels, title='Response Type', frameon=False, bbox_to_anchor=(1.05, 1), loc='upper left')
+    fig_resp.tight_layout()
+    
+    # Difference plot
+    resp_pivot = resp_plot_df.pivot(index=['subject_id', 'response_type'], columns='Cue Type', values='proportion').reset_index()
+    resp_pivot['Target Cue'] = resp_pivot['Target Cue'] - resp_pivot['Neutral Cue']
+    resp_pivot['Distractor Cue'] = resp_pivot['Distractor Cue'] - resp_pivot['Neutral Cue']
+    
+    resp_diff_df = resp_pivot.melt(id_vars=['subject_id', 'response_type'], value_vars=['Target Cue', 'Distractor Cue'], var_name='Cue Type', value_name='proportion_diff')
+    
+    fig_diff, ax_diff = plt.subplots(figsize=(10, 6))
+    sns.barplot(data=resp_diff_df, x='Cue Type', y='proportion_diff', hue='response_type', ax=ax_diff, hue_order=hue_order_resp, palette=RESPONSE_PALETTE, errorbar='se')
+    sns.stripplot(data=resp_diff_df, x='Cue Type', y='proportion_diff', hue='response_type', dodge=True, ax=ax_diff, color='black', alpha=0.6, jitter=False, hue_order=hue_order_resp, legend=False)
+    
+    ax_diff.axhline(0, color='red', linestyle='--', linewidth=1)
+    ax_diff.set_title('Response Type Differences (Informative - Neutral)')
+    ax_diff.set_xlabel('Cue Type')
+    ax_diff.set_ylabel('Δ Proportion of Trials')
+    sns.despine(ax=ax_diff)
+    handles, labels = ax_diff.get_legend_handles_labels()
+    ax_diff.legend(handles, labels, title='Response Type', frameon=False, bbox_to_anchor=(1.05, 1), loc='upper left')
+    fig_diff.tight_layout()
